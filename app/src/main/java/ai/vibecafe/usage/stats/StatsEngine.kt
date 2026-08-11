@@ -37,6 +37,20 @@ data class ModelCost(
     val cost: Double
 )
 
+/** 长按应用详情：应用维度的细分指标。 */
+data class ToolDetail(
+    val tool: String,
+    val cost: Double,
+    val tokens: Long,
+    val inputTokens: Long,
+    val outputTokens: Long,
+    val cachedTokens: Long,
+    val reasoningTokens: Long,
+    val modelCount: Int,
+    val sessionCount: Int,
+    val percentage: Float
+)
+
 data class DailyUsage(
     val date: String,
     val tokens: Long,
@@ -244,6 +258,32 @@ private const val TAG = "VibeUsage"
                 )
             }
             .sortedByDescending { it.cost }
+    }
+
+    /** 长按应用详情：按工具名过滤出该应用在范围内的细分指标（含输入/输出/缓存/推理、模型数、会话数）。 */
+    fun computeToolDetail(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        tool: String,
+        devices: Set<String> = emptySet()
+    ): ToolDetail? {
+        val scoped = filterBuckets(data, timeRange, devices)
+        val buckets = scoped.filter { it.source == tool }
+        if (buckets.isEmpty()) return null
+        val total = scoped.sumOf { it.fullTokens() }.toFloat()
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange).filter { it.source == tool }
+        return ToolDetail(
+            tool = tool,
+            cost = buckets.sumOf { it.estimatedCost },
+            tokens = buckets.sumOf { it.fullTokens() },
+            inputTokens = buckets.sumOf { it.inputTokens },
+            outputTokens = buckets.sumOf { it.outputTokens },
+            cachedTokens = buckets.sumOf { it.cachedInputTokens },
+            reasoningTokens = buckets.sumOf { it.reasoningOutputTokens },
+            modelCount = buckets.map { it.model }.distinct().size,
+            sessionCount = sessions.size,
+            percentage = if (total > 0f) buckets.sumOf { it.fullTokens() } / total * 100f else 0f
+        )
     }
 
     fun computeDailyUsage(data: UsageResponse, timeRange: TimeRange): List<DailyUsage> {

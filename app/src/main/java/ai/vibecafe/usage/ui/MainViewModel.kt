@@ -10,6 +10,7 @@ import ai.vibecafe.usage.stats.DisplaySession
 import ai.vibecafe.usage.stats.ModelCost
 import ai.vibecafe.usage.stats.StatsEngine
 import ai.vibecafe.usage.stats.TimeRange
+import ai.vibecafe.usage.stats.ToolDetail
 import ai.vibecafe.usage.stats.ToolDistribution
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +32,8 @@ data class UiState(
     val sessions: List<DisplaySession> = emptyList(),
     val availableDevices: List<String> = emptyList(),
     val selectedTimeRange: TimeRange = TimeRange.DAYS_7,
-    val selectedDevices: Set<String> = emptySet()
+    val selectedDevices: Set<String> = emptySet(),
+    val toolDetail: ToolDetail? = null
 )
 
 class MainViewModel : ViewModel() {
@@ -95,6 +97,21 @@ class MainViewModel : ViewModel() {
             selectedDevices = devices,
             stats = StatsEngine.computeStats(data, tr, devices)
         )
+    }
+
+    /** 长按应用行：计算并展示该应用在当前时间范围的细分详情。 */
+    fun showToolDetail(tool: String) {
+        val data = dataForRange(_uiState.value.selectedTimeRange) ?: return
+        val tr = _uiState.value.selectedTimeRange
+        _uiState.value = _uiState.value.copy(
+            toolDetail = StatsEngine.computeToolDetail(data, tr, tool, _uiState.value.selectedDevices)
+        )
+    }
+
+    fun hideToolDetail() {
+        if (_uiState.value.toolDetail != null) {
+            _uiState.value = _uiState.value.copy(toolDetail = null)
+        }
     }
 
     private fun mapError(t: Throwable?): String = when (t) {
