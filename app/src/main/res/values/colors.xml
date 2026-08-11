@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 液态玻璃浅色主题底色，与 Compose 端 GlassTokens.PageBackground 保持一致 -->
+    <color name="page_bg">#EEF2F7</color>
+    <color name="ink_hi">#1A1F2B</color>
+    <color name="accent">#0BBFB0</color>
+    <!-- 自适应启动图标的深色背景，与品牌主色 teal 呼应 -->
+    <color name="bg_deep">#0A2E2B</color>
+</resources>
