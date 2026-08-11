@@ -1,406 +1,729 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Token Manager — 记录 Token，看见价值</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
-  <link rel="stylesheet" href="assets/style.css">
-  <script
-    defer
-    src="https://vibecafe.ai/telemetry/v1.js"
-    data-vc-product-id="cmso1u2ap00000aj8cbim6js0"
-    data-vc-auth-key="vc_web_TxO2zftqyRZuenNC_6rjQz5HLQ_S55QEzeCUFJBIbjE"
-  ></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>VibeUsage — 液态玻璃 Token 用量客户端（Web 预览）</title>
+<meta name="description" content="VibeUsage Android 应用的作品预览：基于 Jetpack Compose 的液态玻璃 Token 用量统计客户端，实时查看总消耗、应用分布与模型消耗。">
+<link rel="icon" href="assets/brands/logo_v.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  /* ============ 设计令牌（与 Android 端 GlassTokens.kt 逐项对齐） ============ */
+  :root {
+    --ink-hi: #1A1F2B;
+    --ink-strong: #10151F;
+    --ink-mid: rgba(30, 40, 60, .80);
+    --ink-lo: rgba(30, 40, 60, .35);
+    --accent: #0BBFB0;
+    --accent-ink: #0A9B8F;
+    --accent-wash: rgba(11, 191, 176, .14);
+    --accent-rim: rgba(11, 191, 176, .30);
+    --down: #D2537A;
+    --down-wash: rgba(230, 90, 120, .14);
+    --down-rim: rgba(230, 90, 120, .30);
+    --page: #EEF2F7;
+    --surface: rgba(255, 255, 255, .55);
+    --surface-soft: rgba(255, 255, 255, .50);
+    --pill: rgba(255, 255, 255, .32);
+    --rim: rgba(255, 255, 255, .70);
+    --shadow-soft: 0 30px 80px rgba(70, 90, 130, .18);
+    --shadow-bar: 0 12px 32px rgba(70, 90, 130, .16);
+    --shadow-pill: 0 8px 24px rgba(70, 90, 130, .22);
+    --shadow-row: 0 4px 14px rgba(70, 90, 130, .10);
+    --orb-pink: #FF3D8B;
+    --orb-blue: #5C7FFF;
+    --orb-teal: #1FE0C4;
+    --orb-amber: #FFCF5C;
+    --wash-pink: #FFD6E8;
+    --wash-violet: #D8D2FF;
+    --wash-mint: #CDF6EE;
+    --wash-cream: #FFE6C9;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--page);
+    color: var(--ink-hi);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* ============ 背景光斑（对应 Android 端 GlassBackground.kt 的 orbs） ============ */
+  .bg {
+    position: fixed; inset: 0; z-index: 0; overflow: hidden; background: var(--page);
+    background-image:
+      radial-gradient(60% 55% at 12% 8%, var(--wash-pink), transparent 70%),
+      radial-gradient(55% 50% at 88% 14%, var(--wash-violet), transparent 70%),
+      radial-gradient(60% 55% at 80% 88%, var(--wash-mint), transparent 70%),
+      radial-gradient(50% 45% at 12% 86%, var(--wash-cream), transparent 70%);
+  }
+  .orb {
+    position: absolute; border-radius: 50%; filter: blur(70px); opacity: .55; will-change: transform;
+    animation: drift 18s ease-in-out infinite alternate;
+  }
+  .orb-1 { width: 340px; height: 340px; background: var(--orb-pink);  top: -90px;  left: -70px; }
+  .orb-2 { width: 300px; height: 300px; background: var(--orb-blue);  top: -60px;  right: -60px; animation-delay: -6s; }
+  .orb-3 { width: 380px; height: 380px; background: var(--orb-teal);  bottom: -120px; right: 12%; animation-delay: -12s; }
+  .orb-4 { width: 260px; height: 260px; background: var(--orb-amber); bottom: -70px; left: 8%; animation-delay: -3s; }
+  @keyframes drift {
+    0%   { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(34px, -26px) scale(1.12); }
+  }
+
+  /* ============ 舞台布局 ============ */
+  .stage {
+    position: relative; z-index: 1;
+    max-width: 1180px; margin: 0 auto; padding: 44px 24px 60px;
+    display: flex; gap: 56px; align-items: flex-start; justify-content: center; flex-wrap: wrap;
+  }
+
+  /* ============ 手机壳 ============ */
+  .phone {
+    flex: 0 0 auto;
+    width: 392px; border-radius: 46px; padding: 12px;
+    background: linear-gradient(160deg, #2b3446, #151b28 55%, #232c3d);
+    box-shadow: 0 40px 90px rgba(20, 30, 55, .45), inset 0 1px 0 rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.10);
+  }
+  .phone-notch {
+    width: 118px; height: 26px; margin: 0 auto 4px; border-radius: 0 0 14px 14px;
+    background: rgba(10, 16, 26, .92);
+  }
+  .screen {
+    position: relative; overflow: hidden; border-radius: 34px; height: 788px; background: var(--page);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    display: flex; flex-direction: column;
+  }
+  .screen .bg { position: absolute; }
+  .statusbar {
+    position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: center;
+    padding: 13px 22px 0; font-size: 12px; font-weight: 800; color: var(--ink-mid); letter-spacing: .3px;
+  }
+  .statusbar .time { font-weight: 900; color: var(--ink-hi); }
+  .statusbar .icons { display: flex; gap: 6px; align-items: center; font-size: 11px; }
+  .view { position: absolute; inset: 0; z-index: 1; }
+
+  /* ============ 玻璃通用 ============ */
+  .glass-card {
+    background: var(--surface);
+    -webkit-backdrop-filter: blur(22px) saturate(1.4);
+    backdrop-filter: blur(22px) saturate(1.4);
+    border: 1px solid var(--rim);
+    box-shadow: var(--shadow-soft), inset 0 2px 6px rgba(80, 100, 140, .12);
+    border-radius: 26px;
+  }
+  .glass-row {
+    background: var(--surface-soft);
+    -webkit-backdrop-filter: blur(18px) saturate(1.3);
+    backdrop-filter: blur(18px) saturate(1.3);
+    border: 1px solid var(--rim);
+    box-shadow: var(--shadow-row), inset 0 1px 3px rgba(80, 100, 140, .10);
+    border-radius: 18px;
+  }
+  .glass-tile {
+    background: var(--surface-soft);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    backdrop-filter: blur(14px) saturate(1.3);
+    border: 1px solid var(--rim);
+    box-shadow: var(--shadow-row), inset 0 1px 2px rgba(80, 100, 140, .10);
+    border-radius: 50%;
+  }
+
+  /* ============ 登录视图 ============ */
+  #loginView { display: flex; flex-direction: column; padding: 46px 26px 30px; overflow-y: auto; }
+  .login-logo-box {
+    width: 84px; height: 84px; border-radius: 26px; margin: 12px auto 0;
+    background: linear-gradient(135deg, #7EE8DF, #7C6BFF);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 18px 40px rgba(100, 120, 200, .35), inset 0 2px 6px rgba(255,255,255,.5);
+  }
+  .login-logo-box img { width: 52px; height: 52px; }
+  .login-title { text-align: center; margin-top: 24px; font-size: 23px; font-weight: 900; letter-spacing: -.4px; }
+  .login-sub { text-align: center; margin-top: 8px; font-size: 13px; font-weight: 800; color: var(--ink-mid); }
+  .login-form { margin-top: 30px; display: flex; flex-direction: column; gap: 14px; }
+  .login-input {
+    width: 100%; padding: 15px 18px; font-size: 14.5px; font-weight: 700; color: var(--ink-hi);
+    font-family: inherit; border-radius: 16px; outline: none;
+    background: rgba(255, 255, 255, .60); border: 1px solid var(--rim);
+    box-shadow: inset 0 2px 6px rgba(80, 100, 140, .12);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  }
+  .login-input::placeholder { color: var(--ink-lo); font-weight: 700; }
+  .login-input:focus { border-color: rgba(11, 191, 176, .55); box-shadow: 0 0 0 3px rgba(11, 191, 176, .16), inset 0 2px 6px rgba(80,100,140,.10); }
+  .btn {
+    width: 100%; padding: 15px; border: none; border-radius: 16px; cursor: pointer;
+    font-family: inherit; font-size: 14.5px; font-weight: 900; letter-spacing: .4px;
+    color: #fff; background: linear-gradient(135deg, #0FC6B6, #0A9B8F);
+    box-shadow: 0 10px 26px rgba(11, 191, 176, .35), inset 0 1px 0 rgba(255,255,255,.35);
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-ghost {
+    background: rgba(255,255,255,.55); color: var(--ink-mid); border: 1px solid var(--rim);
+    box-shadow: var(--shadow-row); font-weight: 800;
+  }
+  .login-note { text-align: center; margin-top: 16px; font-size: 11.5px; font-weight: 700; color: var(--ink-lo); line-height: 1.7; }
+  .login-note a { color: var(--accent-ink); font-weight: 800; text-decoration: none; }
+
+  /* ============ Dashboard 视图 ============ */
+  #dashView { display: none; flex-direction: column; padding: 0 18px 26px; overflow-y: auto; }
+  .dash-scroll { padding-top: 10px; padding-bottom: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+  .dash-header { display: flex; justify-content: space-between; align-items: center; }
+  .brand-block { display: flex; align-items: center; gap: 13px; }
+  .brand-logo {
+    width: 46px; height: 46px; border-radius: 15px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #7EE8DF, #7C6BFF);
+    box-shadow: 0 8px 20px rgba(100, 120, 200, .28), inset 0 1px 2px rgba(255,255,255,.5);
+  }
+  .brand-logo img { width: 28px; height: 28px; }
+  .brand-name { font-size: 23px; font-weight: 900; letter-spacing: -.4px; line-height: 1.1; }
+  .brand-ver { font-size: 13px; font-weight: 800; color: var(--ink-mid); margin-top: 3px; }
+  .header-btns { display: flex; gap: 10px; }
+  .icon-btn {
+    width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--rim); cursor: pointer;
+    background: var(--surface-soft); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    display: flex; align-items: center; justify-content: center; color: var(--ink-hi);
+    box-shadow: var(--shadow-row), inset 0 1px 2px rgba(80,100,140,.10);
+    transition: transform .12s ease;
+  }
+  .icon-btn:active { transform: scale(.92); }
+  .icon-btn svg { width: 21px; height: 21px; }
+
+  /* 总消耗卡片 */
+  .summary-card { padding: 20px; }
+  .summary-top { display: flex; justify-content: space-between; align-items: flex-end; }
+  .summary-label { font-size: 13px; font-weight: 800; color: var(--ink-mid); }
+  .summary-value { display: flex; align-items: flex-end; gap: 5px; margin-top: 7px; }
+  .summary-value .num { font-size: 44px; font-weight: 900; letter-spacing: -1.5px; line-height: 1; }
+  .summary-value .cur { font-size: 15px; font-weight: 800; color: var(--ink-mid); padding-bottom: 3px; }
+  .trend-chip {
+    display: inline-flex; align-items: center; gap: 5px; padding: 7px 12px; border-radius: 999px;
+    font-size: 13px; font-weight: 800; border: 1px solid;
+  }
+  .trend-up { background: var(--accent-wash); border-color: var(--accent-rim); color: var(--accent-ink); }
+  .trend-down { background: var(--down-wash); border-color: var(--down-rim); color: var(--down); }
+
+  /* 分段控件（液态玻璃滑块） */
+  .seg-wrap { position: relative; margin-top: 20px; padding: 4px; border-radius: 999px;
+    background: var(--surface-soft); border: 1px solid var(--rim);
+    box-shadow: var(--shadow-bar), inset 0 2px 6px rgba(80,100,140,.12);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  }
+  .seg-slider {
+    position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc((100% - 8px) / 5);
+    border-radius: 999px; background: rgba(255,255,255,.82);
+    box-shadow: var(--shadow-pill), inset 0 1px 2px rgba(255,255,255,.9);
+    transition: transform .32s cubic-bezier(.22, 1, .36, 1);
+  }
+  .seg-row { position: relative; display: flex; }
+  .seg-item {
+    flex: 1; text-align: center; padding: 10px 0; font-size: 14px; font-weight: 900;
+    color: rgba(30, 40, 60, .70); cursor: pointer; border-radius: 999px; user-select: none;
+    transition: color .2s ease;
+  }
+  .seg-item.active { color: var(--ink-strong); }
+
+  /* 四格小统计 */
+  .stats-strip { display: flex; justify-content: space-between; margin-top: 20px; }
+  .mini-stat .v { font-size: 19px; font-weight: 900; letter-spacing: -.4px; }
+  .mini-stat .l { font-size: 12px; font-weight: 800; color: var(--ink-mid); margin-top: 3px; }
+
+  /* 区块标题 */
+  .section-title {
+    font-size: 12px; font-weight: 900; letter-spacing: 1.4px; color: var(--ink-mid);
+    padding: 6px 2px 2px; text-transform: uppercase;
+  }
+
+  /* 列表行 */
+  .list-col { display: flex; flex-direction: column; gap: 11px; }
+  .list-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 15px 17px;
+  }
+  .row-left { display: flex; align-items: center; min-width: 0; flex: 1; }
+  .row-ico {
+    width: 38px; height: 38px; border-radius: 12px; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .row-ico img { width: 20px; height: 20px; object-fit: contain; }
+  .row-ico .fallback { font-size: 17px; }
+  .row-txt { margin-left: 13px; min-width: 0; }
+  .row-name { font-size: 14.5px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-meta { font-size: 12px; font-weight: 800; color: var(--ink-mid); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-val { font-size: 16px; font-weight: 900; margin-left: 12px; flex: 0 0 auto; }
+
+  /* 设置菜单 */
+  #settingsOverlay { display: none; position: absolute; inset: 0; z-index: 5; }
+  .settings-menu {
+    position: absolute; top: 76px; right: 18px; width: 196px; display: flex; flex-direction: column; gap: 10px;
+    padding: 12px;
+    background: rgba(255,255,255,.65);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4); backdrop-filter: blur(24px) saturate(1.4);
+    border: 1px solid var(--rim); border-radius: 20px; box-shadow: var(--shadow-soft);
+  }
+  .settings-item {
+    display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 14px; cursor: pointer;
+    font-size: 14.5px; font-weight: 900; color: var(--ink-hi);
+    background: var(--surface-soft); border: 1px solid var(--rim);
+    transition: background .15s ease;
+  }
+  .settings-item:hover { background: rgba(255,255,255,.75); }
+  .settings-item .g { font-size: 17px; }
+
+  /* Toast */
+  #toast {
+    position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(20px);
+    padding: 11px 18px; border-radius: 999px; z-index: 9; opacity: 0; pointer-events: none;
+    background: rgba(16, 21, 31, .88); color: #fff; font-size: 12.5px; font-weight: 800;
+    box-shadow: 0 12px 30px rgba(16,21,31,.35); transition: opacity .25s ease, transform .25s ease;
+    white-space: nowrap;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ============ 侧栏 ============ */
+  .side { flex: 1 1 380px; max-width: 560px; padding-top: 18px; }
+  .side h1 { font-size: 42px; font-weight: 900; letter-spacing: -1.5px; line-height: 1.1; }
+  .side h1 .v { color: transparent; background: linear-gradient(135deg, #0FC6B6, #5C7FFF); -webkit-background-clip: text; background-clip: text; }
+  .side .tagline { margin-top: 10px; font-size: 15px; font-weight: 700; color: var(--ink-mid); }
+  .side .desc {
+    margin-top: 22px; font-size: 14px; font-weight: 600; line-height: 1.9; color: var(--ink-hi);
+    background: var(--surface-soft); border: 1px solid var(--rim); border-radius: 18px; padding: 20px 22px;
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); box-shadow: var(--shadow-row);
+  }
+  .side .desc b { font-weight: 900; }
+  .chips { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+  .chip {
+    padding: 8px 14px; border-radius: 999px; font-size: 12.5px; font-weight: 800; color: var(--ink-mid);
+    background: rgba(255,255,255,.55); border: 1px solid var(--rim);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  }
+  .chip.hl { color: var(--accent-ink); border-color: var(--accent-rim); background: var(--accent-wash); }
+  .side .actions { display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+  .side .btn { width: auto; padding: 14px 26px; }
+  .side .btn-outline {
+    background: rgba(255,255,255,.6); color: var(--ink-hi); border: 1px solid var(--rim);
+    box-shadow: var(--shadow-row); font-weight: 900; text-decoration: none; display: inline-flex;
+    align-items: center; justify-content: center;
+  }
+  .side .foot { margin-top: 22px; font-size: 12px; font-weight: 700; color: var(--ink-lo); line-height: 1.8; }
+  .side .foot a { color: var(--accent-ink); font-weight: 800; text-decoration: none; }
+
+  @media (max-width: 900px) {
+    .stage { padding: 26px 14px 44px; gap: 34px; }
+    .side { padding-top: 4px; text-align: center; }
+    .side h1 { font-size: 34px; }
+    .side .desc { text-align: left; }
+    .side .actions { justify-content: center; }
+  }
+</style>
 </head>
 <body>
-  <!-- Showcase banner: 静态展示页引导至完整在线版 -->
-  <div style="position:sticky;top:0;z-index:999;background:rgba(255,215,0,.14);border-bottom:1px solid rgba(255,215,0,.35);padding:7px 14px;text-align:center;font-size:13px;color:#5b4a00;">
-    💡 作品展示页 · 完整在线版（登录与实时数据）请访问
-    <a href="https://token.20050912.xyz" style="color:#8a6d00;font-weight:600;text-decoration:underline;">token.20050912.xyz</a>
-  </div>
-  <!-- Login Screen -->
-  <div class="login-screen" id="loginScreen">
-    <div class="login-card">
-      <div class="login-logo">
-        <svg viewBox="0 0 24 24" width="52" height="52"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="#ffd700"/></svg>
+<div class="bg">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <div class="orb orb-4"></div>
+</div>
+
+<div class="stage">
+  <!-- ================= 手机预览 ================= -->
+  <div class="phone">
+    <div class="phone-notch"></div>
+    <div class="screen">
+      <div class="bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+        <div class="orb orb-4"></div>
       </div>
-      <h1>Token Manager</h1>
-      <p class="login-subtitle">记录 AI Token 消耗，洞察使用价值</p>
-      <a href="https://token.20050912.xyz/api/auth/github" class="github-btn">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        使用 GitHub 登录
-      </a>
-      <p class="login-hint">安全登录，仅获取公开信息</p>
+      <div class="statusbar">
+        <span class="time">9:41</span>
+        <span class="icons">📶 🔋</span>
+      </div>
+
+      <!-- 登录视图 -->
+      <div class="view" id="loginView">
+        <div class="login-logo-box"><img src="assets/brands/logo_v.png" alt="VibeUsage"></div>
+        <div class="login-title">VibeUsage</div>
+        <div class="login-sub">输入 VibeCafe API Key 以加载用量数据</div>
+        <div class="login-form">
+          <input class="login-input" id="apiKey" type="password" placeholder="API Key" autocomplete="off">
+          <button class="btn" onclick="enterApp()">开始使用</button>
+          <button class="btn btn-ghost" onclick="enterApp(true)">演示模式 · 直接进入预览</button>
+        </div>
+        <div class="login-note">
+          预览版仅演示界面与交互。<br>完整功能请在手机安装
+          <a href="https://github.com/poying2018/VibeUsage/releases" target="_blank" rel="noopener">VibeUsage APK</a>。
+        </div>
+      </div>
+
+      <!-- Dashboard 视图 -->
+      <div class="view" id="dashView">
+        <div id="settingsOverlay" onclick="toggleSettings(false)">
+          <div class="settings-menu" onclick="event.stopPropagation()">
+            <div class="settings-item" onclick="toast('自定义背景 · 请使用手机 App 体验')"><span class="g">🎨</span>自定义背景</div>
+            <div class="settings-item" onclick="toast('演示模式 · 背景为固定光斑')"><span class="g">↺</span>恢复默认背景</div>
+            <div class="settings-item" onclick="exitApp()"><span class="g">⏻</span>退出登录</div>
+          </div>
+        </div>
+
+        <div class="dash-scroll">
+          <!-- Header -->
+          <div class="dash-header">
+            <div class="brand-block">
+              <div class="brand-logo"><img src="assets/brands/logo_v.png" alt="V"></div>
+              <div>
+                <div class="brand-name">VibeUsage</div>
+                <div class="brand-ver">用量概览 · v2.4.6</div>
+              </div>
+            </div>
+            <div class="header-btns">
+              <button class="icon-btn" onclick="toast('已刷新（预览）')" title="刷新">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-8 3.58-8 8s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+              </button>
+              <button class="icon-btn" onclick="toggleSettings(true)" title="设置">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94a7.07 7.07 0 0 0 .06-1 7.07 7.07 0 0 0-.06-1l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.04 7.04 0 0 0-1.73-1l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.63.26-1.21.6-1.73 1l-2.39-.96a.5.5 0 0 0-.61.22L2.55 8.72a.5.5 0 0 0 .12.64l2.03 1.58a7.07 7.07 0 0 0-.06 1c0 .34.02.67.06 1l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.33.61.22l2.39-.96c.52.4 1.1.74 1.73 1l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.63-.26 1.21-.6 1.73-1l2.39.96c.22.09.48 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 总消耗卡片 -->
+          <div class="glass-card summary-card">
+            <div class="summary-top">
+              <div>
+                <div class="summary-label">总消耗（当前范围）</div>
+                <div class="summary-value">
+                  <span class="num" id="totalCost">$12.42</span>
+                  <span class="cur">USD</span>
+                </div>
+              </div>
+              <span class="trend-chip trend-up" id="trendChip">↗ +23%</span>
+            </div>
+
+            <!-- 分段控件 -->
+            <div class="seg-wrap">
+              <div class="seg-slider" id="segSlider"></div>
+              <div class="seg-row" id="segRow"></div>
+            </div>
+
+            <!-- 四格统计 -->
+            <div class="stats-strip">
+              <div class="mini-stat"><div class="v" id="stTokens">8.6B</div><div class="l">Tokens</div></div>
+              <div class="mini-stat"><div class="v" id="stModels">12</div><div class="l">模型</div></div>
+              <div class="mini-stat"><div class="v" id="stApps">14</div><div class="l">应用</div></div>
+              <div class="mini-stat"><div class="v" id="stSessions">117</div><div class="l">会话</div></div>
+            </div>
+          </div>
+
+          <!-- 应用分布 -->
+          <div class="section-title">应用分布</div>
+          <div class="list-col" id="toolList"></div>
+
+          <!-- 模型消耗 -->
+          <div class="section-title">模型消耗</div>
+          <div class="list-col" id="modelList"></div>
+        </div>
+      </div>
+
+      <div id="toast"></div>
     </div>
   </div>
 
-  <!-- Main App -->
-  <div class="app" id="app" style="display:none;">
-    <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-header">
-        <svg viewBox="0 0 24 24" width="28" height="28"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="#ffd700"/></svg>
-        <span class="sidebar-brand">Token Manager</span>
-      </div>
-      <nav class="sidebar-nav">
-        <a href="#" class="nav-item active" data-page="dashboard"><span class="nav-icon">📊</span><span class="nav-label">监控仪表盘</span></a>
-        <a href="#" class="nav-item" data-page="records"><span class="nav-icon">✏️</span><span class="nav-label">手动录入</span></a>
-        <a href="#" class="nav-item" data-page="asset"><span class="nav-icon">💎</span><span class="nav-label">流动资产</span></a>
-        <a href="#" class="nav-item" data-page="value"><span class="nav-icon">🌟</span><span class="nav-label">价值看板</span></a>
-        <a href="#" class="nav-item" data-page="cost"><span class="nav-icon">💰</span><span class="nav-label">词元规划</span></a>
-        <a href="#" class="nav-item" data-page="ai"><span class="nav-icon">🤖</span><span class="nav-label">AI 助手</span></a>
-        <a href="#" class="nav-item" data-page="proxy"><span class="nav-icon">🔗</span><span class="nav-label">API 代理</span></a>
-        <a href="#" class="nav-item" data-page="tools"><span class="nav-icon">🔌</span><span class="nav-label">工具接入</span></a>
-                <a href="#" class="nav-item" id="navAdmin" data-page="admin" style="display:none;"><span class="nav-icon">🛡️</span><span class="nav-label">运营管理</span></a>
-        <a href="#" class="nav-item" data-page="settings"><span class="nav-icon">⚙️</span><span class="nav-label">平台管理</span></a>
-      </nav>
-      <div class="sidebar-footer">
-        <div class="user-card" id="userCard">
-          <img class="user-avatar" id="userAvatar" src="" alt="">
-          <div class="user-info">
-            <span class="user-name" id="userName"></span>
-            <span class="user-login" id="userLogin"></span>
-          </div>
-        </div>
-        <button class="logout-btn" id="logoutBtn">退出登录</button>
-      </div>
-    </aside>
+  <!-- ================= 作品侧栏 ================= -->
+  <aside class="side">
+    <h1>VibeUsage <span class="v">液态玻璃</span></h1>
+    <div class="tagline">基于 Jetpack Compose 的 Token 用量统计客户端 · 为 vibecafe.ai 打造</div>
 
-    <!-- Main Content -->
-    <main class="main-content">
-
-      <!-- ========== 仪表盘 ========== -->
-      <div class="page active" id="page-dashboard">
-        <div class="page-header">
-          <h2 class="page-title">监控仪表盘</h2>
-          <span class="page-subtitle" id="todayDate"></span>
-        </div>
-        <div class="metrics-grid">
-          <div class="metric-card month"><div class="metric-icon">📅</div><div class="metric-label">本月 Token</div><div class="metric-value" id="metricMonthTokens">—</div><div class="metric-unit">Token</div></div>
-          <div class="metric-card today"><div class="metric-icon">⚡</div><div class="metric-label">今日 Token</div><div class="metric-value" id="metricTodayTokens">—</div><div class="metric-unit">Token</div></div>
-          <div class="metric-card cost"><div class="metric-icon">💰</div><div class="metric-label">本月费用</div><div class="metric-value" id="metricMonthCost">—</div><div class="metric-unit">元</div></div>
-          <div class="metric-card platforms"><div class="metric-icon">🔗</div><div class="metric-label">活跃平台</div><div class="metric-value" id="metricPlatforms">—</div><div class="metric-unit">个</div></div>
-          <div class="metric-card records"><div class="metric-icon">📝</div><div class="metric-label">本月记录</div><div class="metric-value" id="metricRecords">—</div><div class="metric-unit">条</div></div>
-        </div>
-        <div class="dashboard-grid">
-          <div class="panel chart-panel">
-            <div class="panel-header"><h3>📈 近 30 天趋势</h3></div>
-            <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
-          </div>
-          <div class="panel platform-panel">
-            <div class="panel-header"><h3>🏷️ 平台消耗分布</h3></div>
-            <div class="platform-list" id="platformList"></div>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><h3>🕐 最近记录</h3><a href="#" class="view-all" data-page="records">查看全部 →</a></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>平台</th><th>模型</th><th>输入 Token</th><th>输出 Token</th><th>费用</th><th>时间</th></tr></thead>
-              <tbody id="recentTbody"></tbody>
-            </table>
-            <div class="empty-state" id="emptyRecent" style="display:none;"><p>暂无记录，去 <a href="#" data-page="records">手动录入</a> 添加第一条吧</p></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 手动录入 ========== -->
-      <div class="page" id="page-records">
-        <div class="page-header"><h2 class="page-title">手动录入</h2><span class="page-subtitle">记录每次 AI API 调用消耗</span></div>
-        <div class="panel form-panel">
-          <div class="panel-header"><h3>➕ 新增记录</h3></div>
-          <form class="entry-form" id="entryForm">
-            <div class="form-row">
-              <div class="form-group"><label>平台 *</label><select class="form-select" id="formPlatform" required></select></div>
-              <div class="form-group"><label>模型</label><input type="text" class="form-input" id="formModel" placeholder="如 DeepSeek-V3"></div>
-              <div class="form-group"><label>项目</label><input type="text" class="form-input" id="formProject" placeholder="可选"></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>输入 Token *</label><input type="number" class="form-input" id="formInputTokens" required min="0" placeholder="0"></div>
-              <div class="form-group"><label>输出 Token *</label><input type="number" class="form-input" id="formOutputTokens" required min="0" placeholder="0"></div>
-              <div class="form-group"><label>费用 (元)</label><input type="number" class="form-input" id="formCost" min="0" step="0.01" placeholder="0.00"></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>备注</label><input type="text" class="form-input" id="formNote" placeholder="可选"></div>
-              <div class="form-group"><label>时间</label><input type="datetime-local" class="form-input" id="formDate"></div>
-            </div>
-            <div class="form-actions">
-              <button type="button" class="btn btn-secondary" id="resetForm">重置</button>
-              <button type="submit" class="btn btn-primary">保存记录</button>
-            </div>
-          </form>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><h3>📋 历史记录</h3><span class="record-count" id="recordCount">共 0 条</span></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>平台</th><th>模型</th><th>项目</th><th>输入</th><th>输出</th><th>费用</th><th>时间</th><th>操作</th></tr></thead>
-              <tbody id="recordsTbody"></tbody>
-            </table>
-            <div class="empty-state" id="emptyRecords" style="display:none;"><p>暂无记录</p></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 流动资产 ========== -->
-      <div class="page" id="page-asset">
-        <div class="page-header"><h2 class="page-title">流动资产</h2><span class="page-subtitle">Token 资产总览</span></div>
-        <div class="asset-grid">
-          <div class="metric-card month"><div class="metric-icon">💎</div><div class="metric-label">累计 Token</div><div class="metric-value" id="assetTotalTokens">—</div><div class="metric-unit">Token</div></div>
-          <div class="metric-card cost"><div class="metric-icon">💰</div><div class="metric-label">累计费用</div><div class="metric-value" id="assetTotalCost">—</div><div class="metric-unit">元</div></div>
-          <div class="metric-card today"><div class="metric-icon">📊</div><div class="metric-label">日均消耗</div><div class="metric-value" id="assetDailyAvg">—</div><div class="metric-unit">Token/天</div></div>
-          <div class="metric-card platforms"><div class="metric-icon">🏆</div><div class="metric-label">最常用平台</div><div class="metric-value" id="assetTopPlatform" style="font-size:18px">—</div></div>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><h3>📋 各平台资产分布</h3></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>平台</th><th>累计 Token</th><th>累计费用</th><th>记录数</th><th>占比</th></tr></thead>
-              <tbody id="assetTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 价值看板 ========== -->
-      <div class="page" id="page-value">
-        <div class="page-header"><h2 class="page-title">价值看板</h2><span class="page-subtitle">Token 价值分析</span></div>
-        <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
-          <div class="metric-card month"><div class="metric-icon">💵</div><div class="metric-label">每 Token 成本</div><div class="metric-value" id="valueCostPerToken">—</div><div class="metric-unit">元/百万Token</div></div>
-          <div class="metric-card today"><div class="metric-icon">📈</div><div class="metric-label">环比增长</div><div class="metric-value" id="valueGrowth">—</div><div class="metric-unit">%</div></div>
-          <div class="metric-card cost"><div class="metric-icon">🎯</div><div class="metric-label">最省钱平台</div><div class="metric-value" id="valueCheapest" style="font-size:18px">—</div></div>
-          <div class="metric-card records"><div class="metric-icon">⭐</div><div class="metric-label">综合性价比</div><div class="metric-value" id="valueBestValue" style="font-size:18px">—</div></div>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><h3>🏷️ 平台性价比对比</h3></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>平台</th><th>输入价格(元/百万Token)</th><th>输出价格</th><th>性价比评级</th><th>总消耗</th></tr></thead>
-              <tbody id="valuePlatformTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 词元规划 ========== -->
-      <div class="page" id="page-cost">
-        <div class="page-header"><h2 class="page-title">词元规划</h2><span class="page-subtitle">成本优化建议</span></div>
-        <div class="cost-summary">
-          <div class="cost-card"><div class="cost-label">本月总成本</div><div class="cost-value" id="costTotal">¥0.00</div><div class="cost-sub" id="costTotalSub">—</div></div>
-          <div class="cost-card"><div class="cost-label">日均成本</div><div class="cost-value" id="costDaily">¥0.00</div><div class="cost-sub" id="costDailySub">—</div></div>
-          <div class="cost-card"><div class="cost-label">最贵平台</div><div class="cost-value" id="costTop">—</div><div class="cost-sub" id="costTopSub">—</div></div>
-          <div class="cost-card"><div class="cost-label">词元单价</div><div class="cost-value" id="costUnit">¥0.00</div><div class="cost-sub">每百万 Token 平均成本</div></div>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><h3>💡 智能采购建议</h3></div>
-          <div id="recommendCards" class="recommend-grid"></div>
-        </div>
-        <div class="panel" style="margin-top:24px;">
-          <div class="panel-header"><h3>📋 主流平台词元价格参考</h3></div>
-          <div class="table-wrap">
-            <table class="price-table">
-              <thead><tr><th>平台</th><th>输入价格（元/百万Token）</th><th>输出价格</th><th>性价比评级</th></tr></thead>
-              <tbody id="priceTableBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== AI 助手 ========== -->
-      <div class="page" id="page-ai">
-        <div class="ai-chat-page">
-          <div class="ai-chat-header">
-            <div>
-              <div class="ai-chat-header-title">🤖 AI 助手</div>
-              <div class="ai-chat-header-subtitle">询问 Token 消耗、成本优化建议</div>
-            </div>
-            <button class="ai-new-chat-btn" id="aiNewChat">🔄 新对话</button>
-          </div>
-          <div class="ai-chat-messages" id="aiMessages">
-            <div class="ai-welcome-card">
-              <h3>你好！我是 Token 管理助手</h3>
-              <p>我可以帮你分析 Token 消耗、提供成本优化建议、解答使用问题。</p>
-            </div>
-          </div>
-          <div class="ai-chat-input-wrap">
-            <form id="aiForm" class="ai-form">
-              <input type="text" id="aiInput" class="ai-input" placeholder="输入问题..." autocomplete="off">
-              <button type="submit" class="ai-send-btn">发送</button>
-            </form>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== API 代理 ========== -->
-      <div class="page" id="page-proxy">
-        <div class="page-header"><h2 class="page-title">API 代理</h2><span class="page-subtitle">管理代理 Token</span></div>
-        <div class="panel">
-          <div class="panel-header"><h3>➕ 生成代理 Token</h3></div>
-          <form class="entry-form" id="proxyForm">
-            <div class="form-row">
-              <div class="form-group"><label>名称</label><input type="text" class="form-input" id="proxyName" placeholder="如：开发环境"></div>
-              <div class="form-group" style="display:flex;align-items:flex-end;"><button type="submit" class="btn btn-primary">生成 Token</button></div>
-            </div>
-          </form>
-        </div>
-        <div class="panel" style="margin-top:24px;">
-          <div class="panel-header"><h3>📋 代理 Token 列表</h3></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>名称</th><th>Token</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
-              <tbody id="proxyTbody"></tbody>
-            </table>
-            <div class="empty-state" id="emptyProxy" style="display:none;"><p>暂无代理 Token</p></div>
-          </div>
-        </div>
-        <div class="panel" style="margin-top:24px;">
-          <div class="panel-header"><h3>📖 使用说明</h3></div>
-          <div class="proxy-guide">
-            <p>代理 Token 用于在你的代码中安全调用 AI API，无需暴露真实 API Key。</p>
-            <code>Authorization: Bearer &lt;你的代理Token&gt;</code>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 工具接入 ========== -->
-      <div class="page" id="page-tools">
-        <div class="page-header"><h2 class="page-title">工具接入</h2><span class="page-subtitle">集成你的 AI 工具</span></div>
-        <div class="tools-grid">
-          <div class="tool-card">
-            <div class="tool-icon">🐍</div>
-            <h4>Python SDK</h4>
-            <p>pip install token-manager-sdk</p>
-            <code>from token_manager import Client<br>client = Client(api_key="your_key")</code>
-          </div>
-          <div class="tool-card">
-            <div class="tool-icon">📦</div>
-            <h4>Node.js</h4>
-            <p>npm install token-manager</p>
-            <code>const tm = require('token-manager')<br>tm.init({ apiKey })</code>
-          </div>
-          <div class="tool-card">
-            <div class="tool-icon">🌐</div>
-            <h4>REST API</h4>
-            <p>直接 HTTP 调用</p>
-            <code>POST /api/records<br>Authorization: Bearer token</code>
-          </div>
-          <div class="tool-card">
-            <div class="tool-icon">🔌</div>
-            <h4>OpenAI SDK 兼容</h4>
-            <p>兼容 OpenAI 格式</p>
-            <code>base_url = "https://proxy.tokenmanager.com.cn/v1"</code>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 功能全开 ========== -->
-      <div class="page" id="page-upgrade">
-        <div class="page-header"><h2 class="page-title">功能全开</h2><span class="page-subtitle">所有功能永久免费</span></div>
-        <div class="free-banner">
-          <div class="free-icon">🎉</div>
-          <h2>全部功能，永久免费</h2>
-          <p>Token Manager 承诺所有功能完全免费，无限制使用。</p>
-          <div class="free-features-grid">
-            <div class="free-feature-item"><span class="free-check">✓</span> 完整仪表盘与图表分析</div>
-            <div class="free-feature-item"><span class="free-check">✓</span> 无限手动录入</div>
-            <div class="free-feature-item"><span class="free-check">✓</span> 无限平台管理</div>
-            <div class="free-feature-item"><span class="free-check">✓</span> AI 智能助手</div>
-            <div class="free-feature-item"><span class="free-check">✓</span> API 代理 Token</div>
-            <div class="free-feature-item"><span class="free-check">✓</span> 流动资产与价值分析</div>
-            <div class="free-feature-item"><span class="free-check">✓</span> 词元规划与采购建议</div>
-            <div class="free-feature-item"><span class="free-check">✓</span> 运营管理后台</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 运营管理 ========== -->
-      <div class="page" id="page-admin">
-        <div class="page-header"><h2 class="page-title">运营管理</h2><span class="page-subtitle">系统管理后台</span></div>
-        <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
-          <div class="metric-card month"><div class="metric-icon">👥</div><div class="metric-label">用户总数</div><div class="metric-value" id="adminUserCount">—</div></div>
-          <div class="metric-card today"><div class="metric-icon">📝</div><div class="metric-label">记录总数</div><div class="metric-value" id="adminRecordCount">—</div></div>
-          <div class="metric-card cost"><div class="metric-icon">💰</div><div class="metric-label">累计费用</div><div class="metric-value" id="adminTotalCost">—</div><div class="metric-unit">元</div></div>
-          <div class="metric-card platforms"><div class="metric-icon">📮</div><div class="metric-label">待处理反馈</div><div class="metric-value" id="adminFeedbackCount">—</div></div>
-        </div>
-        <div class="panel">
-          <div class="panel-header"><h3>👥 用户管理</h3></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>ID</th><th>用户名</th><th>套餐</th><th>注册时间</th><th>操作</th></tr></thead>
-              <tbody id="adminUserTbody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="panel" style="margin-top:24px;">
-          <div class="panel-header"><h3>📮 反馈管理</h3></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>类型</th><th>内容</th><th>用户</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
-              <tbody id="adminFeedbackTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- ========== 平台管理 ========== -->
-      <div class="page" id="page-settings">
-        <div class="page-header"><h2 class="page-title">平台管理</h2><span class="page-subtitle">管理你使用的 AI 平台</span></div>
-        <div class="panel">
-          <div class="panel-header"><h3>➕ 添加平台</h3></div>
-          <form class="entry-form" id="platformForm">
-            <div class="form-row">
-              <div class="form-group"><label>平台名称 *</label><input type="text" class="form-input" id="platName" required placeholder="如 Gemini"></div>
-              <div class="form-group"><label>图标 Emoji</label><input type="text" class="form-input" id="platIcon" placeholder="🔮" maxlength="2"></div>
-              <div class="form-group"><label>颜色</label><input type="color" class="form-input" id="platColor" value="#ffd700" style="height:42px;padding:4px;"></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>输入价格 (元/百万Token)</label><input type="number" class="form-input" id="platInputPrice" step="0.1" min="0" placeholder="0"></div>
-              <div class="form-group"><label>输出价格 (元/百万Token)</label><input type="number" class="form-input" id="platOutputPrice" step="0.1" min="0" placeholder="0"></div>
-              <div class="form-group"><label>质量评分 (1-5)</label><input type="number" class="form-input" id="platQuality" min="1" max="5" placeholder="3"></div>
-            </div>
-            <div class="form-actions"><button type="submit" class="btn btn-primary">添加平台</button></div>
-          </form>
-        </div>
-        <div class="panel" style="margin-top:24px;">
-          <div class="panel-header"><h3>📋 已添加平台</h3></div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>图标</th><th>名称</th><th>输入价格</th><th>输出价格</th><th>评分</th></tr></thead>
-              <tbody id="platformsTbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-    </main>
-  </div>
-
-  <!-- Toast -->
-  <div class="toast" id="toast"></div>
-
-  <!-- Feedback Float Button -->
-  <button class="feedback-float-btn" id="feedbackBtn" title="反馈建议">💬</button>
-
-  <!-- Feedback Modal -->
-  <div class="feedback-modal-overlay" id="feedbackOverlay">
-    <div class="feedback-modal">
-      <h3>💬 反馈建议</h3>
-      <div class="feedback-type-row">
-        <button class="feedback-type-btn active" data-type="suggestion">功能建议</button>
-        <button class="feedback-type-btn" data-type="bug">Bug 反馈</button>
-        <button class="feedback-type-btn" data-type="other">其他</button>
-      </div>
-      <textarea class="feedback-textarea" id="feedbackContent" placeholder="请输入你的建议或反馈..."></textarea>
-      <input type="text" class="feedback-input" id="feedbackContact" placeholder="联系方式（选填）">
-      <div class="feedback-submit-row">
-        <button class="feedback-cancel-btn" id="feedbackCancel">取消</button>
-        <button class="feedback-submit-btn" id="feedbackSubmit">提交</button>
-      </div>
+    <div class="desc">
+      <p><b>《VibeUsage——液态玻璃风格 Token 用量客户端》作品描述</b></p>
+      <p style="margin-top:10px">VibeUsage 是一款为 vibecafe.ai 打造的 Android Token 用量统计客户端，以液态玻璃美学为设计核心，让数据可视化兼具通透与精致。应用基于 Jetpack Compose 与 Kyant0 backdrop 引擎，借助 GPU RuntimeShader 实现真实折射、模糊与高光，玻璃卡片、分段滑块与设置菜单在光影中流动，界面既具科技感又有艺术质感。</p>
+      <p style="margin-top:10px">功能上，应用提供总消耗、趋势、应用分布与模型消耗等核心指标，支持今日、24 小时、7 天、30 天、全部五种时间范围切换；每个工具与模型自动匹配官方彩色品牌标识（Claude、OpenAI、Gemini、DeepSeek、Qwen、Kimi 等），并以模糊匹配保证新增模型也能正确识别。用户还可自定义背景图片，内置思源黑体，中英文排版统一清晰。</p>
+      <p style="margin-top:10px">工程上，应用仅申请网络权限，API Key 只保存在本地，隐私安全；统计引擎独立封装，代码结构清晰，模拟器与真机渲染一致。VibeUsage 不止是工具，更是"让数据拥有质感"的设计实践。</p>
     </div>
-  </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script src="assets/app.js"></script>
+    <div class="chips">
+      <span class="chip hl">液态玻璃 UI</span>
+      <span class="chip">Jetpack Compose</span>
+      <span class="chip">品牌彩色 Logo</span>
+      <span class="chip">模糊匹配</span>
+      <span class="chip">思源黑体</span>
+      <span class="chip">隐私安全</span>
+    </div>
+
+    <div class="actions">
+      <a class="btn" href="https://github.com/poying2018/VibeUsage/releases/download/v2.4.6/VibeUsage-v2.4.6-debug.apk" target="_blank" rel="noopener">下载 Android APK</a>
+      <a class="btn btn-outline" href="https://github.com/poying2018/VibeUsage" target="_blank" rel="noopener">GitHub 仓库</a>
+    </div>
+
+    <div class="foot">
+      本页为 <b>Web 预览版</b>（模拟数据），用于展示作品界面与交互；完整功能（真实用量数据、GitHub 登录）请在手机安装 APK 使用。
+      源码公开于 <a href="https://github.com/poying2018/VibeUsage" target="_blank" rel="noopener">github.com/poying2018/VibeUsage</a>。
+    </div>
+  </aside>
+</div>
+
+<!-- ================= VibeCafé 作品数据统计 ================= -->
+<script defer src="https://vibecafe.ai/telemetry/v1.js" data-vc-product-id="cmso1u2ap00000aj8cbim6js0" data-vc-auth-key="vc_web_TxO2zftqyRZuenNC_6rjQz5HLQ_S55QEzeCUFJBIbjE"></script>
+
+<script>
+/* ============ 品牌图标映射（与 Android 端 iconRules 对应，模糊包含匹配） ============ */
+const BRANDS = [
+  { label: 'Claude',  aliases: ['claude','anthropic'],  img: 'ic_tool_claude.png',   c: '#D97757' },
+  { label: 'OpenAI',  aliases: ['openai','gpt','chatgpt','codex','o1','o3','o4'], img: 'ic_tool_openai.png', c: '#10A37F' },
+  { label: 'Gemini',  aliases: ['gemini'],  img: 'ic_tool_gemini.png',  c: '#7C6BFF' },
+  { label: 'DeepSeek',aliases: ['deepseek'],img: 'ic_tool_deepseek.png',c: '#4D6BFE' },
+  { label: 'Qwen',    aliases: ['qwen','tongyi','dashscope'], img: 'ic_tool_qwen.png', c: '#615CED' },
+  { label: 'Kimi',    aliases: ['kimi','moonshot'], img: 'ic_tool_kimi.png', c: '#0ABDFF' },
+  { label: 'Mistral', aliases: ['mistral','mixtral','codestral'], img: 'ic_tool_mistral.png', c: '#FA520F' },
+  { label: 'Meta',    aliases: ['llama','meta'], img: 'ic_tool_meta.png', c: '#0866FF' },
+  { label: 'Tencent', aliases: ['hunyuan','hy3','hy','tencent'], img: 'ic_tool_tencent.png', c: '#2D9BF0' },
+  { label: 'Zhipu',   aliases: ['glm','chatglm','zhipu','zcode','zai'], img: 'ic_tool_zhipu.png', c: '#4F6EF7' },
+  { label: 'Grok',    aliases: ['grok','groq','xai'], img: 'ic_tool_grok.png', c: '#1F2937' },
+  { label: 'Cursor',  aliases: ['cursor'], img: 'ic_tool_cursor.png', c: '#3F3F46' },
+  { label: 'Trae',    aliases: ['trae'], img: 'ic_tool_trae.png', c: '#5146F5' },
+  { label: 'Cline',   aliases: ['cline'], img: 'ic_tool_cline.png', c: '#14B8A6' },
+  { label: 'OpenCode',aliases: ['opencode'], img: 'ic_tool_opencode.png', c: '#F97316' },
+  { label: 'LongCat', aliases: ['longcat'], img: 'ic_tool_longcat.png', c: '#8B5CF6' },
+  { label: 'Xiaomi',  aliases: ['mimo','xiaomi'], img: 'ic_tool_xiaomi.png', c: '#FF6900' },
+];
+function iconFor(name) {
+  const n = name.toLowerCase();
+  for (const b of BRANDS) if (b.aliases.some(a => n.includes(a))) return b;
+  return null;
+}
+function rowIconHtml(name) {
+  const b = iconFor(name);
+  if (b) {
+    const hex = b.c + '24'; /* 品牌色 14% 染底 */
+    return '<div class="row-ico" style="background:' + hex + '"><img src="assets/brands/' + b.img + '" alt="' + b.label + '"></div>';
+  }
+  return '<div class="row-ico" style="background:rgba(100,116,139,.14)"><span class="fallback">✨</span></div>';
+}
+
+/* ============ 各时间范围模拟数据 ============ */
+const RANGES = ['今日', '24小时', '7天', '30天', '全部'];
+const DATASETS = {
+  '今日': {
+    cost: '$12.42', trend: '+23%', up: true,
+    tokens: '8.6B', models: '12', apps: '14', sessions: '117',
+    tools: [
+      ['claude-code', '$3.42', '1.1B tokens · 28.4%'],
+      ['codex', '$2.18', '3.1B tokens · 18.1%'],
+      ['opencode', '$1.56', '640.2M tokens · 12.9%'],
+      ['zcode', '$0.98', '312.5M tokens · 8.1%'],
+      ['cursor', '$0.87', '289.4M tokens · 7.2%'],
+      ['hermes', '$0.66', '210.8M tokens · 5.5%'],
+      ['trae', '$0.54', '176.3M tokens · 4.5%'],
+      ['cline', '$0.41', '132.7M tokens · 3.4%'],
+    ],
+    models: [
+      ['deepseek-v4-flash', '$1.92', '3.1B tokens'],
+      ['gpt-5.6-luna', '$1.24', '412.6M tokens'],
+      ['gpt-5.6-sol', '$0.98', '356.2M tokens'],
+      ['deepseek-v4-flash-free', '$0.86', '2.8B tokens'],
+      ['qwen3.8-max', '$0.72', '258.4M tokens'],
+      ['glm-5.2', '$0.65', '231.9M tokens'],
+      ['hy3-free', '$0.48', '1.6B tokens'],
+      ['LongCat-2.0', '$0.43', '189.5M tokens'],
+      ['mimo-v2.5-free', '$0.31', '142.8M tokens'],
+      ['gpt-5.6-terra', '$0.27', '98.3M tokens'],
+    ],
+  },
+  '24小时': {
+    cost: '$15.87', trend: '-8%', up: false,
+    tokens: '11.2B', models: '12', apps: '14', sessions: '156',
+    tools: [
+      ['claude-code', '$4.65', '1.4B tokens · 29.3%'],
+      ['codex', '$2.86', '4.0B tokens · 18.0%'],
+      ['opencode', '$1.98', '812.4M tokens · 12.5%'],
+      ['zcode', '$1.32', '421.7M tokens · 8.3%'],
+      ['cursor', '$1.05', '352.1M tokens · 6.6%'],
+      ['hermes', '$0.88', '286.9M tokens · 5.5%'],
+      ['trae', '$0.72', '231.5M tokens · 4.5%'],
+      ['cline', '$0.55', '178.2M tokens · 3.5%'],
+    ],
+    models: [
+      ['deepseek-v4-flash', '$2.61', '4.1B tokens'],
+      ['gpt-5.6-luna', '$1.68', '558.3M tokens'],
+      ['gpt-5.6-sol', '$1.32', '481.7M tokens'],
+      ['deepseek-v4-flash-free', '$1.17', '3.7B tokens'],
+      ['qwen3.8-max', '$0.98', '348.5M tokens'],
+      ['glm-5.2', '$0.89', '315.2M tokens'],
+      ['hy3-free', '$0.66', '2.2B tokens'],
+      ['LongCat-2.0', '$0.59', '258.9M tokens'],
+      ['mimo-v2.5-free', '$0.43', '196.4M tokens'],
+      ['gpt-5.6-terra', '$0.37', '132.6M tokens'],
+    ],
+  },
+  '7天': {
+    cost: '$86.34', trend: '+12%', up: true,
+    tokens: '59.4B', models: '12', apps: '14', sessions: '842',
+    tools: [
+      ['claude-code', '$25.30', '7.8B tokens · 29.3%'],
+      ['codex', '$15.60', '21.9B tokens · 18.1%'],
+      ['opencode', '$10.80', '4.5B tokens · 12.5%'],
+      ['zcode', '$7.15', '2.3B tokens · 8.3%'],
+      ['cursor', '$5.70', '1.9B tokens · 6.6%'],
+      ['hermes', '$4.75', '1.6B tokens · 5.5%'],
+      ['trae', '$3.90', '1.3B tokens · 4.5%'],
+      ['cline', '$2.95', '1.0B tokens · 3.4%'],
+    ],
+    models: [
+      ['deepseek-v4-flash', '$14.20', '22.8B tokens'],
+      ['gpt-5.6-luna', '$9.15', '3.1B tokens'],
+      ['gpt-5.6-sol', '$7.20', '2.7B tokens'],
+      ['deepseek-v4-flash-free', '$6.35', '20.6B tokens'],
+      ['qwen3.8-max', '$5.30', '1.9B tokens'],
+      ['glm-5.2', '$4.80', '1.7B tokens'],
+      ['hy3-free', '$3.60', '12.4B tokens'],
+      ['LongCat-2.0', '$3.20', '1.4B tokens'],
+      ['mimo-v2.5-free', '$2.35', '1.1B tokens'],
+      ['gpt-5.6-terra', '$2.00', '742.1M tokens'],
+    ],
+  },
+  '30天': {
+    cost: '$342.10', trend: '+34%', up: true,
+    tokens: '238.6B', models: '13', apps: '16', sessions: '3205',
+    tools: [
+      ['claude-code', '$102.40', '31.2B tokens · 29.9%'],
+      ['codex', '$61.80', '87.6B tokens · 18.1%'],
+      ['opencode', '$42.50', '18.1B tokens · 12.4%'],
+      ['zcode', '$28.30', '9.2B tokens · 8.3%'],
+      ['cursor', '$22.10', '7.6B tokens · 6.5%'],
+      ['hermes', '$18.40', '6.3B tokens · 5.4%'],
+      ['trae', '$15.20', '5.1B tokens · 4.4%'],
+      ['cline', '$11.60', '3.9B tokens · 3.4%'],
+    ],
+    models: [
+      ['deepseek-v4-flash', '$56.80', '91.4B tokens'],
+      ['gpt-5.6-luna', '$36.20', '12.4B tokens'],
+      ['gpt-5.6-sol', '$28.40', '10.8B tokens'],
+      ['deepseek-v4-flash-free', '$25.10', '82.3B tokens'],
+      ['qwen3.8-max', '$21.30', '7.6B tokens'],
+      ['glm-5.2', '$19.20', '6.9B tokens'],
+      ['hy3-free', '$14.40', '49.6B tokens'],
+      ['LongCat-2.0', '$12.80', '5.6B tokens'],
+      ['mimo-v2.5-free', '$9.40', '4.3B tokens'],
+      ['gpt-5.6-terra', '$8.00', '3.0B tokens'],
+    ],
+  },
+  '全部': {
+    cost: '$1,286.45', trend: '+41%', up: true,
+    tokens: '892.1B', models: '15', apps: '18', sessions: '12486',
+    tools: [
+      ['claude-code', '$385.20', '116.5B tokens · 29.9%'],
+      ['codex', '$231.80', '327.2B tokens · 18.0%'],
+      ['opencode', '$158.60', '67.4B tokens · 12.3%'],
+      ['zcode', '$105.30', '34.1B tokens · 8.2%'],
+      ['cursor', '$82.40', '28.5B tokens · 6.4%'],
+      ['hermes', '$68.90', '23.6B tokens · 5.4%'],
+      ['trae', '$56.70', '19.2B tokens · 4.4%'],
+      ['cline', '$43.20', '14.6B tokens · 3.4%'],
+    ],
+    models: [
+      ['deepseek-v4-flash', '$212.40', '341.2B tokens'],
+      ['gpt-5.6-luna', '$135.80', '46.3B tokens'],
+      ['gpt-5.6-sol', '$106.20', '40.1B tokens'],
+      ['deepseek-v4-flash-free', '$93.70', '307.4B tokens'],
+      ['qwen3.8-max', '$79.60', '28.4B tokens'],
+      ['glm-5.2', '$71.80', '25.7B tokens'],
+      ['hy3-free', '$53.90', '185.2B tokens'],
+      ['LongCat-2.0', '$47.80', '20.9B tokens'],
+      ['mimo-v2.5-free', '$35.10', '16.1B tokens'],
+      ['gpt-5.6-terra', '$29.90', '11.2B tokens'],
+    ],
+  },
+};
+
+/* ============ 视图切换 ============ */
+let curRange = '今日';
+function enterApp(demo) {
+  if (!demo && !document.getElementById('apiKey').value.trim()) {
+    toast('请输入 API Key，或使用演示模式进入');
+    return;
+  }
+  document.getElementById('loginView').style.display = 'none';
+  document.getElementById('dashView').style.display = 'flex';
+  renderSeg();
+  renderRange('今日');
+  toast('欢迎使用 VibeUsage 预览版');
+}
+function exitApp() {
+  document.getElementById('dashView').style.display = 'none';
+  document.getElementById('loginView').style.display = 'flex';
+  toggleSettings(false);
+}
+
+/* ============ 分段控件 ============ */
+function renderSeg() {
+  const row = document.getElementById('segRow');
+  row.innerHTML = '';
+  RANGES.forEach((r, i) => {
+    const d = document.createElement('div');
+    d.className = 'seg-item' + (r === curRange ? ' active' : '');
+    d.textContent = r;
+    d.onclick = () => renderRange(r);
+    row.appendChild(d);
+  });
+  updateSlider();
+}
+function updateSlider() {
+  const idx = RANGES.indexOf(curRange);
+  document.getElementById('segSlider').style.transform = 'translateX(' + (idx * 100) + '%)';
+  document.querySelectorAll('.seg-item').forEach((el, i) => el.classList.toggle('active', i === idx));
+}
+
+/* ============ 渲染数据 ============ */
+function renderRange(r) {
+  curRange = r;
+  const ds = DATASETS[r];
+  document.getElementById('totalCost').textContent = ds.cost;
+  const tc = document.getElementById('trendChip');
+  tc.textContent = (ds.up ? '↗ ' : '↘ ') + ds.trend;
+  tc.className = 'trend-chip ' + (ds.up ? 'trend-up' : 'trend-down');
+  document.getElementById('stTokens').textContent = ds.tokens;
+  document.getElementById('stModels').textContent = ds.models;
+  document.getElementById('stApps').textContent = ds.apps;
+  document.getElementById('stSessions').textContent = ds.sessions;
+
+  const toolList = document.getElementById('toolList');
+  toolList.innerHTML = ds.tools.map(t => rowHtml(t[0], t[1], t[2])).join('');
+  const modelList = document.getElementById('modelList');
+  modelList.innerHTML = ds.models.map(m => rowHtml(m[0], m[1], m[2])).join('');
+  updateSlider();
+}
+function rowHtml(name, value, meta) {
+  return '<div class="glass-row list-row">' +
+    '<div class="row-left">' + rowIconHtml(name) +
+    '<div class="row-txt"><div class="row-name">' + name + '</div>' +
+    '<div class="row-meta">' + meta + '</div></div></div>' +
+    '<div class="row-val">' + value + '</div></div>';
+}
+
+/* ============ 设置 / Toast ============ */
+function toggleSettings(show) {
+  document.getElementById('settingsOverlay').style.display = show ? 'block' : 'none';
+}
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+/* 回车登录 */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.getElementById('loginView').style.display !== 'none') enterApp();
+});
+</script>
 </body>
 </html>
