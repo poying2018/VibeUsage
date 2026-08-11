@@ -1,0 +1,31 @@
+# Gradle / IDE
+*.iml
+.gradle
+/.idea
+.kotlin/
+/local.properties
+.DS_Store
+/captures
+.externalNativeBuild
+.cxx
+**/build/
+**/.cxx/
+
+# 本地工具/Agent 数据（不发布）
+.codebuddy/
+
+# 测试与临时产物（根目录，含真机截图/UI 导出，含隐私数据，禁止提交）
+/*.png
+/ui*.xml
+/ux.xml
+/uv.xml
+/_logos/
+/_site_favicon.svg
+/_site_icon.png
+/_v_white_432.png
+/build_log.txt
+/BUILD_STATUS.md
+/err.txt
+/proxy.log
+/maven_proxy.py
+/liquid_glass_preview.html
