@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Token Manager — 记录 Token，看见价值</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link rel="stylesheet" href="assets/style.css">
+  <script
+    defer
+    src="https://vibecafe.ai/telemetry/v1.js"
+    data-vc-product-id="cmso1u2ap00000aj8cbim6js0"
+    data-vc-auth-key="vc_web_TxO2zftqyRZuenNC_6rjQz5HLQ_S55QEzeCUFJBIbjE"
+  ></script>
+</head>
+<body>
+  <!-- Login Screen -->
+  <div class="login-screen" id="loginScreen">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg viewBox="0 0 24 24" width="52" height="52"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="#ffd700"/></svg>
+      </div>
+      <h1>Token Manager</h1>
+      <p class="login-subtitle">记录 AI Token 消耗，洞察使用价值</p>
+      <a href="/api/auth/github" class="github-btn">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        使用 GitHub 登录
+      </a>
+      <p class="login-hint">安全登录，仅获取公开信息</p>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div class="app" id="app" style="display:none;">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <svg viewBox="0 0 24 24" width="28" height="28"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="#ffd700"/></svg>
+        <span class="sidebar-brand">Token Manager</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-page="dashboard"><span class="nav-icon">📊</span><span class="nav-label">监控仪表盘</span></a>
+        <a href="#" class="nav-item" data-page="records"><span class="nav-icon">✏️</span><span class="nav-label">手动录入</span></a>
+        <a href="#" class="nav-item" data-page="asset"><span class="nav-icon">💎</span><span class="nav-label">流动资产</span></a>
+        <a href="#" class="nav-item" data-page="value"><span class="nav-icon">🌟</span><span class="nav-label">价值看板</span></a>
+        <a href="#" class="nav-item" data-page="cost"><span class="nav-icon">💰</span><span class="nav-label">词元规划</span></a>
+        <a href="#" class="nav-item" data-page="ai"><span class="nav-icon">🤖</span><span class="nav-label">AI 助手</span></a>
+        <a href="#" class="nav-item" data-page="proxy"><span class="nav-icon">🔗</span><span class="nav-label">API 代理</span></a>
+        <a href="#" class="nav-item" data-page="tools"><span class="nav-icon">🔌</span><span class="nav-label">工具接入</span></a>
+                <a href="#" class="nav-item" id="navAdmin" data-page="admin" style="display:none;"><span class="nav-icon">🛡️</span><span class="nav-label">运营管理</span></a>
+        <a href="#" class="nav-item" data-page="settings"><span class="nav-icon">⚙️</span><span class="nav-label">平台管理</span></a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="user-card" id="userCard">
+          <img class="user-avatar" id="userAvatar" src="" alt="">
+          <div class="user-info">
+            <span class="user-name" id="userName"></span>
+            <span class="user-login" id="userLogin"></span>
+          </div>
+        </div>
+        <button class="logout-btn" id="logoutBtn">退出登录</button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- ========== 仪表盘 ========== -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-header">
+          <h2 class="page-title">监控仪表盘</h2>
+          <span class="page-subtitle" id="todayDate"></span>
+        </div>
+        <div class="metrics-grid">
+          <div class="metric-card month"><div class="metric-icon">📅</div><div class="metric-label">本月 Token</div><div class="metric-value" id="metricMonthTokens">—</div><div class="metric-unit">Token</div></div>
+          <div class="metric-card today"><div class="metric-icon">⚡</div><div class="metric-label">今日 Token</div><div class="metric-value" id="metricTodayTokens">—</div><div class="metric-unit">Token</div></div>
+          <div class="metric-card cost"><div class="metric-icon">💰</div><div class="metric-label">本月费用</div><div class="metric-value" id="metricMonthCost">—</div><div class="metric-unit">元</div></div>
+          <div class="metric-card platforms"><div class="metric-icon">🔗</div><div class="metric-label">活跃平台</div><div class="metric-value" id="metricPlatforms">—</div><div class="metric-unit">个</div></div>
+          <div class="metric-card records"><div class="metric-icon">📝</div><div class="metric-label">本月记录</div><div class="metric-value" id="metricRecords">—</div><div class="metric-unit">条</div></div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="panel chart-panel">
+            <div class="panel-header"><h3>📈 近 30 天趋势</h3></div>
+            <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+          </div>
+          <div class="panel platform-panel">
+            <div class="panel-header"><h3>🏷️ 平台消耗分布</h3></div>
+            <div class="platform-list" id="platformList"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>🕐 最近记录</h3><a href="#" class="view-all" data-page="records">查看全部 →</a></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>平台</th><th>模型</th><th>输入 Token</th><th>输出 Token</th><th>费用</th><th>时间</th></tr></thead>
+              <tbody id="recentTbody"></tbody>
+            </table>
+            <div class="empty-state" id="emptyRecent" style="display:none;"><p>暂无记录，去 <a href="#" data-page="records">手动录入</a> 添加第一条吧</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 手动录入 ========== -->
+      <div class="page" id="page-records">
+        <div class="page-header"><h2 class="page-title">手动录入</h2><span class="page-subtitle">记录每次 AI API 调用消耗</span></div>
+        <div class="panel form-panel">
+          <div class="panel-header"><h3>➕ 新增记录</h3></div>
+          <form class="entry-form" id="entryForm">
+            <div class="form-row">
+              <div class="form-group"><label>平台 *</label><select class="form-select" id="formPlatform" required></select></div>
+              <div class="form-group"><label>模型</label><input type="text" class="form-input" id="formModel" placeholder="如 DeepSeek-V3"></div>
+              <div class="form-group"><label>项目</label><input type="text" class="form-input" id="formProject" placeholder="可选"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>输入 Token *</label><input type="number" class="form-input" id="formInputTokens" required min="0" placeholder="0"></div>
+              <div class="form-group"><label>输出 Token *</label><input type="number" class="form-input" id="formOutputTokens" required min="0" placeholder="0"></div>
+              <div class="form-group"><label>费用 (元)</label><input type="number" class="form-input" id="formCost" min="0" step="0.01" placeholder="0.00"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>备注</label><input type="text" class="form-input" id="formNote" placeholder="可选"></div>
+              <div class="form-group"><label>时间</label><input type="datetime-local" class="form-input" id="formDate"></div>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" id="resetForm">重置</button>
+              <button type="submit" class="btn btn-primary">保存记录</button>
+            </div>
+          </form>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>📋 历史记录</h3><span class="record-count" id="recordCount">共 0 条</span></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>平台</th><th>模型</th><th>项目</th><th>输入</th><th>输出</th><th>费用</th><th>时间</th><th>操作</th></tr></thead>
+              <tbody id="recordsTbody"></tbody>
+            </table>
+            <div class="empty-state" id="emptyRecords" style="display:none;"><p>暂无记录</p></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 流动资产 ========== -->
+      <div class="page" id="page-asset">
+        <div class="page-header"><h2 class="page-title">流动资产</h2><span class="page-subtitle">Token 资产总览</span></div>
+        <div class="asset-grid">
+          <div class="metric-card month"><div class="metric-icon">💎</div><div class="metric-label">累计 Token</div><div class="metric-value" id="assetTotalTokens">—</div><div class="metric-unit">Token</div></div>
+          <div class="metric-card cost"><div class="metric-icon">💰</div><div class="metric-label">累计费用</div><div class="metric-value" id="assetTotalCost">—</div><div class="metric-unit">元</div></div>
+          <div class="metric-card today"><div class="metric-icon">📊</div><div class="metric-label">日均消耗</div><div class="metric-value" id="assetDailyAvg">—</div><div class="metric-unit">Token/天</div></div>
+          <div class="metric-card platforms"><div class="metric-icon">🏆</div><div class="metric-label">最常用平台</div><div class="metric-value" id="assetTopPlatform" style="font-size:18px">—</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>📋 各平台资产分布</h3></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>平台</th><th>累计 Token</th><th>累计费用</th><th>记录数</th><th>占比</th></tr></thead>
+              <tbody id="assetTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 价值看板 ========== -->
+      <div class="page" id="page-value">
+        <div class="page-header"><h2 class="page-title">价值看板</h2><span class="page-subtitle">Token 价值分析</span></div>
+        <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="metric-card month"><div class="metric-icon">💵</div><div class="metric-label">每 Token 成本</div><div class="metric-value" id="valueCostPerToken">—</div><div class="metric-unit">元/百万Token</div></div>
+          <div class="metric-card today"><div class="metric-icon">📈</div><div class="metric-label">环比增长</div><div class="metric-value" id="valueGrowth">—</div><div class="metric-unit">%</div></div>
+          <div class="metric-card cost"><div class="metric-icon">🎯</div><div class="metric-label">最省钱平台</div><div class="metric-value" id="valueCheapest" style="font-size:18px">—</div></div>
+          <div class="metric-card records"><div class="metric-icon">⭐</div><div class="metric-label">综合性价比</div><div class="metric-value" id="valueBestValue" style="font-size:18px">—</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>🏷️ 平台性价比对比</h3></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>平台</th><th>输入价格(元/百万Token)</th><th>输出价格</th><th>性价比评级</th><th>总消耗</th></tr></thead>
+              <tbody id="valuePlatformTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 词元规划 ========== -->
+      <div class="page" id="page-cost">
+        <div class="page-header"><h2 class="page-title">词元规划</h2><span class="page-subtitle">成本优化建议</span></div>
+        <div class="cost-summary">
+          <div class="cost-card"><div class="cost-label">本月总成本</div><div class="cost-value" id="costTotal">¥0.00</div><div class="cost-sub" id="costTotalSub">—</div></div>
+          <div class="cost-card"><div class="cost-label">日均成本</div><div class="cost-value" id="costDaily">¥0.00</div><div class="cost-sub" id="costDailySub">—</div></div>
+          <div class="cost-card"><div class="cost-label">最贵平台</div><div class="cost-value" id="costTop">—</div><div class="cost-sub" id="costTopSub">—</div></div>
+          <div class="cost-card"><div class="cost-label">词元单价</div><div class="cost-value" id="costUnit">¥0.00</div><div class="cost-sub">每百万 Token 平均成本</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>💡 智能采购建议</h3></div>
+          <div id="recommendCards" class="recommend-grid"></div>
+        </div>
+        <div class="panel" style="margin-top:24px;">
+          <div class="panel-header"><h3>📋 主流平台词元价格参考</h3></div>
+          <div class="table-wrap">
+            <table class="price-table">
+              <thead><tr><th>平台</th><th>输入价格（元/百万Token）</th><th>输出价格</th><th>性价比评级</th></tr></thead>
+              <tbody id="priceTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== AI 助手 ========== -->
+      <div class="page" id="page-ai">
+        <div class="ai-chat-page">
+          <div class="ai-chat-header">
+            <div>
+              <div class="ai-chat-header-title">🤖 AI 助手</div>
+              <div class="ai-chat-header-subtitle">询问 Token 消耗、成本优化建议</div>
+            </div>
+            <button class="ai-new-chat-btn" id="aiNewChat">🔄 新对话</button>
+          </div>
+          <div class="ai-chat-messages" id="aiMessages">
+            <div class="ai-welcome-card">
+              <h3>你好！我是 Token 管理助手</h3>
+              <p>我可以帮你分析 Token 消耗、提供成本优化建议、解答使用问题。</p>
+            </div>
+          </div>
+          <div class="ai-chat-input-wrap">
+            <form id="aiForm" class="ai-form">
+              <input type="text" id="aiInput" class="ai-input" placeholder="输入问题..." autocomplete="off">
+              <button type="submit" class="ai-send-btn">发送</button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== API 代理 ========== -->
+      <div class="page" id="page-proxy">
+        <div class="page-header"><h2 class="page-title">API 代理</h2><span class="page-subtitle">管理代理 Token</span></div>
+        <div class="panel">
+          <div class="panel-header"><h3>➕ 生成代理 Token</h3></div>
+          <form class="entry-form" id="proxyForm">
+            <div class="form-row">
+              <div class="form-group"><label>名称</label><input type="text" class="form-input" id="proxyName" placeholder="如：开发环境"></div>
+              <div class="form-group" style="display:flex;align-items:flex-end;"><button type="submit" class="btn btn-primary">生成 Token</button></div>
+            </div>
+          </form>
+        </div>
+        <div class="panel" style="margin-top:24px;">
+          <div class="panel-header"><h3>📋 代理 Token 列表</h3></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>名称</th><th>Token</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody id="proxyTbody"></tbody>
+            </table>
+            <div class="empty-state" id="emptyProxy" style="display:none;"><p>暂无代理 Token</p></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:24px;">
+          <div class="panel-header"><h3>📖 使用说明</h3></div>
+          <div class="proxy-guide">
+            <p>代理 Token 用于在你的代码中安全调用 AI API，无需暴露真实 API Key。</p>
+            <code>Authorization: Bearer &lt;你的代理Token&gt;</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 工具接入 ========== -->
+      <div class="page" id="page-tools">
+        <div class="page-header"><h2 class="page-title">工具接入</h2><span class="page-subtitle">集成你的 AI 工具</span></div>
+        <div class="tools-grid">
+          <div class="tool-card">
+            <div class="tool-icon">🐍</div>
+            <h4>Python SDK</h4>
+            <p>pip install token-manager-sdk</p>
+            <code>from token_manager import Client<br>client = Client(api_key="your_key")</code>
+          </div>
+          <div class="tool-card">
+            <div class="tool-icon">📦</div>
+            <h4>Node.js</h4>
+            <p>npm install token-manager</p>
+            <code>const tm = require('token-manager')<br>tm.init({ apiKey })</code>
+          </div>
+          <div class="tool-card">
+            <div class="tool-icon">🌐</div>
+            <h4>REST API</h4>
+            <p>直接 HTTP 调用</p>
+            <code>POST /api/records<br>Authorization: Bearer token</code>
+          </div>
+          <div class="tool-card">
+            <div class="tool-icon">🔌</div>
+            <h4>OpenAI SDK 兼容</h4>
+            <p>兼容 OpenAI 格式</p>
+            <code>base_url = "https://proxy.tokenmanager.com.cn/v1"</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 功能全开 ========== -->
+      <div class="page" id="page-upgrade">
+        <div class="page-header"><h2 class="page-title">功能全开</h2><span class="page-subtitle">所有功能永久免费</span></div>
+        <div class="free-banner">
+          <div class="free-icon">🎉</div>
+          <h2>全部功能，永久免费</h2>
+          <p>Token Manager 承诺所有功能完全免费，无限制使用。</p>
+          <div class="free-features-grid">
+            <div class="free-feature-item"><span class="free-check">✓</span> 完整仪表盘与图表分析</div>
+            <div class="free-feature-item"><span class="free-check">✓</span> 无限手动录入</div>
+            <div class="free-feature-item"><span class="free-check">✓</span> 无限平台管理</div>
+            <div class="free-feature-item"><span class="free-check">✓</span> AI 智能助手</div>
+            <div class="free-feature-item"><span class="free-check">✓</span> API 代理 Token</div>
+            <div class="free-feature-item"><span class="free-check">✓</span> 流动资产与价值分析</div>
+            <div class="free-feature-item"><span class="free-check">✓</span> 词元规划与采购建议</div>
+            <div class="free-feature-item"><span class="free-check">✓</span> 运营管理后台</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 运营管理 ========== -->
+      <div class="page" id="page-admin">
+        <div class="page-header"><h2 class="page-title">运营管理</h2><span class="page-subtitle">系统管理后台</span></div>
+        <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="metric-card month"><div class="metric-icon">👥</div><div class="metric-label">用户总数</div><div class="metric-value" id="adminUserCount">—</div></div>
+          <div class="metric-card today"><div class="metric-icon">📝</div><div class="metric-label">记录总数</div><div class="metric-value" id="adminRecordCount">—</div></div>
+          <div class="metric-card cost"><div class="metric-icon">💰</div><div class="metric-label">累计费用</div><div class="metric-value" id="adminTotalCost">—</div><div class="metric-unit">元</div></div>
+          <div class="metric-card platforms"><div class="metric-icon">📮</div><div class="metric-label">待处理反馈</div><div class="metric-value" id="adminFeedbackCount">—</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h3>👥 用户管理</h3></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>ID</th><th>用户名</th><th>套餐</th><th>注册时间</th><th>操作</th></tr></thead>
+              <tbody id="adminUserTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:24px;">
+          <div class="panel-header"><h3>📮 反馈管理</h3></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>类型</th><th>内容</th><th>用户</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+              <tbody id="adminFeedbackTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 平台管理 ========== -->
+      <div class="page" id="page-settings">
+        <div class="page-header"><h2 class="page-title">平台管理</h2><span class="page-subtitle">管理你使用的 AI 平台</span></div>
+        <div class="panel">
+          <div class="panel-header"><h3>➕ 添加平台</h3></div>
+          <form class="entry-form" id="platformForm">
+            <div class="form-row">
+              <div class="form-group"><label>平台名称 *</label><input type="text" class="form-input" id="platName" required placeholder="如 Gemini"></div>
+              <div class="form-group"><label>图标 Emoji</label><input type="text" class="form-input" id="platIcon" placeholder="🔮" maxlength="2"></div>
+              <div class="form-group"><label>颜色</label><input type="color" class="form-input" id="platColor" value="#ffd700" style="height:42px;padding:4px;"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>输入价格 (元/百万Token)</label><input type="number" class="form-input" id="platInputPrice" step="0.1" min="0" placeholder="0"></div>
+              <div class="form-group"><label>输出价格 (元/百万Token)</label><input type="number" class="form-input" id="platOutputPrice" step="0.1" min="0" placeholder="0"></div>
+              <div class="form-group"><label>质量评分 (1-5)</label><input type="number" class="form-input" id="platQuality" min="1" max="5" placeholder="3"></div>
+            </div>
+            <div class="form-actions"><button type="submit" class="btn btn-primary">添加平台</button></div>
+          </form>
+        </div>
+        <div class="panel" style="margin-top:24px;">
+          <div class="panel-header"><h3>📋 已添加平台</h3></div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>图标</th><th>名称</th><th>输入价格</th><th>输出价格</th><th>评分</th></tr></thead>
+              <tbody id="platformsTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Feedback Float Button -->
+  <button class="feedback-float-btn" id="feedbackBtn" title="反馈建议">💬</button>
+
+  <!-- Feedback Modal -->
+  <div class="feedback-modal-overlay" id="feedbackOverlay">
+    <div class="feedback-modal">
+      <h3>💬 反馈建议</h3>
+      <div class="feedback-type-row">
+        <button class="feedback-type-btn active" data-type="suggestion">功能建议</button>
+        <button class="feedback-type-btn" data-type="bug">Bug 反馈</button>
+        <button class="feedback-type-btn" data-type="other">其他</button>
+      </div>
+      <textarea class="feedback-textarea" id="feedbackContent" placeholder="请输入你的建议或反馈..."></textarea>
+      <input type="text" class="feedback-input" id="feedbackContact" placeholder="联系方式（选填）">
+      <div class="feedback-submit-row">
+        <button class="feedback-cancel-btn" id="feedbackCancel">取消</button>
+        <button class="feedback-submit-btn" id="feedbackSubmit">提交</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
