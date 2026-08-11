@@ -2,6 +2,7 @@ package ai.vibecafe.usage.stats
 
 import android.util.Log
 import ai.vibecafe.usage.data.Bucket
+import ai.vibecafe.usage.data.Session
 import ai.vibecafe.usage.data.UsageResponse
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -150,6 +151,42 @@ private const val TAG = "VibeUsage"
         return result
     }
 
+    /**
+     * 会话是否落在当前时间范围内（按 lastMessageAt 判断，时间语义与 filterByTimeRange 完全一致）。
+     * 修复：此前 sessionCount 直接取 data.sessions.size（全量），切换时间范围时会话总数不变。
+     */
+    private fun filterSessionsByTimeRange(sessions: List<Session>, timeRange: TimeRange): List<Session> {
+        if (timeRange == TimeRange.ALL) return sessions
+        val now = Date()
+        val todayStr = dateFormat.format(now)
+        val endHour = Calendar.getInstance(beijingTz).apply {
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.time
+        val startHour = Calendar.getInstance(beijingTz).apply {
+            timeInMillis = endHour.time - 24L * 60L * 60L * 1000L
+        }.time
+        val from7 = Calendar.getInstance(beijingTz).apply {
+            time = dateFormat.parse(todayStr) ?: now
+            add(Calendar.DAY_OF_YEAR, -6)
+        }.time
+        val from30 = Calendar.getInstance(beijingTz).apply {
+            time = dateFormat.parse(todayStr) ?: now
+            add(Calendar.DAY_OF_YEAR, -29)
+        }.time
+        return sessions.filter { s ->
+            val t = parseIsoTime(s.lastMessageAt) ?: return@filter false
+            when (timeRange) {
+                TimeRange.TODAY -> toBeijingDateOnly(t) == todayStr
+                TimeRange.HOURS_24 -> !t.before(startHour) && !t.after(endHour)
+                TimeRange.DAYS_7 -> !t.before(from7)
+                TimeRange.DAYS_30 -> !t.before(from30)
+                else -> true
+            }
+        }
+    }
+
     fun filterBuckets(
         data: UsageResponse,
         timeRange: TimeRange,
@@ -176,7 +213,7 @@ private const val TAG = "VibeUsage"
             totalCost = buckets.sumOf { it.estimatedCost },
             toolCount = buckets.map { it.source }.distinct().size,
             modelCount = buckets.map { it.model }.distinct().size,
-            sessionCount = data.sessions.size
+            sessionCount = filterSessionsByTimeRange(data.sessions, timeRange).size
         )
     }
 
@@ -248,7 +285,7 @@ private const val TAG = "VibeUsage"
             .mapValues { (_, list) -> list.sumOf { it.estimatedCost } }
         val tokensBySession = buckets.groupBy { it.source + "|" + it.hostname }
             .mapValues { (_, list) -> list.sumOf { it.fullTokens() } }
-        return data.sessions
+        return filterSessionsByTimeRange(data.sessions, timeRange)
             .sortedByDescending { it.lastMessageAt }
             .map { s ->
                 val key = s.source + "|" + s.hostname

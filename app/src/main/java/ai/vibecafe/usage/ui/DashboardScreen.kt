@@ -242,7 +242,7 @@ private fun Header(
             Column {
                 Text("VibeUsage", style = GlassText.Title)
                 Spacer(Modifier.height(2.dp))
-                Text("用量概览 · v2.4.6", style = GlassText.Label)
+                Text("用量概览 · v2.4.7", style = GlassText.Label)
             }
         }
 
