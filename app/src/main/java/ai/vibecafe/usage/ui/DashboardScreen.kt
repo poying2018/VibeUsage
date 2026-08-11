@@ -120,25 +120,52 @@ fun DashboardScreen(
             Header(
                 onRefresh = onRefresh,
                 onOpenSettings = { settingsExpanded = true },
-                backdrop = backdrop
+                backdrop = backdrop,
+                wide = wide
             )
 
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .glassCard(backdrop)
-                    .padding(if (wide) 26.dp else 20.dp)
-            ) {
-                Summary(state, wide)
-                Spacer(Modifier.height(22.dp))
-                LiquidGlassSegmentedControl(
-                    items = RangeLabels,
-                    selectedIndex = selectedIndex,
-                    onSelect = { onSelectRange(RangeValues[it]) },
-                    backdrop = backdrop
-                )
-                Spacer(Modifier.height(20.dp))
-                StatsStrip(state)
+            if (wide) {
+                // 平板：总消耗（数字+趋势+分段）与统计网格并排，卡片更紧凑、信息密度更高
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .glassCard(backdrop)
+                        .padding(26.dp),
+                    horizontalArrangement = Arrangement.spacedBy(28.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1.15f)) {
+                        Summary(state, wide = true)
+                        Spacer(Modifier.height(18.dp))
+                        LiquidGlassSegmentedControl(
+                            items = RangeLabels,
+                            selectedIndex = selectedIndex,
+                            onSelect = { onSelectRange(RangeValues[it]) },
+                            backdrop = backdrop
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        StatsGrid(state)
+                    }
+                }
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .glassCard(backdrop)
+                        .padding(20.dp)
+                ) {
+                    Summary(state, wide = false)
+                    Spacer(Modifier.height(22.dp))
+                    LiquidGlassSegmentedControl(
+                        items = RangeLabels,
+                        selectedIndex = selectedIndex,
+                        onSelect = { onSelectRange(RangeValues[it]) },
+                        backdrop = backdrop
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    StatsStrip(state)
+                }
             }
 
             when {
@@ -165,7 +192,8 @@ fun DashboardScreen(
                                                 meta = "${formatTokens(item.tokens)} tokens · ${
                                                     String.format(Locale.US, "%.1f", item.percentage)
                                                 }%",
-                                                value = formatCost(item.cost)
+                                                value = formatCost(item.cost),
+                                                compact = true
                                             )
                                         }
                                     }
@@ -181,7 +209,8 @@ fun DashboardScreen(
                                                 icon = toolIconFor(item.model),
                                                 name = item.model,
                                                 meta = "${formatTokens(item.tokens)} tokens",
-                                                value = formatCost(item.cost)
+                                                value = formatCost(item.cost),
+                                                compact = true
                                             )
                                         }
                                     }
@@ -247,7 +276,7 @@ fun DashboardScreen(
                     settingsExpanded = false
                     onLogout()
                 },
-                topPadding = insets.calculateTopPadding() + 18.dp + 54.dp
+                topPadding = insets.calculateTopPadding() + 18.dp + if (wide) 62.dp else 54.dp
             )
         }
     }
@@ -257,7 +286,8 @@ fun DashboardScreen(
 private fun Header(
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
-    backdrop: com.kyant.backdrop.Backdrop
+    backdrop: com.kyant.backdrop.Backdrop,
+    wide: Boolean = false
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -267,8 +297,8 @@ private fun Header(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(15.dp))
+                    .size(if (wide) 52.dp else 46.dp)
+                    .clip(RoundedCornerShape(if (wide) 17.dp else 15.dp))
                     .background(
                         Brush.linearGradient(
                             listOf(Color(0xFF7EE8DF), Color(0xFF7C6BFF)),
@@ -282,14 +312,22 @@ private fun Header(
                     painter = painterResource(R.drawable.ic_logo_v),
                     contentDescription = "VibeUsage",
                     tint = Color.Unspecified,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(if (wide) 31.dp else 28.dp)
                 )
             }
-            Spacer(Modifier.width(13.dp))
+            Spacer(Modifier.width(if (wide) 15.dp else 13.dp))
             Column {
-                Text("VibeUsage", style = GlassText.Title)
+                Text(
+                    "VibeUsage",
+                    style = GlassText.Title,
+                    fontSize = if (wide) 27.sp else 23.sp
+                )
                 Spacer(Modifier.height(2.dp))
-                Text("用量概览 · v2.5.0", style = GlassText.Label)
+                Text(
+                    "用量概览 · v2.5.1",
+                    style = GlassText.Label,
+                    fontSize = if (wide) 14.sp else 13.sp
+                )
             }
         }
 
@@ -472,6 +510,28 @@ private fun StatsStrip(state: UiState) {
     }
 }
 
+/** 平板专用：四格统计 2×2 网格，紧凑呈现于总消耗卡片右侧。 */
+@Composable
+private fun StatsGrid(state: UiState) {
+    val stats = state.stats
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            MiniStat("Tokens", formatTokens(stats?.totalTokens ?: 0L))
+            MiniStat("模型", (stats?.modelCount ?: 0).toString())
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            MiniStat("应用", (stats?.toolCount ?: 0).toString())
+            MiniStat("会话", (stats?.sessionCount ?: 0).toString())
+        }
+    }
+}
+
 @Composable
 private fun MiniStat(label: String, value: String) {
     Column(horizontalAlignment = Alignment.Start) {
@@ -496,13 +556,17 @@ private fun GlassListRow(
     icon: ToolIcon,
     name: String,
     meta: String,
-    value: String
+    value: String,
+    compact: Boolean = false
 ) {
     Row(
         Modifier
             .fillMaxWidth()
             .glassRow(backdrop)
-            .padding(horizontal = 17.dp, vertical = 15.dp),
+            .padding(
+                horizontal = if (compact) 15.dp else 17.dp,
+                vertical = if (compact) 11.dp else 15.dp
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
