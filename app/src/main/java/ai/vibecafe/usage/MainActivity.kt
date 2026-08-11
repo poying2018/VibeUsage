@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
@@ -94,12 +95,13 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(
                 Modifier
+                    .widthIn(max = 460.dp)
                     .fillMaxWidth(0.86f)
                     .padding(22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("VibeUsage v2.4.7", style = GlassText.Title)
+                Text("VibeUsage v2.5.0", style = GlassText.Title)
                 Text("输入 VibeCafe API Key 以加载用量数据", style = GlassText.Label)
                 TextField(
                     value = key,

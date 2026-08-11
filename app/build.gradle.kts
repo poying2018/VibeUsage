@@ -15,8 +15,8 @@ android {
         // 低版本会自动降级为无折射/无模糊的半透明玻璃，不会崩溃。
         minSdk = 26
         targetSdk = 34
-        versionCode = 17
-        versionName = "2.4.7"
+        versionCode = 18
+        versionName = "2.5.0"
         vectorDrawables { useSupportLibrary = true }
     }
 

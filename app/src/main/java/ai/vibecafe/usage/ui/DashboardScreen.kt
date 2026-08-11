@@ -94,6 +94,7 @@ fun DashboardScreen(
 
     var bgPath by remember { mutableStateOf(BackgroundStore.get(context)) }
     var settingsExpanded by remember { mutableStateOf(false) }
+    val wide = isWideScreen()
 
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -126,9 +127,9 @@ fun DashboardScreen(
                 Modifier
                     .fillMaxWidth()
                     .glassCard(backdrop)
-                    .padding(20.dp)
+                    .padding(if (wide) 26.dp else 20.dp)
             ) {
-                Summary(state)
+                Summary(state, wide)
                 Spacer(Modifier.height(22.dp))
                 LiquidGlassSegmentedControl(
                     items = RangeLabels,
@@ -144,38 +145,84 @@ fun DashboardScreen(
                 state.isLoading -> StatusCard("正在加载用量数据…", backdrop)
                 state.error != null -> StatusCard(state.error, backdrop)
                 else -> {
-                    if (state.toolDistribution.isNotEmpty()) {
-                        SectionTitle("应用分布")
-                        Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                            state.toolDistribution.take(8).forEach { item ->
-                                GlassListRow(
-                                    backdrop = backdrop,
-                                    icon = toolIconFor(item.tool),
-                                    name = item.tool,
-                                    meta = "${formatTokens(item.tokens)} tokens · ${
-                                        String.format(Locale.US, "%.1f", item.percentage)
-                                    }%",
-                                    value = formatCost(item.cost)
-                                )
+                    val hasTools = state.toolDistribution.isNotEmpty()
+                    val hasModels = state.modelCosts.isNotEmpty()
+                    if (wide && (hasTools || hasModels)) {
+                        // 平板/宽屏：应用分布与模型消耗并排双列，充分利用横向空间
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(20.dp)
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                if (hasTools) {
+                                    SectionTitle("应用分布")
+                                    Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                                        state.toolDistribution.take(8).forEach { item ->
+                                            GlassListRow(
+                                                backdrop = backdrop,
+                                                icon = toolIconFor(item.tool),
+                                                name = item.tool,
+                                                meta = "${formatTokens(item.tokens)} tokens · ${
+                                                    String.format(Locale.US, "%.1f", item.percentage)
+                                                }%",
+                                                value = formatCost(item.cost)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Column(Modifier.weight(1f)) {
+                                if (hasModels) {
+                                    SectionTitle("模型消耗")
+                                    Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                                        state.modelCosts.take(10).forEach { item ->
+                                            GlassListRow(
+                                                backdrop = backdrop,
+                                                icon = toolIconFor(item.model),
+                                                name = item.model,
+                                                meta = "${formatTokens(item.tokens)} tokens",
+                                                value = formatCost(item.cost)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
-                    if (state.modelCosts.isNotEmpty()) {
-                        SectionTitle("模型消耗")
-                        Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                            state.modelCosts.take(10).forEach { item ->
-                                GlassListRow(
-                                    backdrop = backdrop,
-                                    icon = toolIconFor(item.model),
-                                    name = item.model,
-                                    meta = "${formatTokens(item.tokens)} tokens",
-                                    value = formatCost(item.cost)
-                                )
+                    } else {
+                        // 手机：单列顺序排列
+                        if (hasTools) {
+                            SectionTitle("应用分布")
+                            Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                                state.toolDistribution.take(8).forEach { item ->
+                                    GlassListRow(
+                                        backdrop = backdrop,
+                                        icon = toolIconFor(item.tool),
+                                        name = item.tool,
+                                        meta = "${formatTokens(item.tokens)} tokens · ${
+                                            String.format(Locale.US, "%.1f", item.percentage)
+                                        }%",
+                                        value = formatCost(item.cost)
+                                    )
+                                }
                             }
                         }
-                    }
-                    if (state.toolDistribution.isEmpty() && state.modelCosts.isEmpty()) {
-                        StatusCard("当前时间范围内没有用量记录", backdrop)
+                        if (hasModels) {
+                            SectionTitle("模型消耗")
+                            Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                                state.modelCosts.take(10).forEach { item ->
+                                    GlassListRow(
+                                        backdrop = backdrop,
+                                        icon = toolIconFor(item.model),
+                                        name = item.model,
+                                        meta = "${formatTokens(item.tokens)} tokens",
+                                        value = formatCost(item.cost)
+                                    )
+                                }
+                            }
+                        }
+                        if (!hasTools && !hasModels) {
+                            StatusCard("当前时间范围内没有用量记录", backdrop)
+                        }
                     }
                 }
             }
@@ -242,7 +289,7 @@ private fun Header(
             Column {
                 Text("VibeUsage", style = GlassText.Title)
                 Spacer(Modifier.height(2.dp))
-                Text("用量概览 · v2.4.7", style = GlassText.Label)
+                Text("用量概览 · v2.5.0", style = GlassText.Label)
             }
         }
 
@@ -347,7 +394,7 @@ private fun IconGlassButton(
 }
 
 @Composable
-private fun Summary(state: UiState) {
+private fun Summary(state: UiState, wide: Boolean = false) {
     val cost = state.stats?.totalCost ?: 0.0
     val trend = remember(state.dailyUsage, state.selectedTimeRange) { computeTrend(state) }
 
@@ -358,17 +405,21 @@ private fun Summary(state: UiState) {
     ) {
         Column {
             Text("总消耗（当前范围）", style = GlassText.Label)
-            Spacer(Modifier.height(7.dp))
+            Spacer(Modifier.height(if (wide) 10.dp else 7.dp))
             Row(verticalAlignment = Alignment.Bottom) {
-                Text(formatCost(cost), style = GlassText.Hero)
+                Text(
+                    formatCost(cost),
+                    style = GlassText.Hero,
+                    fontSize = if (wide) 56.sp else 44.sp
+                )
                 Spacer(Modifier.width(5.dp))
                 Text(
                     "USD",
                     fontFamily = HanSansFamily,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 15.sp,
+                    fontSize = if (wide) 18.sp else 15.sp,
                     color = Glass.InkMid,
-                    modifier = Modifier.padding(bottom = 3.dp)
+                    modifier = Modifier.padding(bottom = if (wide) 6.dp else 3.dp)
                 )
             }
         }
