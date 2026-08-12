@@ -51,6 +51,22 @@ data class ToolDetail(
     val percentage: Float
 )
 
+/** 长按模型详情：模型维度的细分指标，含缓存命中率。 */
+data class ModelDetail(
+    val model: String,
+    val cost: Double,
+    val tokens: Long,
+    val inputTokens: Long,
+    val outputTokens: Long,
+    val cachedTokens: Long,
+    val reasoningTokens: Long,
+    val toolCount: Int,
+    val sessionCount: Int,
+    val percentage: Float,
+    /** 缓存命中率（0~100）：cached / (input + cached)。 */
+    val cacheHitRate: Float
+)
+
 data class DailyUsage(
     val date: String,
     val tokens: Long,
@@ -70,6 +86,8 @@ data class DisplaySession(
 
 object StatsEngine {
 
+    private const val TAG = "VibeUsage"
+
     val beijingTz: TimeZone = TimeZone.getTimeZone("Asia/Shanghai")
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
@@ -88,10 +106,24 @@ object StatsEngine {
     private fun toBeijingDateOnly(date: Date): String = dateFormat.format(date)
     private fun toBeijingHour(date: Date): String = hourFormat.format(date)
 
+    /**
+     * 缓存 ISO 时间解析结果，避免同一 bucket 在多个 compute 函数间重复解析。
+     * 使用软引用语义——随着 filterBuckets 调用释放，不会内存泄漏。
+     */
+    private val isoCache = HashMap<String, Date?>()
+
+    private fun parseCached(iso: String): Date? {
+        return isoCache.getOrPut(iso) { parseIsoTime(iso) }
+    }
+
+    private fun clearIsoCache() {
+        isoCache.clear()
+    }
+
     /** Dedup buckets that differ only by project variant. */
     fun dedupResponse(response: UsageResponse): UsageResponse =
         response.copy(buckets = dedup(response.buckets))
-private const val TAG = "VibeUsage"
+
     fun dedup(buckets: List<Bucket>): List<Bucket> {
         return buckets
             .groupBy { "${it.source}|${it.model}|${it.hostname}|${it.bucketStart}" }
@@ -107,72 +139,20 @@ private const val TAG = "VibeUsage"
             }
     }
 
-    private fun filterByTimeRange(buckets: List<Bucket>, timeRange: TimeRange): List<Bucket> {
-        Log.d(TAG, "filter range=$timeRange input=${buckets.size}")
-        if (timeRange == TimeRange.ALL) return buckets
-        val result = when (timeRange) {
-            TimeRange.TODAY -> {
-                val todayStr = dateFormat.format(Date())
-                buckets.filter { bucket ->
-                    val t = parseIsoTime(bucket.bucketStart) ?: return@filter false
-                    toBeijingDateOnly(t) == todayStr
-                }
-            }
-            TimeRange.HOURS_24 -> {
-                val nowCal = Calendar.getInstance(beijingTz).apply {
-                    set(Calendar.MINUTE, 0)
-                    set(Calendar.SECOND, 0)
-                    set(Calendar.MILLISECOND, 0)
-                }
-                val endHour = nowCal.time
-                val startHour = Calendar.getInstance(beijingTz).apply {
-                    timeInMillis = nowCal.timeInMillis - 24L * 60L * 60L * 1000L
-                }.time
-                buckets.filter { bucket ->
-                    val t = parseIsoTime(bucket.bucketStart) ?: return@filter false
-                    !t.before(startHour) && !t.after(endHour)
-                }
-            }
-            TimeRange.DAYS_7 -> {
-                val todayStr = dateFormat.format(Date())
-                val cal = Calendar.getInstance(beijingTz).apply {
-                    time = dateFormat.parse(todayStr) ?: Date()
-                    add(Calendar.DAY_OF_YEAR, -6)
-                }
-                val fromStr = dateFormat.format(cal.time)
-                buckets.filter { bucket ->
-                    val t = parseIsoTime(bucket.bucketStart) ?: return@filter false
-                    val d = toBeijingDateOnly(t)
-                    d >= fromStr && d <= todayStr
-                }
-            }
-            TimeRange.DAYS_30 -> {
-                val todayStr = dateFormat.format(Date())
-                val cal = Calendar.getInstance(beijingTz).apply {
-                    time = dateFormat.parse(todayStr) ?: Date()
-                    add(Calendar.DAY_OF_YEAR, -29)
-                }
-                val fromStr = dateFormat.format(cal.time)
-                buckets.filter { bucket ->
-                    val t = parseIsoTime(bucket.bucketStart) ?: return@filter false
-                    val d = toBeijingDateOnly(t)
-                    d >= fromStr && d <= todayStr
-                }
-            }
-            else -> buckets
-        }
-        Log.d(TAG, "filter result=$timeRange output=${result.size}")
-        return result
-    }
+    /** 提取时间范围边界 Date，减少 filter 方法间的重复 Calendar 创建。 */
+    private data class TimeBoundaries(
+        val todayDate: Date,
+        val todayStr: String,
+        val endHour: Date,
+        val startHour: Date,
+        val from7: Date,
+        val from30: Date
+    )
 
-    /**
-     * 会话是否落在当前时间范围内（按 lastMessageAt 判断，时间语义与 filterByTimeRange 完全一致）。
-     * 修复：此前 sessionCount 直接取 data.sessions.size（全量），切换时间范围时会话总数不变。
-     */
-    private fun filterSessionsByTimeRange(sessions: List<Session>, timeRange: TimeRange): List<Session> {
-        if (timeRange == TimeRange.ALL) return sessions
+    private fun computeBoundaries(): TimeBoundaries {
         val now = Date()
         val todayStr = dateFormat.format(now)
+        val todayDate = dateFormat.parse(todayStr) ?: now
         val endHour = Calendar.getInstance(beijingTz).apply {
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
@@ -182,22 +162,45 @@ private const val TAG = "VibeUsage"
             timeInMillis = endHour.time - 24L * 60L * 60L * 1000L
         }.time
         val from7 = Calendar.getInstance(beijingTz).apply {
-            time = dateFormat.parse(todayStr) ?: now
+            time = todayDate
             add(Calendar.DAY_OF_YEAR, -6)
         }.time
         val from30 = Calendar.getInstance(beijingTz).apply {
-            time = dateFormat.parse(todayStr) ?: now
+            time = todayDate
             add(Calendar.DAY_OF_YEAR, -29)
         }.time
+        return TimeBoundaries(todayDate, todayStr, endHour, startHour, from7, from30)
+    }
+
+    /** 判断一个 Date 是否落在时间范围内。 */
+    private fun dateInRange(t: Date, timeRange: TimeRange, b: TimeBoundaries): Boolean {
+        return when (timeRange) {
+            TimeRange.TODAY -> toBeijingDateOnly(t) == b.todayStr
+            TimeRange.HOURS_24 -> !t.before(b.startHour) && !t.after(b.endHour)
+            TimeRange.DAYS_7 -> !t.before(b.from7)
+            TimeRange.DAYS_30 -> !t.before(b.from30)
+            TimeRange.ALL -> true
+        }
+    }
+
+    private fun filterByTimeRange(buckets: List<Bucket>, timeRange: TimeRange): List<Bucket> {
+        Log.d(TAG, "filter range=$timeRange input=${buckets.size}")
+        if (timeRange == TimeRange.ALL) return buckets
+        val b = computeBoundaries()
+        val result = buckets.filter { bucket ->
+            val t = parseCached(bucket.bucketStart) ?: return@filter false
+            dateInRange(t, timeRange, b)
+        }
+        Log.d(TAG, "filter result=$timeRange output=${result.size}")
+        return result
+    }
+
+    private fun filterSessionsByTimeRange(sessions: List<Session>, timeRange: TimeRange): List<Session> {
+        if (timeRange == TimeRange.ALL) return sessions
+        val b = computeBoundaries()
         return sessions.filter { s ->
-            val t = parseIsoTime(s.lastMessageAt) ?: return@filter false
-            when (timeRange) {
-                TimeRange.TODAY -> toBeijingDateOnly(t) == todayStr
-                TimeRange.HOURS_24 -> !t.before(startHour) && !t.after(endHour)
-                TimeRange.DAYS_7 -> !t.before(from7)
-                TimeRange.DAYS_30 -> !t.before(from30)
-                else -> true
-            }
+            val t = parseCached(s.lastMessageAt) ?: return@filter false
+            dateInRange(t, timeRange, b)
         }
     }
 
@@ -206,9 +209,12 @@ private const val TAG = "VibeUsage"
         timeRange: TimeRange,
         devices: Set<String> = emptySet()
     ): List<Bucket> {
+        clearIsoCache()
         val base = if (devices.isEmpty()) data.buckets
         else data.buckets.filter { it.hostname in devices }
-        return filterByTimeRange(base, timeRange)
+        return filterByTimeRange(base, timeRange).also {
+            clearIsoCache()
+        }
     }
 
     fun computeStats(data: UsageResponse, timeRange: TimeRange, devices: Set<String> = emptySet()): DashboardStats {
@@ -286,10 +292,40 @@ private const val TAG = "VibeUsage"
         )
     }
 
+    /** 长按模型详情：按模型名过滤出该模型在范围内的细分指标，并计算缓存命中率。 */
+    fun computeModelDetail(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        model: String,
+        devices: Set<String> = emptySet()
+    ): ModelDetail? {
+        val scoped = filterBuckets(data, timeRange, devices)
+        val buckets = scoped.filter { it.model == model }
+        if (buckets.isEmpty()) return null
+        val total = scoped.sumOf { it.fullTokens() }.toFloat()
+        val sources = buckets.map { it.source }.toSet()
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange).filter { it.source in sources }
+        val input = buckets.sumOf { it.inputTokens }
+        val cached = buckets.sumOf { it.cachedInputTokens }
+        return ModelDetail(
+            model = model,
+            cost = buckets.sumOf { it.estimatedCost },
+            tokens = buckets.sumOf { it.fullTokens() },
+            inputTokens = input,
+            outputTokens = buckets.sumOf { it.outputTokens },
+            cachedTokens = cached,
+            reasoningTokens = buckets.sumOf { it.reasoningOutputTokens },
+            toolCount = buckets.map { it.source }.distinct().size,
+            sessionCount = sessions.size,
+            percentage = if (total > 0f) buckets.sumOf { it.fullTokens() } / total * 100f else 0f,
+            cacheHitRate = if (input + cached > 0L) cached.toFloat() / (input + cached) * 100f else 0f
+        )
+    }
+
     fun computeDailyUsage(data: UsageResponse, timeRange: TimeRange): List<DailyUsage> {
         val buckets = filterBuckets(data, timeRange)
         return buckets.groupBy { bucket ->
-            val t = parseIsoTime(bucket.bucketStart) ?: return@groupBy ""
+            val t = parseCached(bucket.bucketStart) ?: return@groupBy ""
             toBeijingDateOnly(t)
         }
             .map { (date, list) ->
@@ -300,13 +336,16 @@ private const val TAG = "VibeUsage"
                 )
             }
             .sortedBy { it.date }
-            .map { it.copy(date = labelFormat.format(dateFormat.parse(it.date))) }
+            .map { entry ->
+                val parsed = dateFormat.parse(entry.date) ?: return@map entry
+                entry.copy(date = labelFormat.format(parsed))
+            }
     }
 
     fun computeHourlyUsage(data: UsageResponse): List<DailyUsage> {
         return data.buckets
             .groupBy { bucket ->
-                val t = parseIsoTime(bucket.bucketStart) ?: return@groupBy ""
+                val t = parseCached(bucket.bucketStart) ?: return@groupBy ""
                 toBeijingHour(t)
             }
             .map { (hour, list) ->
@@ -321,14 +360,16 @@ private const val TAG = "VibeUsage"
 
     fun computeDisplaySessions(data: UsageResponse, timeRange: TimeRange): List<DisplaySession> {
         val buckets = filterBuckets(data, timeRange)
-        val costBySession = buckets.groupBy { it.source + "|" + it.hostname }
-            .mapValues { (_, list) -> list.sumOf { it.estimatedCost } }
-        val tokensBySession = buckets.groupBy { it.source + "|" + it.hostname }
-            .mapValues { (_, list) -> list.sumOf { it.fullTokens() } }
+        // 单次分组，避免重复遍历
+        val aggBySession = buckets.groupBy { SessionKey(it.source, it.hostname) }
+            .mapValues { (_, list) ->
+                list.sumOf { it.estimatedCost } to list.sumOf { it.fullTokens() }
+            }
         return filterSessionsByTimeRange(data.sessions, timeRange)
             .sortedByDescending { it.lastMessageAt }
             .map { s ->
-                val key = s.source + "|" + s.hostname
+                val key = SessionKey(s.source, s.hostname)
+                val (cost, tokens) = aggBySession[key] ?: (0.0 to 0L)
                 DisplaySession(
                     source = s.source,
                     project = s.project,
@@ -336,12 +377,15 @@ private const val TAG = "VibeUsage"
                     lastMessageAt = s.lastMessageAt,
                     durationSeconds = s.durationSeconds,
                     messageCount = s.messageCount,
-                    tokens = tokensBySession[key] ?: 0L,
-                    cost = costBySession[key] ?: 0.0
+                    tokens = tokens,
+                    cost = cost
                 )
             }
     }
 
     fun availableDevices(data: UsageResponse): List<String> =
         data.buckets.map { it.hostname }.distinct().sorted()
+
+    /** 避免字符串拼接的 session 分组 key。 */
+    private data class SessionKey(val source: String, val hostname: String)
 }

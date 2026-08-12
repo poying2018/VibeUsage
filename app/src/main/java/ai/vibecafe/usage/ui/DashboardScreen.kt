@@ -11,6 +11,7 @@ import ai.vibecafe.usage.ui.theme.Glass
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.HanSansFamily
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -76,6 +77,7 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ai.vibecafe.usage.stats.ModelDetail
 import ai.vibecafe.usage.stats.ToolDetail
 import java.util.Locale
 import kotlin.math.abs
@@ -96,7 +98,9 @@ fun DashboardScreen(
     onRefresh: () -> Unit,
     onLogout: () -> Unit,
     onShowToolDetail: (String) -> Unit = {},
-    onHideToolDetail: () -> Unit = {}
+    onHideToolDetail: () -> Unit = {},
+    onShowModelDetail: (String) -> Unit = {},
+    onHideModelDetail: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val backdrop = rememberPageBackdrop()
@@ -132,7 +136,8 @@ fun DashboardScreen(
                 onRefresh = onRefresh,
                 onOpenSettings = { settingsExpanded = true },
                 backdrop = backdrop,
-                wide = wide
+                wide = wide,
+                refreshing = state.isRefreshing || state.isLoading
             )
 
             if (wide) {
@@ -179,6 +184,11 @@ fun DashboardScreen(
                 }
             }
 
+            // 降级提示：24 小时粒度不可用时友好告知（不影响主内容展示）
+            state.granularityNote?.let { note ->
+                GranularityNote(note, backdrop)
+            }
+
             when {
                 state.isLoading -> StatusCard("正在加载用量数据…", backdrop)
                 state.error != null -> StatusCard(state.error, backdrop)
@@ -223,7 +233,9 @@ fun DashboardScreen(
                                                 name = item.model,
                                                 meta = "${formatTokens(item.tokens)} tokens",
                                                 value = formatCost(item.cost),
-                                                compact = true
+                                                compact = true,
+                                                active = state.modelDetail?.model == item.model,
+                                                onLongPress = { onShowModelDetail(item.model) }
                                             )
                                         }
                                     }
@@ -259,7 +271,9 @@ fun DashboardScreen(
                                         icon = toolIconFor(item.model),
                                         name = item.model,
                                         meta = "${formatTokens(item.tokens)} tokens",
-                                        value = formatCost(item.cost)
+                                        value = formatCost(item.cost),
+                                        active = state.modelDetail?.model == item.model,
+                                        onLongPress = { onShowModelDetail(item.model) }
                                     )
                                 }
                             }
@@ -304,6 +318,16 @@ fun DashboardScreen(
                 onDismiss = onHideToolDetail
             )
         }
+
+        // 长按模型详情：同风格弹窗，额外突出缓存命中率
+        state.modelDetail?.let { detail ->
+            ModelDetailOverlay(
+                detail = detail,
+                icon = toolIconFor(detail.model),
+                backdrop = backdrop,
+                onDismiss = onHideModelDetail
+            )
+        }
     }
 }
 
@@ -312,7 +336,8 @@ private fun Header(
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
     backdrop: com.kyant.backdrop.Backdrop,
-    wide: Boolean = false
+    wide: Boolean = false,
+    refreshing: Boolean = false
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -349,7 +374,7 @@ private fun Header(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "用量概览 · v2.6.0",
+                    "用量概览 · v2.7.0",
                     style = GlassText.Label,
                     fontSize = if (wide) 14.sp else 13.sp
                 )
@@ -357,7 +382,13 @@ private fun Header(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            IconGlassButton(Icons.Filled.Refresh, "刷新", backdrop, onRefresh)
+            IconGlassButton(
+                imageVector = Icons.Filled.Refresh,
+                contentDescription = "刷新",
+                backdrop = backdrop,
+                onClick = onRefresh,
+                spinning = refreshing
+            )
             IconGlassButton(Icons.Filled.Settings, "设置", backdrop, onOpenSettings)
         }
     }
@@ -437,21 +468,36 @@ private fun IconGlassButton(
     imageVector: ImageVector,
     contentDescription: String,
     backdrop: com.kyant.backdrop.Backdrop,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    spinning: Boolean = false
 ) {
     val interaction = remember { MutableInteractionSource() }
+    // 加载/刷新时旋转图标，提供明确的进行中反馈
+    val rotation by animateFloatAsState(
+        targetValue = if (spinning) 360f else 0f,
+        animationSpec = if (spinning) {
+            androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(900, easing = LinearEasing)
+            )
+        } else {
+            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+        },
+        label = "refreshSpin"
+    )
     Box(
         Modifier
             .size(40.dp)
             .glassTile(backdrop, cornerRadius = 20.dp)
-            .clickable(interaction, null, onClick = onClick),
+            .clickable(interaction, null, enabled = !spinning, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = imageVector,
             contentDescription = contentDescription,
             tint = Glass.InkHi,
-            modifier = Modifier.size(21.dp)
+            modifier = Modifier
+                .size(21.dp)
+                .graphicsLayer { rotationZ = rotation }
         )
     }
 }
@@ -674,6 +720,33 @@ private fun StatusCard(text: String, backdrop: com.kyant.backdrop.Backdrop) {
     }
 }
 
+/** 粒度降级提示：玻璃质感的小信息条，不打断主内容。 */
+@Composable
+private fun GranularityNote(text: String, backdrop: com.kyant.backdrop.Backdrop) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .glassRow(backdrop, cornerRadius = 14.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Cloud,
+            contentDescription = null,
+            tint = Glass.AccentInk,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            text,
+            style = GlassText.Meta,
+            color = Glass.InkMid,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 /** 长按应用详情（iOS 3D Touch 风格）：暗化磨砂背景 + Q 弹玻璃卡 + 细分指标。 */
 @Composable
 private fun ToolDetailOverlay(
@@ -848,6 +921,221 @@ private fun DetailMetric(label: String, value: String) {
         Text(value, style = GlassText.NumericSmall)
         Spacer(Modifier.height(2.dp))
         Text(label, style = GlassText.Meta)
+    }
+}
+
+/**
+ * 长按模型详情：与 ToolDetailOverlay 同款 3D Touch 玻璃弹窗，
+ * 额外突出「缓存命中率」——大号百分比 + 渐变进度条 + 输入/缓存对比。
+ */
+@Composable
+private fun ModelDetailOverlay(
+    detail: ModelDetail,
+    icon: ToolIcon,
+    backdrop: com.kyant.backdrop.Backdrop,
+    onDismiss: () -> Unit
+) {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val dimAlpha by animateFloatAsState(
+        targetValue = if (shown) 0.45f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(220),
+        label = "modelDim"
+    )
+    val cardScale by animateFloatAsState(
+        targetValue = if (shown) 1f else 0.9f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "modelCardScale"
+    )
+    val cardAlpha by animateFloatAsState(
+        targetValue = if (shown) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(160),
+        label = "modelCardAlpha"
+    )
+    val ripple = remember { MutableInteractionSource() }
+    val hitRate = detail.cacheHitRate.coerceIn(0f, 100f)
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0D1520).copy(alpha = dimAlpha))
+            .clickable(ripple, null, onClick = onDismiss),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 340.dp)
+                .graphicsLayer {
+                    scaleX = cardScale
+                    scaleY = cardScale
+                    alpha = cardAlpha
+                }
+                .glassCard(backdrop, cornerRadius = 30.dp)
+                .clickable(ripple, null, onClick = {})
+                .padding(24.dp)
+        ) {
+            // 头部：品牌 Logo 大块 + 模型名
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(58.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(icon.color.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = if (icon.drawable != null) {
+                            painterResource(icon.drawable)
+                        } else {
+                            rememberVectorPainter(icon.vector!!)
+                        },
+                        contentDescription = icon.label,
+                        tint = if (icon.colorful) Color.Unspecified else icon.color,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        detail.model,
+                        style = GlassText.Title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "${detail.toolCount} 个应用 · ${detail.sessionCount} 个会话",
+                        style = GlassText.Meta
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+
+            // 消耗金额 + 占比 Chip
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text("消耗", style = GlassText.Label)
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            formatCost(detail.cost),
+                            style = GlassText.Hero,
+                            fontSize = 38.sp
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "USD",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Glass.InkMid,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+                }
+                Box(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Glass.AccentWash)
+                        .border(1.dp, Glass.AccentRim, CircleShape)
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        String.format(Locale.US, "占比 %.1f%%", detail.percentage),
+                        style = GlassText.Chip,
+                        color = Glass.AccentInk
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // 占比进度条
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color.Black.copy(alpha = 0.06f))
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth((detail.percentage / 100f).coerceIn(0f, 1f))
+                        .height(6.dp)
+                        .background(
+                            Brush.horizontalGradient(listOf(Color(0xFF0FC6B6), Color(0xFF5C7FFF)))
+                        )
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // 缓存命中率：核心指标，大号高亮展示
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text("缓存命中率", style = GlassText.Label)
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            String.format(Locale.US, "%.1f%%", hitRate),
+                            style = GlassText.Hero,
+                            fontSize = 36.sp,
+                            color = if (hitRate >= 50f) Glass.AccentInk else Glass.InkHi
+                        )
+                    }
+                }
+                Text(
+                    "${formatTokens(detail.cachedTokens)} / ${formatTokens(detail.inputTokens + detail.cachedTokens)}",
+                    style = GlassText.Meta
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.06f))
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(hitRate / 100f)
+                        .height(8.dp)
+                        .background(
+                            Brush.horizontalGradient(listOf(Color(0xFF0FC6B6), Color(0xFF7EE8DF)))
+                        )
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            // 细分指标 2×2 网格
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                DetailMetric("总 Tokens", formatTokens(detail.tokens))
+                DetailMetric("输入", formatTokens(detail.inputTokens))
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                DetailMetric("输出", formatTokens(detail.outputTokens))
+                DetailMetric("缓存", formatTokens(detail.cachedTokens))
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                DetailMetric("推理", formatTokens(detail.reasoningTokens))
+                DetailMetric("应用数", detail.toolCount.toString())
+            }
+        }
     }
 }
 

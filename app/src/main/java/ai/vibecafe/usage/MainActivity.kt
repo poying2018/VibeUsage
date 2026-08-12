@@ -82,7 +82,9 @@ private fun AppRoot() {
                 apiKey = ""
             },
             onShowToolDetail = vm::showToolDetail,
-            onHideToolDetail = vm::hideToolDetail
+            onHideToolDetail = vm::hideToolDetail,
+            onShowModelDetail = vm::showModelDetail,
+            onHideModelDetail = vm::hideModelDetail
         )
     }
 }
@@ -103,7 +105,7 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("VibeUsage v2.6.0", style = GlassText.Title)
+                Text("VibeUsage v2.7.0", style = GlassText.Title)
                 Text("输入 VibeCafe API Key 以加载用量数据", style = GlassText.Label)
                 TextField(
                     value = key,
