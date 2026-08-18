@@ -5,10 +5,13 @@
 
 ## ✨ 功能
 
-- **用量概览**：总消耗（USD）、趋势百分比、Tokens / 模型 / 应用 / 会话统计
-- **时间范围切换**：今日 / 24 小时 / 7 天 / 30 天 / 全部，液态玻璃折射滑块
+- **用量概览**：总消耗（USD，数字滚动动效）、趋势百分比、Tokens / 模型 / 应用 / 会话统计
+- **数据可视化**：用量趋势平滑面积图（日/小时粒度）、应用占比环形图、模型消耗行内进度条
+- **底部悬浮时间选择器**：今日 / 24 小时 / 7 天 / 30 天 / 全部，液态玻璃折射滑块，悬浮于页面底部并留出呼吸空间
+- **暗色模式**：深色液态玻璃主题，设置菜单可切换 跟随系统 / 浅色 / 深色，选择即时生效并持久化
+- **丰富动效**：卡片与列表分段入场、总消耗数字滚动、液态玻璃滑块 Q 弹折射、光斑流动背景（暗色下自发光）
 - **应用分布 & 模型消耗**：Top 列表 + 官方品牌彩色 Logo（Claude、OpenAI、Gemini、DeepSeek、Qwen、Kimi、混元、GLM、MiMo 等，自动模糊匹配）
-- **液态玻璃 UI**：GPU RuntimeShader 折射 / 模糊 / 高光、玻璃卡片、玻璃设置菜单
+- **液态玻璃 UI**：GPU RuntimeShader 折射 / 模糊 / 高光、玻璃卡片（顶部水晶高光）、玻璃设置菜单
 - **自定义背景**：从相册选图作为背景，重启保留
 - **全局思源黑体**（Source Han Sans / Noto Sans SC），中英文统一
 - **官网同款 V 字标**：启动器图标与应用内 Logo
@@ -31,6 +34,9 @@
 APK 输出于 `app/build/outputs/apk/debug/app-debug.apk`。
 也可用 Android Studio 直接打开本项目运行。
 
+> 注意：项目路径包含非 ASCII 字符（如 `F:\项目`）时，`gradle.properties` 已加入
+> `android.overridePathCheck=true` 放行 AGP 路径检查。
+
 ## 📲 安装使用
 
 1. 安装 APK（可前往 [Releases](https://github.com/poying2018/VibeUsage/releases) 下载）
@@ -47,15 +53,18 @@ APK 输出于 `app/build/outputs/apk/debug/app-debug.apk`。
 
 ```
 app/src/main/java/ai/vibecafe/usage/
-├── MainActivity.kt          # 入口 / 登录页
-├── core/                    # ApiKeyStore / BackgroundStore 本地持久化
+├── MainActivity.kt          # 入口 / 登录页 / 主题切换
+├── core/                    # ApiKeyStore / BackgroundStore / ThemeStore 本地持久化
 ├── data/                    # Retrofit 网络层（vibecafe.ai API）
 ├── stats/                   # 统计计算引擎
 └── ui/
-    ├── DashboardScreen.kt   # 主面板
+    ├── DashboardScreen.kt   # 主面板（底部悬浮时间选择器 / 图表 / 动效）
     ├── MainViewModel.kt     # 状态管理
+    ├── ToolIcons.kt         # 品牌 Logo 模糊匹配
+    ├── anim/                # 数字滚动 / 分段入场动效
+    ├── charts/              # 趋势面积图 / 占比环形图
     ├── glass/               # 液态玻璃组件（背景/卡片/滑块/动画）
-    └── theme/               # 设计令牌（颜色/排版/思源黑体）
+    └── theme/               # 亮暗双主题设计令牌（GlassPalette）/ 排版 / 思源黑体
 ```
 
 ## 📄 许可证

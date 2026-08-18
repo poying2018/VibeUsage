@@ -1,6 +1,6 @@
 package ai.vibecafe.usage.ui.glass
 
-import ai.vibecafe.usage.ui.theme.Glass
+import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.graphics.BitmapFactory
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -52,6 +52,7 @@ fun GlassBackground(
     modifier: Modifier = Modifier,
     imagePath: String? = null
 ) {
+    val p = LocalGlassPalette.current
     val imageBitmap = rememberDecodedImage(imagePath)
     val transition = rememberInfiniteTransition(label = "orbs")
 
@@ -91,41 +92,41 @@ fun GlassBackground(
             val h = size.height
 
             if (imageBitmap != null) {
-                // 自定义背景：图片铺底 + 半透明白纱保证对比度，玻璃折射更明显
+                // 自定义背景：图片铺底 + 半透明纱罩保证对比度，玻璃折射更明显
                 drawImageCover(imageBitmap)
-                drawRect(Color.White.copy(alpha = 0.30f))
-                // 边缘提亮晕罩（比默认弱，避免压掉照片）
+                drawRect(p.VeilImage)
+                // 边缘晕罩（比默认弱，避免压掉照片）
                 drawRect(
                     brush = Brush.radialGradient(
                         colorStops = arrayOf(
                             0.30f to Color.Transparent,
-                            1f to Color.White.copy(alpha = 0.32f)
+                            1f to p.VeilEdge
                         ),
                         center = Offset(w * 0.5f, h * 0.35f),
                         radius = maxOf(w, h) * 0.78f
                     )
                 )
             } else {
-                drawRect(Glass.Page)
+                drawRect(p.Page)
 
                 // 四层径向色雾
-                softRadial(Glass.WashPink, Offset(w * 0.80f, h * -0.12f), maxOf(w, h) * 0.90f, 0.44f)
-                softRadial(Glass.WashViolet, Offset(w * 0.10f, h * 0.06f), maxOf(w, h) * 0.85f, 0.42f)
-                softRadial(Glass.WashMint, Offset(w * 0.55f, h * 1.15f), maxOf(w, h) * 0.90f, 0.44f)
-                softRadial(Glass.WashCream, Offset(w * 0.18f, h * 0.92f), maxOf(w, h) * 0.68f, 0.40f)
+                softRadial(p.WashPink, Offset(w * 0.80f, h * -0.12f), maxOf(w, h) * 0.90f, 0.44f)
+                softRadial(p.WashViolet, Offset(w * 0.10f, h * 0.06f), maxOf(w, h) * 0.85f, 0.42f)
+                softRadial(p.WashMint, Offset(w * 0.55f, h * 1.15f), maxOf(w, h) * 0.90f, 0.44f)
+                softRadial(p.WashCream, Offset(w * 0.18f, h * 0.92f), maxOf(w, h) * 0.68f, 0.40f)
 
-                // 漂浮光斑（multiply 混合，模拟 CSS 的 mix-blend-mode:multiply + blur(60px)）
-                orb(Glass.OrbPink, Offset(w * 0.15f, h * -0.02f), w * 0.48f, p1)
-                orb(Glass.OrbBlue, Offset(w * 0.92f, h * 0.22f), w * 0.42f, p2)
-                orb(Glass.OrbTeal, Offset(w * 0.44f, h * 0.94f), w * 0.40f, p3)
-                orb(Glass.OrbAmber, Offset(w * 0.72f, h * 0.86f), w * 0.34f, p4)
+                // 漂浮光斑（亮色 multiply 混合 / 暗色 plus 自发光，模拟 CSS mix-blend-mode + blur）
+                orb(p.OrbPink, Offset(w * 0.15f, h * -0.02f), w * 0.48f, p1, p.OrbBlend)
+                orb(p.OrbBlue, Offset(w * 0.92f, h * 0.22f), w * 0.42f, p2, p.OrbBlend)
+                orb(p.OrbTeal, Offset(w * 0.44f, h * 0.94f), w * 0.40f, p3, p.OrbBlend)
+                orb(p.OrbAmber, Offset(w * 0.72f, h * 0.86f), w * 0.34f, p4, p.OrbBlend)
 
-                // .stage::after —— 中心透明、四周提亮的白色晕罩
+                // .stage::after —— 中心透明、四周渐变的晕罩（亮色提亮 / 暗色压暗）
                 drawRect(
                     brush = Brush.radialGradient(
                         colorStops = arrayOf(
                             0.26f to Color.Transparent,
-                            1f to Color.White.copy(alpha = 0.5f)
+                            1f to p.VeilEdge
                         ),
                         center = Offset(w * 0.5f, h * 0.35f),
                         radius = maxOf(w, h) * 0.78f
@@ -206,12 +207,14 @@ private fun DrawScope.softRadial(
 /**
  * 单个漂浮光斑。[progress] 0→1 对应 CSS `drift` 关键帧：
  * translate3d(5vw, 6vh) + scale(1 → 1.22)。
+ * [blend] 亮色主题用 Multiply（叠色），暗色主题用 Plus（自发光）。
  */
 private fun DrawScope.orb(
     color: Color,
     center: Offset,
     diameter: Float,
-    progress: Float
+    progress: Float,
+    blend: BlendMode
 ) {
     val w = size.width
     val h = size.height
@@ -231,7 +234,7 @@ private fun DrawScope.orb(
         ),
         radius = r,
         center = c,
-        blendMode = BlendMode.Multiply
+        blendMode = blend
     )
 }
 

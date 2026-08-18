@@ -6,4 +6,6 @@
     <color name="accent">#0BBFB0</color>
     <!-- 自适应启动图标的深色背景，与品牌主色 teal 呼应 -->
     <color name="bg_deep">#0A2E2B</color>
+    <!-- 暗色主题冷启动底色，与 Compose 端 DarkGlassPalette.Page 保持一致 -->
+    <color name="page_bg_night">#0B1019</color>
 </resources>

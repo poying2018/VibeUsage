@@ -1,7 +1,7 @@
 package ai.vibecafe.usage.ui.glass
 
-import ai.vibecafe.usage.ui.theme.Glass
 import ai.vibecafe.usage.ui.theme.GlassText
+import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -86,6 +86,7 @@ fun LiquidGlassSegmentedControl(
     modifier: Modifier = Modifier,
     height: Dp = 58.dp
 ) {
+    val p = LocalGlassPalette.current
     val count = items.size
     if (count == 0) return
 
@@ -176,33 +177,34 @@ fun LiquidGlassSegmentedControl(
                     shape = { Pill },
                     effects = {
                         vibrancy()
-                        blur(18f.dp.toPx())
+                        colorControls(saturation = 1.8f)   // 提饱和，背后内容颜色更醒目
+                        blur(10f.dp.toPx())                // 模糊收窄，内容形态可辨
                     },
                     highlight = null,
                     shadow = {
                         Shadow(
                             radius = 32f.dp,
                             offset = androidx.compose.ui.unit.DpOffset(0f.dp, 12f.dp),
-                            color = Glass.ShadowBar
+                            color = p.ShadowBar
                         )
                     },
                     innerShadow = {
                         InnerShadow(
                             radius = 6f.dp,
                             offset = androidx.compose.ui.unit.DpOffset(0f.dp, 2f.dp),
-                            color = Glass.InnerTint
+                            color = p.InnerTint
                         )
                     },
                     // 选择条导出成 shellBackdrop，供滑块一并折射（滑块「包住」选项字体）
                     exportedBackdrop = shellBackdrop,
                     onDrawSurface = {
                         drawRoundRect(
-                            color = Glass.SurfaceSoft,
+                            color = p.SelectorSurface,
                             cornerRadius = CornerRadius(size.height / 2f)
                         )
                     },
                     // inset 0 0 0 1px rgba(255,255,255,.7)
-                    onDrawFront = { drawInsetRim(Glass.Rim, 1f.dp.toPx()) }
+                    onDrawFront = { drawInsetRim(p.Rim, 1f.dp.toPx()) }
                 )
         )
 
@@ -271,7 +273,7 @@ fun LiquidGlassSegmentedControl(
                 items.forEachIndexed { index, label ->
                     val active = index == selectedIndex
                     val color by animateColorAsState(
-                        targetValue = if (active) Glass.InkStrong else Glass.InkMid,
+                        targetValue = if (active) p.InkStrong else p.InkMid,
                         animationSpec = tween(280, easing = EaseOutQuint),
                         label = "segmentColor"
                     )
@@ -359,7 +361,7 @@ fun LiquidGlassSegmentedControl(
                         Shadow(
                             radius = 24f.dp,
                             offset = androidx.compose.ui.unit.DpOffset(0f.dp, 8f.dp),
-                            color = Glass.ShadowPill
+                            color = p.ShadowPill
                         )
                     },
                     layerBlock = {
@@ -378,8 +380,8 @@ fun LiquidGlassSegmentedControl(
                             cornerRadius = CornerRadius(size.height / 2f)
                         )
                     },
-                    // border:1px solid rgba(255,255,255,.6)
-                    onDrawFront = { drawInsetRim(Color.White.copy(alpha = 0.6f), 1f.dp.toPx()) }
+                    // border:1px solid rgba(255,255,255,.4) —— 柔化轮廓，不再刺眼
+                    onDrawFront = { drawInsetRim(Color.White.copy(alpha = 0.4f), 1f.dp.toPx()) }
                 )
         )
     }

@@ -57,7 +57,14 @@ class MainViewModel : ViewModel() {
 
     fun loadData(apiKey: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null, granularityNote = null)
+            // 已有数据时视为「刷新」（保留内容区，仅显示头部进度圈）；首次加载才整页 loading
+            val hadData = _uiState.value.stats != null
+            _uiState.value = _uiState.value.copy(
+                isLoading = !hadData,
+                isRefreshing = hadData,
+                error = null,
+                granularityNote = null
+            )
 
             // 并行请求 daily + hourly，速度提升约 1 倍
             val dailyDeferred = async { repository.fetchDailyData(apiKey) }
@@ -81,6 +88,7 @@ class MainViewModel : ViewModel() {
 
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
+                    isRefreshing = false,
                     error = null,
                     granularityNote = note,
                     dailyData = daily,
@@ -96,6 +104,7 @@ class MainViewModel : ViewModel() {
             } else {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
+                    isRefreshing = false,
                     error = mapError(dailyResult.exceptionOrNull())
                 )
             }

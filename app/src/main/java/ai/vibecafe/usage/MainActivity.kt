@@ -1,29 +1,35 @@
 package ai.vibecafe.usage
 
 import ai.vibecafe.usage.core.ApiKeyStore
+import ai.vibecafe.usage.core.ThemeMode
+import ai.vibecafe.usage.core.ThemeStore
 import ai.vibecafe.usage.ui.DashboardScreen
 import ai.vibecafe.usage.ui.MainViewModel
 import ai.vibecafe.usage.ui.glass.GlassBackground
-import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.glass.rememberPageBackdrop
-import ai.vibecafe.usage.ui.theme.Glass
 import ai.vibecafe.usage.ui.theme.GlassText
-import ai.vibecafe.usage.ui.theme.HanSansTypography
+import ai.vibecafe.usage.ui.theme.GlassTheme
+import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -35,11 +41,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
@@ -48,9 +59,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme(typography = HanSansTypography) {
-                AppRoot()
-            }
+            AppRoot()
         }
     }
 }
@@ -62,37 +71,54 @@ private fun AppRoot() {
     val state by vm.uiState.collectAsStateWithLifecycle()
     var apiKey by remember { mutableStateOf(ApiKeyStore.get(context)) }
 
-    // 首次进入或退出登录后重新拿到 key 时，拉取数据
-    LaunchedEffect(apiKey) {
-        if (apiKey.isNotEmpty()) vm.loadData(apiKey)
+    // 外观模式：跟随系统 / 浅色 / 深色（持久化）
+    var themeMode by remember { mutableStateOf(ThemeStore.get(context)) }
+    val darkTheme = when (themeMode) {
+        ThemeMode.DARK -> true
+        ThemeMode.LIGHT -> false
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
 
-    if (apiKey.isEmpty()) {
-        LoginScreen(onLogin = { key ->
-            ApiKeyStore.save(context, key)
-            apiKey = key
-        })
-    } else {
-        DashboardScreen(
-            state = state,
-            onSelectRange = vm::setTimeRange,
-            onRefresh = { vm.loadData(apiKey) },
-            onLogout = {
-                ApiKeyStore.clear(context)
-                apiKey = ""
-            },
-            onShowToolDetail = vm::showToolDetail,
-            onHideToolDetail = vm::hideToolDetail,
-            onShowModelDetail = vm::showModelDetail,
-            onHideModelDetail = vm::hideModelDetail
-        )
+    GlassTheme(darkTheme = darkTheme) {
+        // 首次进入或退出登录后重新拿到 key 时，拉取数据
+        LaunchedEffect(apiKey) {
+            if (apiKey.isNotEmpty()) vm.loadData(apiKey)
+        }
+
+        if (apiKey.isEmpty()) {
+            LoginScreen(onLogin = { key ->
+                ApiKeyStore.save(context, key)
+                apiKey = key
+            })
+        } else {
+            DashboardScreen(
+                state = state,
+                onSelectRange = vm::setTimeRange,
+                onRefresh = { vm.loadData(apiKey) },
+                onLogout = {
+                    ApiKeyStore.clear(context)
+                    apiKey = ""
+                },
+                onShowToolDetail = vm::showToolDetail,
+                onHideToolDetail = vm::hideToolDetail,
+                onShowModelDetail = vm::showModelDetail,
+                onHideModelDetail = vm::hideModelDetail,
+                themeMode = themeMode,
+                onThemeModeChange = { mode ->
+                    themeMode = mode
+                    ThemeStore.set(context, mode)
+                }
+            )
+        }
     }
 }
 
 @Composable
 private fun LoginScreen(onLogin: (String) -> Unit) {
+    val palette = LocalGlassPalette.current
     val backdrop = rememberPageBackdrop()
     var key by remember { mutableStateOf("") }
+    val interaction = remember { MutableInteractionSource() }
 
     Box(Modifier.fillMaxSize()) {
         GlassBackground(backdrop)
@@ -105,43 +131,87 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("VibeUsage v2.7.0", style = GlassText.Title)
-                Text("输入 VibeCafe API Key 以加载用量数据", style = GlassText.Label)
+                // Logo
+                Box(
+                    Modifier
+                        .size(84.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xFF7EE8DF), Color(0xFF7C6BFF)),
+                                start = androidx.compose.ui.geometry.Offset.Zero,
+                                end = androidx.compose.ui.geometry.Offset(160f, 200f)
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_logo_v),
+                        contentDescription = "VibeUsage",
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text("VibeUsage", style = GlassText.Title, color = palette.InkHi)
+                Text(
+                    "输入 VibeCafe API Key 以加载用量数据",
+                    style = GlassText.Label,
+                    color = palette.InkMid
+                )
                 TextField(
                     value = key,
                     onValueChange = { key = it },
-                    placeholder = { Text("API Key", color = Glass.InkMid) },
+                    placeholder = { Text("API Key", color = palette.InkMid) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         imeAction = ImeAction.Done,
                         keyboardType = KeyboardType.Password
                     ),
                     colors = TextFieldDefaults.colors(
-                        focusedTextColor = Glass.InkHi,
-                        unfocusedTextColor = Glass.InkHi,
-                        focusedContainerColor = Color.White.copy(alpha = 0.5f),
-                        unfocusedContainerColor = Color.White.copy(alpha = 0.42f),
+                        focusedTextColor = palette.InkHi,
+                        unfocusedTextColor = palette.InkHi,
+                        focusedContainerColor = palette.SurfaceSoft,
+                        unfocusedContainerColor = palette.SurfaceSoft.copy(alpha = 0.72f),
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
-                        cursorColor = Glass.Accent
+                        cursorColor = palette.Accent
                     ),
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
+                // 登录按钮：青紫渐变玻璃
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .glassCard(backdrop, cornerRadius = 16.dp)
-                        .clickable(enabled = key.isNotBlank()) { onLogin(key.trim()) },
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(palette.Accent, Color(0xFF4E7BFF)),
+                                startX = 0f,
+                                endX = 480f
+                            )
+                        )
+                        .clickable(interaction, null, enabled = key.isNotBlank()) {
+                            onLogin(key.trim())
+                        }
+                        .padding(vertical = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         "登录",
                         style = GlassText.Chip,
-                        color = Glass.InkStrong,
-                        modifier = Modifier.padding(vertical = 13.dp)
+                        color = Color.White,
+                        fontSize = 15.sp
                     )
                 }
+                // 隐私提示
+                Text(
+                    "API Key 仅保存在本机，不会上传",
+                    style = GlassText.ChartAxis,
+                    color = palette.InkLo,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
         }
     }
