@@ -15,3 +15,8 @@ data class ReleaseAsset(
     @SerializedName("browser_download_url") val browserDownloadUrl: String? = null,
     @SerializedName("size") val size: Long = 0L
 )
+
+/** 仓库的一个 tag（检查更新以 tag 为准，而不是 releases/latest——只打 tag 不建 Release 也能被发现）。 */
+data class GitHubTag(
+    @SerializedName("name") val name: String? = null
+)

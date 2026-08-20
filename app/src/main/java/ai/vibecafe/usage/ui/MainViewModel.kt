@@ -30,7 +30,7 @@ import retrofit2.HttpException
 import java.io.File
 
 /** 检查更新流程的所处阶段。 */
-enum class UpdateStatus { IDLE, CHECKING, AVAILABLE, UP_TO_DATE, DOWNLOADING, DOWNLOADED, FAILED }
+enum class UpdateStatus { IDLE, CHECKING, AVAILABLE, UP_TO_DATE, DOWNLOADING, DOWNLOADED, FAILED, NO_APK }
 
 /** 检查更新 / 下载安装的界面状态。 */
 data class UpdateState(
@@ -207,31 +207,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!force && st != UpdateStatus.IDLE) return
         setUpdate { it.copy(status = UpdateStatus.CHECKING, message = null) }
         viewModelScope.launch {
-            val release = UpdateChecker.fetchLatestRelease()
-            if (release == null) {
-                setUpdate { it.copy(status = UpdateStatus.FAILED, message = "检查更新失败，请检查网络后重试") }
-                return@launch
-            }
-            val tag = release.tagName ?: release.name ?: run {
-                setUpdate { it.copy(status = UpdateStatus.FAILED, message = "没有找到版本信息") }
-                return@launch
-            }
-            val apk = release.assets.firstOrNull {
-                it.browserDownloadUrl != null && it.name?.lowercase()?.endsWith(".apk") == true
-            }
-            if (apk == null) {
-                setUpdate { it.copy(status = UpdateStatus.UP_TO_DATE, message = "当前已是最新版本 (v" + BuildConfig.VERSION_NAME + ")") }
-            } else if (UpdateChecker.isNewer(tag, BuildConfig.VERSION_NAME)) {
-                setUpdate {
+            // 以 tag 列表为准做语义版本比较，避免 releases/latest 漏掉「只打 tag 未建 Release」的新版本
+            val result = UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
+            when (result.status) {
+                UpdateChecker.Status.FAILED -> setUpdate {
+                    it.copy(status = UpdateStatus.FAILED, message = result.detail ?: "检查更新失败，请稍后重试")
+                }
+
+                UpdateChecker.Status.NO_RELEASE,
+                UpdateChecker.Status.UP_TO_DATE -> setUpdate {
                     it.copy(
-                        status = UpdateStatus.AVAILABLE,
-                        version = tag,
-                        apkUrl = apk.browserDownloadUrl,
-                        message = null
+                        status = UpdateStatus.UP_TO_DATE,
+                        message = "当前已是最新版本 (v" + BuildConfig.VERSION_NAME + ")"
                     )
                 }
-            } else {
-                setUpdate { it.copy(status = UpdateStatus.UP_TO_DATE, message = "当前已是最新版本 (v" + BuildConfig.VERSION_NAME + ")") }
+
+                UpdateChecker.Status.UPDATE_AVAILABLE -> {
+                    val url = result.apkUrl
+                    if (url == null) {
+                        // 有新版本但该版本还没发布带 APK 的 Release
+                        setUpdate {
+                            it.copy(
+                                status = UpdateStatus.NO_APK,
+                                version = result.latestVersion,
+                                message = "发现新版本 ${result.latestVersion?.removePrefix("v")}，安装包暂未发布"
+                            )
+                        }
+                    } else {
+                        setUpdate {
+                            it.copy(
+                                status = UpdateStatus.AVAILABLE,
+                                version = result.latestVersion,
+                                apkUrl = url,
+                                message = null
+                            )
+                        }
+                    }
+                }
             }
         }
     }

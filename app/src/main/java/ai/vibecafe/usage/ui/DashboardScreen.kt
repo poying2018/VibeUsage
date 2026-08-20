@@ -588,7 +588,7 @@ private fun UpdateBlock(
 
             UpdateStatus.AVAILABLE -> {
                 Text(
-                    "发现新版本 v${update.version}",
+                    "发现新版本 ${update.version?.removePrefix("v")}",
                     style = GlassText.Meta,
                     color = palette.InkHi
                 )
@@ -614,11 +614,23 @@ private fun UpdateBlock(
 
             UpdateStatus.DOWNLOADED -> {
                 Text(
-                    "v${update.version} 已下载",
+                    "${update.version?.removePrefix("v")} 已下载",
                     style = GlassText.Meta,
                     color = palette.AccentInk
                 )
                 UpdateActionRow("安装更新", onClick = onInstallUpdate, emphasis = true)
+            }
+
+            // 发现新版本但该版本尚未发布带 APK 的 Release（只打了 tag）
+            UpdateStatus.NO_APK -> {
+                Text(
+                    update.message ?: "发现新版本，安装包暂未发布",
+                    style = GlassText.Meta,
+                    color = palette.InkMid,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                UpdateActionRow("重新检查", onClick = onCheckUpdate)
             }
 
             UpdateStatus.FAILED -> {
