@@ -8,6 +8,8 @@ import ai.vibecafe.usage.stats.TimeRange
 import ai.vibecafe.usage.stats.ToolDetail
 import ai.vibecafe.usage.ui.anim.AnimatedCounter
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
+import ai.vibecafe.usage.ui.ds.DsPanelScreen
+import ai.vibecafe.usage.ui.ds.DsPanelViewModel
 import ai.vibecafe.usage.ui.charts.DonutChart
 import ai.vibecafe.usage.ui.charts.DonutSlice
 import ai.vibecafe.usage.ui.charts.TrendChart
@@ -91,6 +93,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -108,7 +111,7 @@ private val RangeValues = listOf(
     TimeRange.ALL
 )
 
-private const val APP_VERSION = "v2.8.3"
+private const val APP_VERSION = "v2.9.0"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,6 +142,8 @@ fun DashboardScreen(
 
     var bgPath by remember { mutableStateOf(BackgroundStore.get(context)) }
     var settingsExpanded by remember { mutableStateOf(false) }
+    var showDsPanel by remember { mutableStateOf(false) }  // DS+ Milky 面板切换
+    val dsPanelViewModel: DsPanelViewModel = viewModel()  // 与 DsPanelScreen 共享同一实例
     val wide = isWideScreen()
     val pullState = rememberPullToRefreshState()
 
@@ -163,7 +168,10 @@ fun DashboardScreen(
         PullToRefreshBox(
             state = pullState,
             isRefreshing = state.isRefreshing,
-            onRefresh = onRefresh,
+            onRefresh = {
+                if (showDsPanel) dsPanelViewModel.loadBalance()
+                else onRefresh()
+            },
             modifier = Modifier.fillMaxSize(),
             indicator = {
                 Box(
@@ -193,19 +201,28 @@ fun DashboardScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Header(
-                onRefresh = onRefresh,
+                onRefresh = {
+                    if (showDsPanel) dsPanelViewModel.loadBalance()
+                    else onRefresh()
+                },
                 onOpenSettings = { settingsExpanded = true },
+                onToggleDsPanel = { showDsPanel = !showDsPanel },
+                showDsPanel = showDsPanel,
                 backdrop = backdrop,
                 wide = wide,
                 refreshing = state.isRefreshing
             )
 
-            // 降级提示：24 小时粒度不可用时友好告知（不影响主内容展示）
+            // ---- 降级提示：24 小时粒度不可用时友好告知（不影响主内容展示）----
             state.granularityNote?.let { note ->
                 GranularityNote(note, backdrop)
             }
 
-            // ---- 总消耗卡片 ----
+            // ---- DS+ Milky 面板 / 主内容切换 ----
+            if (showDsPanel) {
+                DsPanelScreen(backdrop = backdrop)
+            } else {
+                // ---- 总消耗卡片 ----
             if (wide) {
                 Row(
                     Modifier
@@ -307,24 +324,27 @@ fun DashboardScreen(
                     }
                 }
             }
+        } // 结束 if (showDsPanel) 的 else 分支
         }
         } // PullToRefreshBox 结束
         } // 内容导出 Box 结束
 
-        // ---- 底部悬浮时间选择器（不贴边，留出呼吸空间；实时模糊背后的滚动内容）----
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .widthIn(max = 720.dp)
-                .fillMaxWidth()
-                .padding(start = 18.dp, end = 18.dp, bottom = insets.calculateBottomPadding() + 14.dp)
-        ) {
-            LiquidGlassSegmentedControl(
-                items = RangeLabels,
-                selectedIndex = selectedIndex,
-                onSelect = { onSelectRange(RangeValues[it]) },
-                backdrop = scrimBackdrop
-            )
+        // ---- 底部悬浮时间选择器（DS+ 面板时不显示；不贴边，留出呼吸空间；实时模糊背后的滚动内容）----
+        if (!showDsPanel) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .widthIn(max = 720.dp)
+                    .fillMaxWidth()
+                    .padding(start = 18.dp, end = 18.dp, bottom = insets.calculateBottomPadding() + 14.dp)
+            ) {
+                LiquidGlassSegmentedControl(
+                    items = RangeLabels,
+                    selectedIndex = selectedIndex,
+                    onSelect = { onSelectRange(RangeValues[it]) },
+                    backdrop = scrimBackdrop
+                )
+            }
         }
 
         // 设置菜单：同组合渲染，玻璃可真实采样页面背景光晕
@@ -382,6 +402,8 @@ fun DashboardScreen(
 private fun Header(
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
+    onToggleDsPanel: () -> Unit = {},
+    showDsPanel: Boolean = false,
     backdrop: com.kyant.backdrop.Backdrop,
     wide: Boolean = false,
     refreshing: Boolean = false
@@ -444,7 +466,29 @@ private fun Header(
                 onClick = onRefresh,
                 spinning = refreshing
             )
-            IconGlassButton(Icons.Filled.Settings, "设置", backdrop, onOpenSettings)
+            if (showDsPanel) {
+                // DS 面板中：点击返回 VibeUsage
+                IconGlassButton(
+                    imageVector = Icons.Filled.Cloud,
+                    contentDescription = "VibeUsage",
+                    backdrop = backdrop,
+                    onClick = onToggleDsPanel
+                )
+            } else {
+                // 主面板：设置 + DS+ 切换
+                IconGlassButton(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "设置",
+                    backdrop = backdrop,
+                    onClick = onOpenSettings
+                )
+                IconGlassButton(
+                    imageVector = Icons.Filled.Cloud,
+                    contentDescription = "DS+",
+                    backdrop = backdrop,
+                    onClick = onToggleDsPanel
+                )
+            }
         }
     }
 }

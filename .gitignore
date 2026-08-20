@@ -15,6 +15,14 @@
 # 本地工具/Agent 数据（不发布）
 .codebuddy/
 
+# 签名与发布（含密钥，禁止提交）
+/keystore.properties
+/vibecafe-release.jks
+/dist/
+
+# 反编译产物（第三方 APK，禁止提交）
+/_decompiled/
+
 # 真机/模拟器验证截图（含真实用量数据，禁止提交）
 /_verify/
 
