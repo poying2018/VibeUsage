@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,8 +17,8 @@ android {
         // 低版本会自动降级为无折射/无模糊的半透明玻璃，不会崩溃。
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "2.8.0"
+        versionCode = 23
+        versionName = "2.8.1"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -30,9 +32,19 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        // 检查更新功能用 BuildConfig.VERSION_NAME 对比远程版本
+        buildConfig = true
+    }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
+}
+
+// Kotlin 2.x 推荐写法：compilerOptions DSL 替代已弃用的 kotlinOptions
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
 }
 
 dependencies {
@@ -52,6 +64,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material3:material3-window-size-class")
     implementation("androidx.compose.material:material-icons-extended")
 
     implementation("com.squareup.retrofit2:retrofit:2.11.0")

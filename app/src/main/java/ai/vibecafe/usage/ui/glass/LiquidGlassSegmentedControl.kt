@@ -380,8 +380,8 @@ fun LiquidGlassSegmentedControl(
                             cornerRadius = CornerRadius(size.height / 2f)
                         )
                     },
-                    // border:1px solid rgba(255,255,255,.4) —— 柔化轮廓，不再刺眼
-                    onDrawFront = { drawInsetRim(Color.White.copy(alpha = 0.4f), 1f.dp.toPx()) }
+                    // border:1px —— 与选择条同一水平的描边（p.Rim），柔和不刺眼
+                    onDrawFront = { drawInsetRim(p.Rim, 1f.dp.toPx()) }
                 )
         )
     }

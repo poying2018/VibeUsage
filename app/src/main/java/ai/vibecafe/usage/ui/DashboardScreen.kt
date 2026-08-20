@@ -55,11 +55,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -98,8 +108,9 @@ private val RangeValues = listOf(
     TimeRange.ALL
 )
 
-private const val APP_VERSION = "v2.8.0"
+private const val APP_VERSION = "v2.8.1"
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     state: UiState,
@@ -110,6 +121,9 @@ fun DashboardScreen(
     onHideToolDetail: () -> Unit = {},
     onShowModelDetail: (String) -> Unit = {},
     onHideModelDetail: () -> Unit = {},
+    onCheckUpdate: () -> Unit = {},
+    onDownloadUpdate: () -> Unit = {},
+    onInstallUpdate: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onThemeModeChange: (ThemeMode) -> Unit = {}
 ) {
@@ -126,6 +140,7 @@ fun DashboardScreen(
     var bgPath by remember { mutableStateOf(BackgroundStore.get(context)) }
     var settingsExpanded by remember { mutableStateOf(false) }
     val wide = isWideScreen()
+    val pullState = rememberPullToRefreshState()
 
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -142,6 +157,26 @@ fun DashboardScreen(
             Modifier
                 .fillMaxSize()
                 .layerBackdrop(contentBackdrop)
+        ) {
+        // 下拉刷新：material3 PullToRefreshBox 监听内部 verticalScroll 的嵌套滚动，
+        // 顶部下滑即可触发刷新，刷新圈顶部留出状态栏空间
+        PullToRefreshBox(
+            state = pullState,
+            isRefreshing = state.isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+            indicator = {
+                Box(
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = insets.calculateTopPadding() + 4.dp)
+                ) {
+                    PullToRefreshDefaults.Indicator(
+                        isRefreshing = state.isRefreshing,
+                        state = pullState
+                    )
+                }
+            }
         ) {
         Column(
             Modifier
@@ -273,6 +308,7 @@ fun DashboardScreen(
                 }
             }
         }
+        } // PullToRefreshBox 结束
         } // 内容导出 Box 结束
 
         // ---- 底部悬浮时间选择器（不贴边，留出呼吸空间；实时模糊背后的滚动内容）----
@@ -312,6 +348,10 @@ fun DashboardScreen(
                 },
                 themeMode = themeMode,
                 onThemeModeChange = onThemeModeChange,
+                update = state.update,
+                onCheckUpdate = onCheckUpdate,
+                onDownloadUpdate = onDownloadUpdate,
+                onInstallUpdate = onInstallUpdate,
                 topPadding = insets.calculateTopPadding() + 18.dp + if (wide) 62.dp else 54.dp
             )
         }
@@ -419,8 +459,17 @@ private fun SettingsMenu(
     onLogout: () -> Unit,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
+    update: UpdateState,
+    onCheckUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
     topPadding: androidx.compose.ui.unit.Dp
 ) {
+    val palette = LocalGlassPalette.current
+    // 拦截菜单列内的点击：菜单内非交互区域（文本/留白/状态行）的点击
+    // 若不消费，会穿透到下方全屏 scrim 导致菜单意外关闭（如点完「检查更新」后
+    // 按钮变文本，再点同一位置就关掉了菜单）。
+    val menuInteraction = remember { MutableInteractionSource() }
     Box(
         Modifier
             .fillMaxSize()
@@ -428,19 +477,21 @@ private fun SettingsMenu(
         contentAlignment = Alignment.TopEnd
     ) {
         Column(
-            Modifier.width(226.dp),
+            Modifier
+                .width(226.dp)
+                .clickable(menuInteraction, null, onClick = {}),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             SettingsMenuItem(
                 backdrop = backdrop,
-                glyph = "🎨",
+                icon = Icons.Filled.PhotoLibrary,
                 label = "自定义背景",
                 onClick = onCustomBackground
             )
             if (showReset) {
                 SettingsMenuItem(
                     backdrop = backdrop,
-                    glyph = "↺",
+                    icon = Icons.Filled.RestartAlt,
                     label = "恢复默认背景",
                     onClick = onResetBackground
                 )
@@ -454,7 +505,12 @@ private fun SettingsMenu(
                 verticalArrangement = Arrangement.spacedBy(9.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("🌗", fontSize = 16.sp)
+                    Icon(
+                        imageVector = Icons.Filled.DarkMode,
+                        contentDescription = null,
+                        tint = palette.InkMid,
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(Modifier.width(10.dp))
                     Text("外观", style = GlassText.Body)
                 }
@@ -468,13 +524,133 @@ private fun SettingsMenu(
                     }
                 }
             }
+            // 检查更新 / 下载 / 安装
+            UpdateBlock(
+                update = update,
+                onCheckUpdate = onCheckUpdate,
+                onDownloadUpdate = onDownloadUpdate,
+                onInstallUpdate = onInstallUpdate,
+                backdrop = backdrop
+            )
             SettingsMenuItem(
                 backdrop = backdrop,
-                glyph = "⏻",
+                icon = Icons.AutoMirrored.Filled.Logout,
                 label = "退出登录",
                 onClick = onLogout
             )
         }
+    }
+}
+
+/** 设置菜单里的「检查更新 / 下载 / 安装」面板，随流程阶段切换内容。 */
+@Composable
+private fun UpdateBlock(
+    update: UpdateState,
+    onCheckUpdate: () -> Unit,
+    onDownloadUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
+    backdrop: com.kyant.backdrop.Backdrop
+) {
+    val palette = LocalGlassPalette.current
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .glassRow(backdrop, cornerRadius = 16.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Filled.SystemUpdate,
+                contentDescription = null,
+                tint = palette.InkMid,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("更新", style = GlassText.Body)
+        }
+
+        when (update.status) {
+            UpdateStatus.IDLE -> UpdateActionRow("检查更新", onClick = onCheckUpdate)
+
+            UpdateStatus.CHECKING -> Text(
+                "正在检查更新…",
+                style = GlassText.Meta,
+                color = palette.InkMid
+            )
+
+            UpdateStatus.UP_TO_DATE -> Text(
+                update.message ?: "已是最新版本",
+                style = GlassText.Meta,
+                color = palette.AccentInk
+            )
+
+            UpdateStatus.AVAILABLE -> {
+                Text(
+                    "发现新版本 v${update.version}",
+                    style = GlassText.Meta,
+                    color = palette.InkHi
+                )
+                UpdateActionRow("下载更新", onClick = onDownloadUpdate)
+            }
+
+            UpdateStatus.DOWNLOADING -> {
+                Text(
+                    "正在下载… ${(update.progress * 100).toInt()}%",
+                    style = GlassText.Meta,
+                    color = palette.InkMid
+                )
+                LinearProgressIndicator(
+                    progress = { update.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = palette.Accent,
+                    trackColor = palette.InkLo.copy(alpha = 0.5f)
+                )
+            }
+
+            UpdateStatus.DOWNLOADED -> {
+                Text(
+                    "v${update.version} 已下载",
+                    style = GlassText.Meta,
+                    color = palette.AccentInk
+                )
+                UpdateActionRow("安装更新", onClick = onInstallUpdate, emphasis = true)
+            }
+
+            UpdateStatus.FAILED -> {
+                update.message?.let {
+                    Text(it, style = GlassText.Meta, color = palette.Down)
+                }
+                UpdateActionRow("重试检查", onClick = onCheckUpdate)
+            }
+        }
+    }
+}
+
+/** 更新区块里的小按钮行。 */
+@Composable
+private fun UpdateActionRow(label: String, onClick: () -> Unit, emphasis: Boolean = false) {
+    val palette = LocalGlassPalette.current
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (emphasis) palette.AccentWash.copy(alpha = 0.9f) else palette.AccentWash)
+            .clickable(interaction, null, onClick = onClick)
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            style = GlassText.Chip,
+            color = palette.AccentInk
+        )
     }
 }
 
@@ -516,10 +692,11 @@ private fun RowScope.ThemeChip(
 @Composable
 private fun SettingsMenuItem(
     backdrop: com.kyant.backdrop.Backdrop,
-    glyph: String,
+    icon: ImageVector,
     label: String,
     onClick: () -> Unit
 ) {
+    val palette = LocalGlassPalette.current
     val interaction = remember { MutableInteractionSource() }
     Row(
         Modifier
@@ -529,7 +706,12 @@ private fun SettingsMenuItem(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(glyph, fontSize = 17.sp)
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = palette.InkMid,
+            modifier = Modifier.size(18.dp)
+        )
         Spacer(Modifier.width(12.dp))
         Text(label, style = GlassText.Body)
     }

@@ -34,7 +34,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 class MainActivity : ComponentActivity() {
@@ -80,9 +80,13 @@ private fun AppRoot() {
     }
 
     GlassTheme(darkTheme = darkTheme) {
-        // 首次进入或退出登录后重新拿到 key 时，拉取数据
-        LaunchedEffect(apiKey) {
-            if (apiKey.isNotEmpty()) vm.loadData(apiKey)
+        // 每次进入前台（首次进入、登录后、切后台再回来）都刷新数据，并静默检查更新
+        LifecycleResumeEffect(apiKey) {
+            if (apiKey.isNotEmpty()) {
+                vm.loadData(apiKey)
+                vm.checkUpdateIfIdle()
+            }
+            onPauseOrDispose { }
         }
 
         if (apiKey.isEmpty()) {
@@ -103,6 +107,9 @@ private fun AppRoot() {
                 onHideToolDetail = vm::hideToolDetail,
                 onShowModelDetail = vm::showModelDetail,
                 onHideModelDetail = vm::hideModelDetail,
+                onCheckUpdate = vm::checkUpdate,
+                onDownloadUpdate = vm::downloadUpdate,
+                onInstallUpdate = vm::installUpdate,
                 themeMode = themeMode,
                 onThemeModeChange = { mode ->
                     themeMode = mode

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径映射：下载的 APK 位于私有 external files 的 downloads/
+     或 cache 目录（getExternalFilesDir 不可用时兜底）。 -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-files-path name="downloads" path="downloads/" />
+    <cache-path name="cache" path="cache/" />
+</paths>

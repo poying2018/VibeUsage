@@ -1,6 +1,7 @@
 # Gradle / IDE
 *.iml
 .gradle
+.gradle-home/
 /.idea
 .kotlin/
 /local.properties

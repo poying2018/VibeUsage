@@ -95,7 +95,8 @@ fun Modifier.glassRow(
             drawRoundRect(color = p.SurfaceSoft, cornerRadius = CornerRadius(cornerRadius.toPx()))
         },
         onDrawFront = {
-            drawRim(p.Rim.copy(alpha = 0.86f), 1f.dp.toPx(), cornerRadius.toPx())
+            // 与选择条同一水平的描边（p.Rim）
+            drawRim(p.Rim, 1f.dp.toPx(), cornerRadius.toPx())
             if (sheen) {
                 drawTopSheen(p.SheenTop.copy(alpha = p.SheenTop.alpha * 0.7f), cornerRadius.toPx())
             }
