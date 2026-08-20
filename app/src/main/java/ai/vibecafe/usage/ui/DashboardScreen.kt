@@ -580,11 +580,14 @@ private fun UpdateBlock(
                 color = palette.InkMid
             )
 
-            UpdateStatus.UP_TO_DATE -> Text(
-                update.message ?: "已是最新版本",
-                style = GlassText.Meta,
-                color = palette.AccentInk
-            )
+            UpdateStatus.UP_TO_DATE -> {
+                Text(
+                    update.message ?: "已是最新版本",
+                    style = GlassText.Meta,
+                    color = palette.AccentInk
+                )
+                UpdateActionRow("重新检查", onClick = onCheckUpdate)
+            }
 
             UpdateStatus.AVAILABLE -> {
                 Text(
