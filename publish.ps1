@@ -1,4 +1,4 @@
-﻿# VibeUsage 一键发布脚本
+# VibeUsage 一键发布脚本
 # 用法:
 #   powershell -ExecutionPolicy Bypass -File publish.ps1 -Version 2.9.1
 # 脚本自动:更新版本号(versionName/versionCode/APP_VERSION) -> 构建签名 release
@@ -83,16 +83,18 @@ Write-Host "[5/7] 已推送" -ForegroundColor Green
 
 # 6. 创建/更新 GitHub Release
 Write-Host "[6/7] 更新 GitHub Release..." -ForegroundColor Yellow
-$existing = gh release view $tag --repo $Repo 2>&1
-if ($LASTEXITCODE -eq 0) {
+# 用 cmd 包装避免 PowerShell 5 对 gh 非零退出的干扰
+cmd /c "gh release view $tag --repo $Repo >nul 2>nul"
+$releaseExists = $LASTEXITCODE -eq 0
+if ($releaseExists) {
     # 已存在: 删除旧资产并上传新 APK
-    $oldAsset = gh release view $tag --repo $Repo --json assets 2>&1 | ConvertFrom-Json
+    $oldAsset = gh release view $tag --repo $Repo --json assets 2>$null | ConvertFrom-Json
     foreach ($a in $oldAsset.assets) {
-        gh release delete-asset $tag $a.name --repo $Repo --yes
+        gh release delete-asset $tag $a.name --repo $Repo --yes 2>$null
     }
-    gh release upload $tag $distApk --repo $Repo --clobber
+    gh release upload $tag $distApk --repo $Repo --clobber 2>$null
 } else {
-    gh release create $tag $distApk --repo $Repo --title "VibeUsage v$Version" --notes "VibeUsage v$Version 发布 (签名 APK)"
+    gh release create $tag $distApk --repo $Repo --title "VibeUsage v$Version" --notes "VibeUsage v$Version 发布 (签名 APK)" 2>$null
 }
 Write-Host "[6/7] Release $tag 已更新" -ForegroundColor Green
 
