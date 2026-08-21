@@ -1,4 +1,4 @@
-# VibeUsage 一键发布脚本
+﻿# VibeUsage 一键发布脚本
 # 用法:
 #   powershell -ExecutionPolicy Bypass -File publish.ps1 -Version 2.9.1
 # 脚本自动:更新版本号(versionName/versionCode/APP_VERSION) -> 构建签名 release
