@@ -90,12 +90,13 @@ object UpdateChecker {
         CheckResult(Status.UPDATE_AVAILABLE, latestVersion = latest, apkUrl = apkUrl)
     }
 
-    /** 拉取仓库 tag 列表；失败返回 null。 */
+    /** 拉取仓库 tag 列表；失败返回 null。经 Cloudflare 代理访问，国内网络可达。 */
     private fun fetchTags(): List<GitHubTag>? {
         val request = Request.Builder()
-            .url(TAGS_URL)
+            .url(DownloadAccelerator.accelerate(TAGS_URL))
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "VibeUsage")
+            .header("X-App-Key", DownloadAccelerator.appKey())
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful || response.body == null) return null
@@ -104,13 +105,14 @@ object UpdateChecker {
         }
     }
 
-    /** 按 tag 查 Release 里第一个 APK 附件的下载地址；该 tag 无 Release / 无 APK 时返回 null。 */
+    /** 按 tag 查 Release 里第一个 APK 附件的下载地址；该 tag 无 Release / 无 APK 时返回 null。经 Cloudflare 代理访问。 */
     private fun fetchReleaseApkUrl(tag: String): String? {
         val encoded = URLEncoder.encode(tag, "UTF-8")
         val request = Request.Builder()
-            .url(RELEASE_BY_TAG_URL + encoded)
+            .url(DownloadAccelerator.accelerate(RELEASE_BY_TAG_URL + encoded))
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "VibeUsage")
+            .header("X-App-Key", DownloadAccelerator.appKey())
             .build()
         client.newCall(request).execute().use { response ->
             // 404：该 tag 没有 Release（只打了 tag）
