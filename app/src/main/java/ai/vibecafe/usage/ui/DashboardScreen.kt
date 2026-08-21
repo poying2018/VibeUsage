@@ -111,7 +111,7 @@ private val RangeValues = listOf(
     TimeRange.ALL
 )
 
-private const val APP_VERSION = "v2.9.0"
+private const val APP_VERSION = "v2.9.1"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
