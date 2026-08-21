@@ -14,6 +14,15 @@ val keystoreProps = Properties().apply {
     if (f.exists()) FileInputStream(f).use { load(it) }
 }
 
+// 强制签名：发布版本必须签名，缺少签名配置直接构建失败，绝不产出未签名 APK
+if (keystoreProps.isEmpty()) {
+    throw GradleException(
+        "缺少签名配置 keystore.properties！\n" +
+        "发布版本必须签名。请确认 vibecafe-release.jks 与 keystore.properties 存在，\n" +
+        "参考 keystore.properties.example 配置后再执行 assembleRelease。"
+    )
+}
+
 android {
     namespace = "ai.vibecafe.usage"
     compileSdk = 36
@@ -32,12 +41,10 @@ android {
 
     signingConfigs {
         create("release") {
-            if (keystoreProps.isNotEmpty()) {
-                storeFile = file(keystoreProps["storeFile"] as String)
-                storePassword = keystoreProps["storePassword"] as String
-                keyAlias = keystoreProps["keyAlias"] as String
-                keyPassword = keystoreProps["keyPassword"] as String
-            }
+            storeFile = file(keystoreProps["storeFile"] as String)
+            storePassword = keystoreProps["storePassword"] as String
+            keyAlias = keystoreProps["keyAlias"] as String
+            keyPassword = keystoreProps["keyPassword"] as String
         }
     }
 
