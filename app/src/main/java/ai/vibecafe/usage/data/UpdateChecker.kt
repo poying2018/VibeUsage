@@ -124,6 +124,7 @@ object UpdateChecker {
 
     /**
      * 流式下载 APK 到 [dest]。
+     * 走 Cloudflare 边缘加速代理（[DownloadAccelerator]），代理地址与令牌对用户不可见。
      * [onProgress] 回调 0f..1f 进度（从 IO 线程调用，调用方需自行切回主线程更新 UI）。
      * 返回是否成功。
      */
@@ -131,7 +132,11 @@ object UpdateChecker {
         withContext(Dispatchers.IO) {
             if (dest.exists()) dest.delete()
             try {
-                val request = Request.Builder().url(url).header("User-Agent", "VibeUsage").build()
+                val request = Request.Builder()
+                    .url(DownloadAccelerator.accelerate(url))
+                    .header("User-Agent", "VibeUsage")
+                    .header("Authorization", "Bearer " + DownloadAccelerator.authToken())
+                    .build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use false
                     val body = response.body ?: return@use false
