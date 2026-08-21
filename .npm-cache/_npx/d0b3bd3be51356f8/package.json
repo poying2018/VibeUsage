@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@vibe-cafe/vibe-usage": "^0.10.13"
+  },
+  "_npx": {
+    "packages": [
+      "@vibe-cafe/vibe-usage"
+    ]
+  }
+}

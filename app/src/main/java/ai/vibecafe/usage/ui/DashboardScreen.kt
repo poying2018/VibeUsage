@@ -111,7 +111,7 @@ private val RangeValues = listOf(
     TimeRange.ALL
 )
 
-private const val APP_VERSION = "v2.9.1"
+private const val APP_VERSION = "v2.9.2"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -454,8 +454,11 @@ private fun Header(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(2.dp))
+                // 窄屏(竖屏)下省略日期，保证「用量概览 · 版本号」完整显示；
+                // 宽屏空间充足时保留完整信息
                 Text(
-                    "用量概览 · $APP_VERSION · $today",
+                    if (wide) "用量概览 · $APP_VERSION · $today"
+                    else "用量概览 · $APP_VERSION",
                     style = GlassText.Label,
                     fontSize = if (wide) 13.sp else 11.5.sp,
                     color = palette.InkMid,
