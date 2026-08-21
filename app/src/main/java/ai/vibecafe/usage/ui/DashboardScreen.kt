@@ -417,7 +417,12 @@ private fun Header(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // 左：logo + 标题。weight(1f) 让整组弹性收缩，窄屏(竖屏)时副标题被截断，
+        // 右侧按钮组始终完整可见，不会被挤出屏幕
+        Row(
+            Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Box(
                 Modifier
                     .size(if (wide) 52.dp else 46.dp)
@@ -444,7 +449,9 @@ private fun Header(
                     "VibeUsage",
                     style = GlassText.Title,
                     fontSize = if (wide) 27.sp else 23.sp,
-                    color = palette.InkHi
+                    color = palette.InkHi,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
