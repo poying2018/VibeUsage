@@ -491,7 +491,7 @@ private fun Header(
                 )
                 IconGlassButton(
                     imageVector = Icons.Filled.Cloud,
-                    contentDescription = "DS+",
+                    contentDescription = "DS余额",
                     backdrop = backdrop,
                     onClick = onToggleDsPanel
                 )

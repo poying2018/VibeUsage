@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -37,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,9 +49,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.isSystemInDarkTheme
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -125,7 +129,30 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
     val palette = LocalGlassPalette.current
     val backdrop = rememberPageBackdrop()
     var key by remember { mutableStateOf("") }
+    var verifying by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val interaction = remember { MutableInteractionSource() }
+
+    // 验证 API Key：调 vibecafe.ai 用量接口，成功(HTTP 200)才放行
+    val verifyAndLogin: (String) -> Unit = { rawKey ->
+        val k = rawKey.trim()
+        if (k.isNotBlank() && !verifying) {
+            verifying = true
+            error = null
+            scope.launch {
+                val ok = try {
+                    ai.vibecafe.usage.data.RetrofitClient.api.getUsageDaily("Bearer $k")
+                    true
+                } catch (e: Exception) {
+                    error = "API Key 验证失败，请检查后重试"
+                    false
+                }
+                verifying = false
+                if (ok) onLogin(k)
+            }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         GlassBackground(backdrop)
@@ -199,17 +226,35 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                                 endX = 480f
                             )
                         )
-                        .clickable(interaction, null, enabled = key.isNotBlank()) {
-                            onLogin(key.trim())
+                        .clickable(interaction, null, enabled = key.isNotBlank() && !verifying) {
+                            verifyAndLogin(key)
                         }
                         .padding(vertical = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
+                    if (verifying) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(
+                            "登录",
+                            style = GlassText.Chip,
+                            color = Color.White,
+                            fontSize = 15.sp
+                        )
+                    }
+                }
+                // 验证失败提示
+                if (error != null) {
                     Text(
-                        "登录",
-                        style = GlassText.Chip,
-                        color = Color.White,
-                        fontSize = 15.sp
+                        error!!,
+                        color = Color(0xFFE94560),
+                        fontSize = 13.sp,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
                     )
                 }
                 // 隐私提示

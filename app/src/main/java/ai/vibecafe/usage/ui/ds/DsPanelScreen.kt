@@ -120,7 +120,7 @@ private fun DsLoginCard(
             Spacer(Modifier.height(14.dp))
 
             Text(
-                text = "DS+ Milky",
+                text = "DS余额监控",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = DsAccent
@@ -270,7 +270,7 @@ private fun DsDataCard(
                 }
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    "DS+ Milky",
+                    "DS余额监控",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
