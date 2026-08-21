@@ -1,0 +1,10 @@
+name = "github-accelerator-worker"
+main = "index.js"
+compatibility_date = "2025-11-11"
+
+# KV 全局限流
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "9720f6e666bf43608d7ed849cd17d2a0"
+
+# AUTH_TOKEN(网页工具访问密码)与 APP_KEY(app 内置密钥)通过 wrangler secret 配置

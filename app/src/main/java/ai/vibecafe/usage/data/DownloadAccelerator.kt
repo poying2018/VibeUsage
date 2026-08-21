@@ -20,8 +20,8 @@ object DownloadAccelerator {
     /** 加密的 Cloudflare Worker 代理地址（自定义域名，国内可访问）。 */
     private const val ENC_BASE = "PhYhA0EKHRkjOjw+FzddAAACA3RqeWRMLQpI"
 
-    /** 加密的 Worker 访问令牌（AUTH_TOKEN）。 */
-    private const val ENC_TOKEN = "NAdlEQACVA90ZHs0W2xAVgBWBnNheDRTMEcECVYPIGJ5NAQ0R1YHC1B0anpiVDcXClJRB3RhfDRWYhVXUVZXJg=="
+    /** 加密的 app 专用访问密钥（Worker 端 APP_KEY，经 X-App-Key 头校验）。 */
+    private const val ENC_APP_KEY = "b1tgQgcCAQRwMSxmW2EXUQlWBH1jKjcGNEUFCQdQJzB5NFJnSgQHVAF9NyxuUmEXUwBQA3E1Lm9VbBcABlQEIQ=="
 
     /** 解密混淆字符串。 */
     private fun decrypt(encoded: String): String {
@@ -37,8 +37,8 @@ object DownloadAccelerator {
     /** 代理地址（不对外暴露，仅内部使用）。 */
     private fun base(): String = decrypt(ENC_BASE)
 
-    /** 访问令牌（不对外暴露，仅内部使用）。 */
-    internal fun authToken(): String = decrypt(ENC_TOKEN)
+    /** app 专用访问密钥（不对外暴露，仅内部使用）。 */
+    internal fun appKey(): String = decrypt(ENC_APP_KEY)
 
     /**
      * 把原始 GitHub 下载地址转换为经 Cloudflare 边缘加速的代理地址。

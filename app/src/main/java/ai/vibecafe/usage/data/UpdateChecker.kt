@@ -135,7 +135,7 @@ object UpdateChecker {
                 val request = Request.Builder()
                     .url(DownloadAccelerator.accelerate(url))
                     .header("User-Agent", "VibeUsage")
-                    .header("Authorization", "Bearer " + DownloadAccelerator.authToken())
+                    .header("X-App-Key", DownloadAccelerator.appKey())
                     .build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@use false
