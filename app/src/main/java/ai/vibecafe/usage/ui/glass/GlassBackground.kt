@@ -1,5 +1,7 @@
 package ai.vibecafe.usage.ui.glass
 
+import ai.vibecafe.usage.render.GlassEngine
+import ai.vibecafe.usage.render.rememberLightDirection
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.graphics.BitmapFactory
 import androidx.compose.animation.core.LinearEasing
@@ -15,7 +17,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -55,6 +60,25 @@ fun GlassBackground(
     val p = LocalGlassPalette.current
     val imageBitmap = rememberDecodedImage(imagePath)
     val transition = rememberInfiniteTransition(label = "orbs")
+
+    // ---- 自研渲染引擎（AGSL 极光层）：API 33+ 可用，绘制异常自动永久降级 ----
+    val engineShader = remember { GlassEngine.newAuroraShader() }
+    val engineFailed = remember { mutableStateOf(false) }
+    val light = rememberLightDirection()
+    // 动画时钟（仅着色器可用时驱动逐帧刷新）
+    val timeSec = if (engineShader != null) {
+        produceState(0f) {
+            var start = -1L
+            while (true) {
+                withFrameNanos { f ->
+                    if (start < 0) start = f
+                    value = (f - start) / 1_000_000_000f
+                }
+            }
+        }
+    } else {
+        remember { mutableStateOf(0f) }
+    }
 
     val p1 by transition.animateFloat(
         0f, 1f,
@@ -132,6 +156,32 @@ fun GlassBackground(
                         radius = maxOf(w, h) * 0.78f
                     )
                 )
+            }
+
+            // ---- 自研渲染引擎叠加层：程序化极光 + 光源镜面高光（无传感器时缓慢漂移）----
+            val shader = engineShader
+            if (shader != null && !engineFailed.value) {
+                runCatching {
+                    shader.setFloatUniform("uSize", w, h)
+                    shader.setFloatUniform("uTime", timeSec.value)
+                    shader.setFloatUniform("uLight", light.value.x, light.value.y)
+                    // 自定义背景图上减弱极光，保持照片可读；暗色（自发光）比亮色稍强
+                    val dark = p.OrbBlend == BlendMode.Plus
+                    val strength = when {
+                        imageBitmap != null -> 0.40f
+                        dark -> 0.75f
+                        else -> 0.45f
+                    }
+                    shader.setFloatUniform("uStrength", strength)
+                    shader.setFloatUniform("uColorA",
+                        p.OrbTeal.red, p.OrbTeal.green, p.OrbTeal.blue, 1f)
+                    shader.setFloatUniform("uColorB",
+                        p.OrbBlue.red, p.OrbBlue.green, p.OrbBlue.blue, 1f)
+                    drawRect(
+                        brush = androidx.compose.ui.graphics.ShaderBrush(shader),
+                        blendMode = p.OrbBlend
+                    )
+                }.onFailure { engineFailed.value = true }
             }
         }
     }
