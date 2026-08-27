@@ -8,6 +8,7 @@ import ai.vibecafe.usage.BuildConfig
 import ai.vibecafe.usage.core.ApiKeyStore
 import ai.vibecafe.usage.data.UpdateChecker
 import ai.vibecafe.usage.data.UsageRepository
+import kotlinx.coroutines.delay
 import ai.vibecafe.usage.data.UsageResponse
 import ai.vibecafe.usage.stats.CustomRange
 import ai.vibecafe.usage.stats.DashboardStats
@@ -154,12 +155,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 granularityNote = null
             )
 
+            val startTime = System.currentTimeMillis()
+
             // 并行请求 daily + hourly，速度提升约 1 倍
             val dailyDeferred = async { repository.fetchDailyData(apiKey) }
             val hourlyDeferred = async { repository.fetchHourlyData(apiKey) }
-
+            
+            // ...获取结果
             val dailyResult = dailyDeferred.await()
             val hourlyResult = hourlyDeferred.await()
+
+            // 防止网络太快导致骨架屏闪烁
+            if (!hadData) {
+                val elapsed = System.currentTimeMillis() - startTime
+                if (elapsed < 400L) delay(400L - elapsed)
+            }
 
             val daily = dailyResult.getOrNull()?.let { StatsEngine.dedupResponse(it) }
             val hourly = hourlyResult.getOrNull()?.let { StatsEngine.dedupResponse(it) }

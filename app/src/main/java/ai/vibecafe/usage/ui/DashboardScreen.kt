@@ -998,13 +998,21 @@ private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: ()
             }
             if (trend != null) TrendChip(trend)
         }
-        // 行 3：本月消耗 + 按日均推算的整月预测
-        state.monthProjection?.let { mp ->
-            Spacer(Modifier.height(if (wide) 8.dp else 5.dp))
+        // 行 3：本月消耗 + 按日均推算的整月预测（没有推算也要保持高度一致避免抖动）
+        Spacer(Modifier.height(if (wide) 8.dp else 5.dp))
+        val mp = state.monthProjection
+        if (mp != null) {
             Text(
                 "本月已用 " + formatCost(mp.monthCost) + " · 按日均预测整月 " + formatCost(mp.projected),
                 style = GlassText.Meta,
                 color = palette.InkLo
+            )
+        } else {
+            // 用透明文字占据相同高度
+            Text(
+                "本月已用",
+                style = GlassText.Meta,
+                color = androidx.compose.ui.graphics.Color.Transparent
             )
         }
     }
