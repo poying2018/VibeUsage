@@ -119,6 +119,8 @@ fun LiquidGlassSegmentedControl(
         // 必要时刻意允许比单段更宽（最多到整条宽），跨设备观感一致。
         val pillPadPx = with(density) { 22.dp.toPx() }
         val pillMinPx = with(density) { 56.dp.toPx() }
+        // 文案宽度与自适应缩字一次测量完成（拖动动画每帧重组时此缓存不可失效，
+        // 调用方必须传稳定引用的 items，否则每帧重测文字会直接掉帧）
         val textWidthsPx = remember(items) {
             items.map { label ->
                 textMeasurer.measure(
@@ -128,13 +130,9 @@ fun LiquidGlassSegmentedControl(
             }
         }
         // 7 档后单段变窄（如「24小时」四字），按段宽自动缩小字号，保证文字不挤不溢出
-        val fitScales = remember(items, segmentWidthPx) {
+        val fitScales = remember(textWidthsPx, segmentWidthPx) {
             val minPad = with(density) { 6.dp.toPx() }
-            items.map { label ->
-                val w = textMeasurer.measure(
-                    text = AnnotatedString(label),
-                    style = GlassText.SegmentActive
-                ).size.width.toFloat()
+            textWidthsPx.map { w ->
                 val avail = segmentWidthPx - minPad
                 if (w > avail && w > 0f) (avail / w).coerceIn(0.72f, 1f) else 1f
             }

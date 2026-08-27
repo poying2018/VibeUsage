@@ -128,6 +128,8 @@ private val RangeValues = listOf(
     TimeRange.DAYS_90,
     TimeRange.ALL
 )
+/** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
+private val MetricLabels = listOf("金额", "Tokens")
 
 private const val APP_VERSION = "v2.9.7"
 
@@ -290,7 +292,7 @@ fun DashboardScreen(
                 // 注意：必须采样页面 backdrop 而非 scrimBackdrop——本控件在内容层内，
                 // 采样含内容层的 backdrop 会形成 RenderNode 自引用循环导致 RenderThread 栈溢出
                 LiquidGlassSegmentedControl(
-                    items = listOf("金额", "Tokens"),
+                    items = MetricLabels,
                     selectedIndex = if (trendMetric == TrendMetric.COST) 0 else 1,
                     onSelect = { idx ->
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
