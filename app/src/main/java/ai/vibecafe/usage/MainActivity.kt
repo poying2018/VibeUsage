@@ -62,6 +62,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 桌面小组件的后台用量同步（已安装小组件时每 30 分钟刷新）
+        ai.vibecafe.usage.widget.UsageWidgetSync.ensureScheduled(this)
         setContent {
             AppRoot()
         }
@@ -75,15 +77,15 @@ private fun AppRoot() {
     val state by vm.uiState.collectAsStateWithLifecycle()
     var apiKey by remember { mutableStateOf(ApiKeyStore.get(context)) }
 
-    // 外观模式：跟随系统 / 浅色 / 深色（持久化）
+    // 外观模式：跟随系统 / 浅色 / 深色 / 纯黑（持久化）
     var themeMode by remember { mutableStateOf(ThemeStore.get(context)) }
     val darkTheme = when (themeMode) {
-        ThemeMode.DARK -> true
+        ThemeMode.DARK, ThemeMode.AMOLED -> true
         ThemeMode.LIGHT -> false
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
 
-    GlassTheme(darkTheme = darkTheme) {
+    GlassTheme(darkTheme = darkTheme, amoled = themeMode == ThemeMode.AMOLED) {
         // 每次进入前台（首次进入、登录后、切后台再回来）都刷新数据，并静默检查更新
         LifecycleResumeEffect(apiKey) {
             if (apiKey.isNotEmpty()) {
@@ -114,6 +116,7 @@ private fun AppRoot() {
                 onCheckUpdate = vm::checkUpdate,
                 onDownloadUpdate = vm::downloadUpdate,
                 onInstallUpdate = vm::installUpdate,
+                onSelectCustomRange = vm::setCustomRange,
                 themeMode = themeMode,
                 onThemeModeChange = { mode ->
                     themeMode = mode

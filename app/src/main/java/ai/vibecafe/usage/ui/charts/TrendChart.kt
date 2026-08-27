@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -44,6 +45,26 @@ import kotlin.math.roundToInt
 /** 趋势图纵轴指标：消耗金额 / Tokens 总量。 */
 enum class TrendMetric { COST, TOKENS }
 
+/** 纵轴上限吸附到「整数阶梯」，避免 781.7M / 521.2M 这类随意刻度。 */
+private fun niceAxisMax(v: Double): Double {
+    if (v <= 0.0) return 1.0
+    val base = Math.pow(10.0, Math.floor(Math.log10(v)))
+    val m = v / base
+    val ladder = doubleArrayOf(1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0)
+    val nice = ladder.first { m <= it }
+    return nice * base
+}
+
+/** 轴标签：与数据气泡同源格式化，但去掉无意义的 ".0"（800.0M -> 800M / $4.00 -> $4）。 */
+private fun axisLabel(v: Double, metric: TrendMetric): String {
+    val s = when (metric) {
+        TrendMetric.COST -> formatCost(v)
+        TrendMetric.TOKENS -> formatTokens(v.toLong())
+    }
+    // 仅去掉紧邻单位后缀（k/M/B）或串尾的零小数，避免误伤 380.6 中的有效位
+    return s.replace(Regex("\\.0+(?=[kMB]|$)"), "")
+}
+
 /**
  * 用量趋势面积图：平滑曲线 + 渐变填充 + 入场展开动画。
  * 数据来自 [DailyUsage] 序列（日 / 小时粒度），纵轴由 [metric] 决定。
@@ -65,6 +86,25 @@ fun TrendChart(
         progress.animateTo(1f, tween(950, easing = FastOutSlowInEasing))
     }
     val textMeasurer = rememberTextMeasurer()
+
+    fun elemValue(d: DailyUsage): Double = when (metric) {
+        TrendMetric.COST -> d.cost
+        TrendMetric.TOKENS -> d.tokens.toDouble()
+    }
+
+    // 指标切换动画：从上一指标的数值序列插值到当前序列，曲线"流动"过渡
+    // key 必须含 metric：切换指标时重算数值序列，触发 morph 动画
+    val animValues = remember(data, metric) { data.map { elemValue(it) } }
+    var prevValues by remember { mutableStateOf(animValues) }
+    val morph = remember { Animatable(1f) }
+    LaunchedEffect(animValues) {
+        if (animValues != prevValues && prevValues.size == animValues.size) {
+            morph.snapTo(0f)
+            morph.animateTo(1f, tween(450, easing = FastOutSlowInEasing))
+        }
+        prevValues = animValues
+    }
+    val fromValues = if (prevValues.size == animValues.size) prevValues else animValues
 
     // 选中点索引，-1 表示未选中；数据或指标切换后复位
     var selected by remember(data, metric) { mutableIntStateOf(-1) }
@@ -111,22 +151,31 @@ fun TrendChart(
             TrendMetric.COST -> d.cost
             TrendMetric.TOKENS -> d.tokens.toDouble()
         }
-        fun valueOf(i: Int): Double = elemValue(data[i])
+
         fun formatValue(v: Double): String = when (metric) {
             TrendMetric.COST -> formatCost(v)
             TrendMetric.TOKENS -> formatTokens(v.toLong())
         }
 
-        val maxV = max(data.maxOf { elemValue(it) }, 0.001)
-        val avgV = data.sumOf { elemValue(it) } / n
+        // 指标切换动画：从上一序列插值到当前序列
+        val morphT = morph.value
+        val values = if (morphT >= 1f) animValues else List(animValues.size) { i ->
+            val a = fromValues.getOrElse(i) { 0.0 }
+            a + (animValues[i] - a) * morphT
+        }
+        fun valueOf(i: Int): Double = values.getOrElse(i) { 0.0 }
+
+        // 纵轴上限吸附到整数阶梯，四分位刻度都是整数
+        val axisMax = niceAxisMax(values.maxOrNull() ?: 0.001)
+        val avgV = if (values.isEmpty()) 0.0 else values.sum() / values.size
 
         fun xOf(i: Int): Float = padLeft + if (n == 1) plotW / 2f else plotW * i / (n - 1).toFloat()
-        fun yOf(v: Double): Float = padTop + plotH * (1f - (v / maxV).toFloat().coerceIn(0f, 1f))
+        fun yOf(v: Double): Float = padTop + plotH * (1f - (v / axisMax).toFloat().coerceIn(0f, 1f))
 
-        // ---- 横向刻度虚线（0 / 1/3 / 2/3 / 满刻度）----
+        // ---- 横向刻度虚线（0 / 1/4 / 1/2 / 3/4 / 满刻度）----
         val gridColor = p.InkLo.copy(alpha = p.InkLo.alpha * 0.8f)
-        for (f in 0..3) {
-            val y = padTop + plotH * (1f - f / 3f)
+        for (f in 0..4) {
+            val y = padTop + plotH * (1f - f / 4f)
             var x = padLeft
             while (x < w - padRight) {
                 val seg = minOf(6.dp.toPx(), w - padRight - x)
@@ -192,6 +241,31 @@ fun TrendChart(
             }
         }
 
+        // ---- 峰值标注（数据较多时才显示，避免与数据点重复）----
+        if (n >= 7) {
+            val maxI = values.indices.maxByOrNull { values[it] } ?: -1
+            if (maxI >= 0 && maxI != selected) {
+                val px = xOf(maxI)
+                val py = yOf(valueOf(maxI))
+                val d = 3.4.dp.toPx()
+                // 菱形标记
+                drawPath(
+                    Path().apply {
+                        moveTo(px, py - d); lineTo(px + d, py)
+                        lineTo(px, py + d); lineTo(px - d, py); close()
+                    },
+                    secondary.copy(alpha = 0.95f * reveal)
+                )
+                val peakLab = textMeasurer.measure(
+                    AnnotatedString("峰 " + axisLabel(valueOf(maxI), metric)),
+                    style = GlassText.ChartAxis.copy(color = secondary, fontSize = 9.sp)
+                )
+                val lx = (px - peakLab.size.width / 2f).coerceIn(padLeft, (w - padRight - peakLab.size.width).coerceAtLeast(padLeft))
+                val ly = (py - peakLab.size.height - 9.dp.toPx()).coerceAtLeast(1.dp.toPx())
+                drawText(peakLab, topLeft = Offset(lx, ly))
+            }
+        }
+
         // ---- 均值参考虚线 ----
         if (n >= 2) {
             val avgY = yOf(avgV)
@@ -218,16 +292,16 @@ fun TrendChart(
         // ---- 标签 ----
         val labelColor = p.InkMid
         val axisStyle = GlassText.ChartAxis.copy(color = labelColor, fontSize = 10.sp)
-        val maxLabel = textMeasurer.measure(AnnotatedString(formatValue(maxV)), style = axisStyle)
+        val maxLabel = textMeasurer.measure(AnnotatedString(axisLabel(axisMax, metric)), style = axisStyle)
         drawText(maxLabel, topLeft = Offset(padLeft, 2.dp.toPx()))
 
-        // 2/3、1/3 刻度值（右侧对齐，弱化显示）
+        // 1/4、1/2、3/4 刻度值（右侧对齐，弱化显示；整数阶梯保证可读）
         val subStyle = GlassText.ChartAxis.copy(
             color = labelColor.copy(alpha = labelColor.alpha * 0.55f),
             fontSize = 9.sp
         )
-        for (frac in listOf(2f / 3f, 1f / 3f)) {
-            val lab = textMeasurer.measure(AnnotatedString(formatValue(maxV * frac)), style = subStyle)
+        for (frac in listOf(3f / 4f, 1f / 2f, 1f / 4f)) {
+            val lab = textMeasurer.measure(AnnotatedString(axisLabel(axisMax * frac, metric)), style = subStyle)
             drawText(
                 lab,
                 topLeft = Offset(

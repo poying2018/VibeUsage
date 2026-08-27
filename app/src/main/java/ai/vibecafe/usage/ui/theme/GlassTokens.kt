@@ -213,6 +213,20 @@ val DarkGlassPalette = GlassPalette(
     VeilImage = Color(0x59000000)       // 黑 .35
 )
 
+/** AMOLED 纯黑：纯黑底省电 + 玻璃高光更突出，其余沿用暗色令牌。 */
+val AmoledGlassPalette = DarkGlassPalette.copy(
+    Page = Color(0xFF000000),
+    Surface = Color(0x12FFFFFF),
+    SurfaceSoft = Color(0x0DFFFFFF),
+    SelectorSurface = Color(0x12FFFFFF),
+    // 色雾整体压暗，纯黑底上只留微弱层次
+    WashPink = Color(0xFF291426),
+    WashViolet = Color(0xFF161840),
+    WashMint = Color(0xFF0C2630),
+    WashCream = Color(0xFF2A201C),
+    VeilEdge = Color(0x8A000000)
+)
+
 /**
  * 排版令牌：只承载字体/字重/字号，颜色一律留空（Color.Unspecified），
  * 由调用处在组合期用当前调色板显式指定 —— 暗色模式才能正确取色。

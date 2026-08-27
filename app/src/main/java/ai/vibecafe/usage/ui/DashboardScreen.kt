@@ -4,6 +4,7 @@ import ai.vibecafe.usage.R
 import ai.vibecafe.usage.core.BackgroundStore
 import ai.vibecafe.usage.core.ThemeMode
 import ai.vibecafe.usage.stats.ModelDetail
+import ai.vibecafe.usage.stats.StatsEngine
 import ai.vibecafe.usage.stats.TimeRange
 import ai.vibecafe.usage.stats.ToolDetail
 import ai.vibecafe.usage.ui.anim.AnimatedCounter
@@ -27,9 +28,15 @@ import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -61,18 +68,23 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,7 +100,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -101,14 +115,16 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 
-private val RangeLabels = listOf("今日", "24小时", "7天", "30天", "全部")
+private val RangeLabels = listOf("今日", "24小时", "7天", "30天", "90天", "全部")
 private val RangeValues = listOf(
     TimeRange.TODAY,
     TimeRange.HOURS_24,
     TimeRange.DAYS_7,
     TimeRange.DAYS_30,
+    TimeRange.DAYS_90,
     TimeRange.ALL
 )
 
@@ -128,11 +144,13 @@ fun DashboardScreen(
     onCheckUpdate: () -> Unit = {},
     onDownloadUpdate: () -> Unit = {},
     onInstallUpdate: () -> Unit = {},
+    onSelectCustomRange: (from: String, to: String) -> Unit = { _, _ -> },
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onThemeModeChange: (ThemeMode) -> Unit = {}
 ) {
     val context = LocalContext.current
     val palette = LocalGlassPalette.current
+    val haptic = LocalHapticFeedback.current
     val backdrop = rememberPageBackdrop()
     // 内容层单独导出，让悬浮玻璃（底部时间选择器 / 设置菜单）能实时模糊到其背后的滚动内容，
     // 形成真正的层级关系，而不是独立悬浮的面板
@@ -145,6 +163,7 @@ fun DashboardScreen(
     var settingsExpanded by remember { mutableStateOf(false) }
     var showDsPanel by remember { mutableStateOf(false) }  // DS+ Milky 面板切换
     var trendMetric by remember { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
+    var showCustomPicker by remember { mutableStateOf(false) }  // 自定义日期范围对话框
     val dsPanelViewModel: DsPanelViewModel = viewModel()  // 与 DsPanelScreen 共享同一实例
     val wide = isWideScreen()
     val pullState = rememberPullToRefreshState()
@@ -236,7 +255,7 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1.15f)) {
-                        Summary(state, wide = true)
+                        Summary(state, wide = true, onPickCustomRange = { showCustomPicker = true })
                     }
                     Column(Modifier.weight(1f)) {
                         StatsGrid(state)
@@ -250,7 +269,7 @@ fun DashboardScreen(
                         .glassCard(backdrop)
                         .padding(20.dp)
                 ) {
-                    Summary(state, wide = false)
+                    Summary(state, wide = false, onPickCustomRange = { showCustomPicker = true })
                     Spacer(Modifier.height(20.dp))
                     StatsStrip(state)
                 }
@@ -265,7 +284,20 @@ fun DashboardScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SectionTitle("用量趋势")
-                TrendMetricToggle(trendMetric, onMetricChange = { trendMetric = it })
+                // 与底部时间选择器同款的液态玻璃滑块（量体裁衣 + Q 弹折射）。
+                // 注意：必须采样页面 backdrop 而非 scrimBackdrop——本控件在内容层内，
+                // 采样含内容层的 backdrop 会形成 RenderNode 自引用循环导致 RenderThread 栈溢出
+                LiquidGlassSegmentedControl(
+                    items = listOf("金额", "Tokens"),
+                    selectedIndex = if (trendMetric == TrendMetric.COST) 0 else 1,
+                    onSelect = { idx ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        trendMetric = if (idx == 0) TrendMetric.COST else TrendMetric.TOKENS
+                    },
+                    backdrop = backdrop,
+                    modifier = Modifier.width(150.dp),
+                    height = 36.dp
+                )
             }
             Column(
                 Modifier
@@ -311,7 +343,7 @@ fun DashboardScreen(
             }
 
             when {
-                state.isLoading -> StatusCard("正在加载用量数据…", backdrop)
+                state.isLoading -> SkeletonDashboard(wide, backdrop)
                 state.error != null && state.stats == null -> StatusCard(state.error, backdrop)
                 else -> {
                     val hasTools = state.toolDistribution.isNotEmpty()
@@ -359,8 +391,12 @@ fun DashboardScreen(
             ) {
                 LiquidGlassSegmentedControl(
                     items = RangeLabels,
-                    selectedIndex = selectedIndex,
-                    onSelect = { onSelectRange(RangeValues[it]) },
+                    // 自定义范围档不属于任何段：滑块隐藏，选中态由独立按钮承载
+                    selectedIndex = if (state.selectedTimeRange == TimeRange.CUSTOM) -1 else selectedIndex,
+                    onSelect = { idx ->
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelectRange(RangeValues[idx])
+                    },
                     backdrop = scrimBackdrop
                 )
             }
@@ -393,6 +429,29 @@ fun DashboardScreen(
                 onInstallUpdate = onInstallUpdate,
                 topPadding = insets.calculateTopPadding() + 18.dp + if (wide) 62.dp else 54.dp
             )
+        }
+
+        // 自定义日期范围选择（与设置菜单同构：屏内 scrim + 液态玻璃面板，保持真实模糊层级）
+        if (showCustomPicker) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.35f))
+                    .clickable { showCustomPicker = false }
+            )
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CustomRangePanel(
+                    backdrop = scrimBackdrop,
+                    initialFromMillis = System.currentTimeMillis() - 6L * 86_400_000L,
+                    initialToMillis = System.currentTimeMillis(),
+                    onConfirm = { from, to ->
+                        showCustomPicker = false
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onSelectCustomRange(from, to)
+                    },
+                    onDismiss = { showCustomPicker = false }
+                )
+            }
         }
 
         // 长按应用详情（3D Touch 风格）
@@ -846,23 +905,65 @@ private fun IconGlassButton(
 }
 
 @Composable
-private fun Summary(state: UiState, wide: Boolean = false) {
+private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: () -> Unit = {}) {
     val palette = LocalGlassPalette.current
+    val haptic = LocalHapticFeedback.current
     val cost = state.stats?.totalCost ?: 0.0
-    val trend = remember(state.dailyUsage, state.selectedTimeRange) { computeTrend(state) }
+    val trend = state.trendPercent
+    val customActive = state.selectedTimeRange == TimeRange.CUSTOM
 
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column {
+    Column(Modifier.fillMaxWidth()) {
+        // 行 1：范围标题 + 独立的自定义范围入口（不再占用底部选择器档位）
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "总消耗（当前范围）",
+                when {
+                    customActive && state.customRange != null ->
+                        "总消耗（${state.customRange.from.replace("-", "/")} ~ ${state.customRange.to.replace("-", "/")}）"
+                    else -> "总消耗（当前范围）"
+                },
                 style = GlassText.Label,
                 color = palette.InkMid
             )
-            Spacer(Modifier.height(if (wide) 10.dp else 7.dp))
+            Spacer(Modifier.weight(1f))
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (customActive) palette.AccentWash else palette.InkHi.copy(alpha = 0.08f))
+                    .border(
+                        1.dp,
+                        if (customActive) palette.AccentRim else palette.InkHi.copy(alpha = 0.14f),
+                        RoundedCornerShape(999.dp)
+                    )
+                    .clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onPickCustomRange()
+                    }
+                    .padding(horizontal = 9.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.DateRange,
+                    contentDescription = "自定义范围",
+                    tint = if (customActive) palette.Accent else palette.InkMid,
+                    modifier = Modifier.size(12.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    "自定义",
+                    style = GlassText.ChartAxis.copy(
+                        fontSize = 10.sp,
+                        color = if (customActive) palette.Accent else palette.InkMid
+                    )
+                )
+            }
+        }
+        // 行 2：总消耗大数字 + 趋势百分比
+        Spacer(Modifier.height(if (wide) 10.dp else 7.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Row(verticalAlignment = Alignment.Bottom) {
                 AnimatedCounter(
                     value = cost.toFloat(),
@@ -880,8 +981,17 @@ private fun Summary(state: UiState, wide: Boolean = false) {
                     modifier = Modifier.padding(bottom = if (wide) 6.dp else 3.dp)
                 )
             }
+            if (trend != null) TrendChip(trend)
         }
-        if (trend != null) TrendChip(trend)
+        // 行 3：本月消耗 + 按日均推算的整月预测
+        state.monthProjection?.let { mp ->
+            Spacer(Modifier.height(if (wide) 8.dp else 5.dp))
+            Text(
+                "本月已用 " + formatCost(mp.monthCost) + " · 按日均预测整月 " + formatCost(mp.projected),
+                style = GlassText.Meta,
+                color = palette.InkLo
+            )
+        }
     }
 }
 
@@ -905,13 +1015,17 @@ private fun TrendChip(trend: Float) {
                 fontFamily = HanSansFamily,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = ink
+                color = ink,
+                maxLines = 1,
+                softWrap = false
             )
             Spacer(Modifier.width(5.dp))
             Text(
                 String.format(Locale.US, "%+.0f%%", trend * 100),
                 style = GlassText.Chip,
-                color = ink
+                color = ink,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }
@@ -986,41 +1100,162 @@ private fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 趋势图纵轴指标切换：金额 / Tokens 小药丸控件。 */
+/** 自定义日期范围：液态玻璃面板内的 Material3 DateRangePicker，时区与统计引擎一致（北京时间）。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TrendMetricToggle(
-    selected: TrendMetric,
-    onMetricChange: (TrendMetric) -> Unit
+private fun CustomRangePanel(
+    backdrop: com.kyant.backdrop.Backdrop,
+    initialFromMillis: Long,
+    initialToMillis: Long,
+    onConfirm: (from: String, to: String) -> Unit,
+    onDismiss: () -> Unit
 ) {
     val palette = LocalGlassPalette.current
-    Row(
+    val pickerState = rememberDateRangePickerState(
+        initialSelectedStartDateMillis = initialFromMillis,
+        initialSelectedEndDateMillis = initialToMillis
+    )
+    // millis -> yyyy-MM-dd（北京时间）
+    val fmt = remember {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = StatsEngine.beijingTz }
+    }
+    Column(
         Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(palette.InkHi.copy(alpha = 0.08f))
-            .border(1.dp, palette.InkHi.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+            .fillMaxWidth(0.94f)
+            .glassCard(backdrop, cornerRadius = 24.dp)
+            .padding(horizontal = 6.dp, vertical = 10.dp)
     ) {
-        TrendMetric.entries.forEach { m ->
-            val isSel = m == selected
-            Text(
-                if (m == TrendMetric.COST) "金额" else "Tokens",
-                style = GlassText.ChartAxis.copy(
-                    fontSize = 11.sp,
-                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (isSel) palette.InkHi else palette.InkMid
-                ),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(if (isSel) palette.Accent.copy(alpha = 0.22f) else Color.Transparent)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { onMetricChange(m) }
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+        DateRangePicker(
+            state = pickerState,
+            showModeToggle = false,
+            title = {
+                Text(
+                    "选择自定义范围",
+                    style = GlassText.Title,
+                    color = palette.InkHi,
+                    modifier = Modifier.padding(start = 18.dp, top = 12.dp, bottom = 2.dp)
+                )
+            },
+            headline = null,
+            modifier = Modifier.height(340.dp),
+            colors = DatePickerDefaults.colors(
+                containerColor = Color.Transparent,
+                titleContentColor = palette.InkHi,
+                headlineContentColor = palette.InkHi,
+                weekdayContentColor = palette.InkMid,
+                subheadContentColor = palette.InkMid,
+                navigationContentColor = palette.InkMid,
+                yearContentColor = palette.InkMid,
+                currentYearContentColor = palette.InkHi,
+                selectedYearContentColor = palette.InkStrong,
+                selectedYearContainerColor = palette.Accent.copy(alpha = 0.85f),
+                dayContentColor = palette.InkMid,
+                disabledDayContentColor = palette.InkLo,
+                selectedDayContentColor = palette.InkStrong,
+                disabledSelectedDayContentColor = palette.InkLo,
+                selectedDayContainerColor = palette.Accent.copy(alpha = 0.85f),
+                disabledSelectedDayContainerColor = palette.Accent.copy(alpha = 0.3f),
+                todayContentColor = palette.Accent,
+                todayDateBorderColor = palette.Accent,
+                dayInSelectionRangeContentColor = palette.InkHi,
+                dayInSelectionRangeContainerColor = palette.Accent.copy(alpha = 0.10f),
+                dividerColor = palette.InkLo
             )
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onDismiss) {
+                Text("取消", style = GlassText.Label, color = palette.InkMid)
+            }
+            val ready = pickerState.selectedStartDateMillis != null &&
+                pickerState.selectedEndDateMillis != null
+            TextButton(
+                enabled = ready,
+                onClick = {
+                    val s = pickerState.selectedStartDateMillis!!
+                    val e = pickerState.selectedEndDateMillis!!
+                    onConfirm(fmt.format(Date(s)), fmt.format(Date(e)))
+                }
+            ) {
+                Text("确定", style = GlassText.Label, color = if (ready) palette.Accent else palette.InkLo)
+            }
         }
     }
+}
+
+/** 首次加载骨架屏：三段呼吸玻璃占位（复用 glassCard，与正文卡片同构）。 */
+@Composable
+private fun SkeletonDashboard(wide: Boolean, backdrop: com.kyant.backdrop.Backdrop) {
+    val palette = LocalGlassPalette.current
+    val alpha = rememberInfiniteTransition(label = "skeleton")
+        .animateFloat(
+            initialValue = 0.35f,
+            targetValue = 0.85f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(700, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "skeletonAlpha"
+        )
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .fadeSlideIn(0),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // 概览卡
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .glassCard(backdrop)
+                .padding(20.dp)
+        ) {
+            SkeletonBlock(palette, alpha.value, width = 0.42f, height = 13.dp)
+            Spacer(Modifier.height(14.dp))
+            SkeletonBlock(palette, alpha.value, width = 0.62f, height = if (wide) 52.dp else 42.dp)
+            Spacer(Modifier.height(16.dp))
+            SkeletonBlock(palette, alpha.value, width = 1f, height = 15.dp)
+        }
+        // 趋势卡
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .glassCard(backdrop)
+                .padding(18.dp)
+        ) {
+            SkeletonBlock(palette, alpha.value, width = 0.3f, height = 12.dp)
+            Spacer(Modifier.height(16.dp))
+            SkeletonBlock(palette, alpha.value, width = 1f, height = if (wide) 150.dp else 120.dp)
+        }
+        if (!wide) {
+            // 分布卡
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .glassCard(backdrop)
+                    .padding(18.dp)
+            ) {
+                SkeletonBlock(palette, alpha.value, width = 0.3f, height = 12.dp)
+                Spacer(Modifier.height(16.dp))
+                SkeletonBlock(palette, alpha.value, width = 1f, height = 90.dp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkeletonBlock(palette: GlassPalette, alpha: Float, width: Float, height: androidx.compose.ui.unit.Dp) {
+    Box(
+        Modifier
+            .fillMaxWidth(width)
+            .height(height)
+            .clip(RoundedCornerShape(10.dp))
+            .background(palette.InkHi.copy(alpha = 0.09f * alpha + 0.03f))
+    )
 }
 
 /** 应用分布：环形图 + 图例 + 列表。 */
@@ -1031,6 +1266,7 @@ private fun ToolDistributionSection(
     onShowToolDetail: (String) -> Unit
 ) {
     val palette = LocalGlassPalette.current
+    val haptic = LocalHapticFeedback.current
     val wide = isWideScreen()
     val top = state.toolDistribution.take(8)
 
@@ -1092,7 +1328,10 @@ private fun ToolDistributionSection(
                     String.format(Locale.US, "%.1f", item.percentage) + "%",
                 value = formatCost(item.cost),
                 active = state.toolDetail?.tool == item.tool,
-                onLongPress = { onShowToolDetail(item.tool) },
+                onLongPress = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onShowToolDetail(item.tool)
+                },
                 delayMs = 160 + index * 45
             )
         }
@@ -1106,6 +1345,7 @@ private fun ModelCostSection(
     backdrop: com.kyant.backdrop.Backdrop,
     onShowModelDetail: (String) -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     val list = state.modelCosts.take(10)
     val maxCost = list.maxOfOrNull { it.cost } ?: 0.0
 
@@ -1120,7 +1360,10 @@ private fun ModelCostSection(
                 value = formatCost(item.cost),
                 progress = if (maxCost > 0.0) (item.cost / maxCost).toFloat().coerceIn(0.02f, 1f) else null,
                 active = state.modelDetail?.model == item.model,
-                onLongPress = { onShowModelDetail(item.model) },
+                onLongPress = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onShowModelDetail(item.model)
+                },
                 delayMs = 180 + index * 45
             )
         }
@@ -1717,17 +1960,6 @@ private fun DetailMetric(label: String, value: String, palette: GlassPalette) {
 }
 
 // ---------- 工具函数 ----------
-
-private fun computeTrend(state: UiState): Float? {
-    val series = state.dailyUsage
-    if (series.size < 2) return null
-    val half = series.size / 2
-    val first = series.take(half).sumOf { it.cost }
-    val second = series.drop(half).sumOf { it.cost }
-    if (first <= 0.0) return null
-    val ratio = ((second - first) / first).toFloat()
-    return if (abs(ratio) > 10f) null else ratio
-}
 
 internal fun formatCost(value: Double): String = when {
     value >= 1000 -> "$" + String.format(Locale.US, "%.0f", value)

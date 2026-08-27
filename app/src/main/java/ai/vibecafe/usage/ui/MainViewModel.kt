@@ -9,11 +9,13 @@ import ai.vibecafe.usage.core.ApiKeyStore
 import ai.vibecafe.usage.data.UpdateChecker
 import ai.vibecafe.usage.data.UsageRepository
 import ai.vibecafe.usage.data.UsageResponse
+import ai.vibecafe.usage.stats.CustomRange
 import ai.vibecafe.usage.stats.DashboardStats
 import ai.vibecafe.usage.stats.DailyUsage
 import ai.vibecafe.usage.stats.DisplaySession
 import ai.vibecafe.usage.stats.ModelCost
 import ai.vibecafe.usage.stats.ModelDetail
+import ai.vibecafe.usage.stats.MonthProjection
 import ai.vibecafe.usage.stats.StatsEngine
 import ai.vibecafe.usage.stats.TimeRange
 import ai.vibecafe.usage.stats.ToolDetail
@@ -47,12 +49,16 @@ data class UiState(
     val error: String? = null,
     val dailyData: UsageResponse? = null,
     val hourlyData: UsageResponse? = null,
+    /** 自定义范围的独立数据源（仅在 selectedTimeRange == CUSTOM 时使用）。 */
+    val customData: UsageResponse? = null,
+    val customRange: CustomRange? = null,
     val stats: DashboardStats? = null,
+    val trendPercent: Float? = null,
+    val monthProjection: MonthProjection? = null,
     val toolDistribution: List<ToolDistribution> = emptyList(),
     val modelCosts: List<ModelCost> = emptyList(),
     val dailyUsage: List<DailyUsage> = emptyList(),
     val hourlyUsage: List<DailyUsage> = emptyList(),
-    /** 「今日」档的小时粒度序列（仅今天的 bucket，补零到当前小时）。 */
     val todayHourlyUsage: List<DailyUsage> = emptyList(),
     val sessions: List<DisplaySession> = emptyList(),
     val availableDevices: List<String> = emptyList(),
@@ -77,7 +83,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // hourlyData null 时降级为 dailyData，但标记提示
             return s.hourlyData ?: s.dailyData
         }
+        if (range == TimeRange.CUSTOM) {
+            return s.customData ?: s.dailyData
+        }
         return s.dailyData
+    }
+
+    private fun customOf(range: TimeRange): CustomRange? =
+        if (range == TimeRange.CUSTOM) _uiState.value.customRange else null
+
+    /** 按当前范围/设备一次性重算全部派生数据。 */
+    private fun recompute(range: TimeRange, data: UsageResponse) {
+        val s = _uiState.value
+        val devices = s.selectedDevices
+        val custom = customOf(range)
+        val hourlyBase = s.hourlyData ?: s.dailyData
+        // 趋势对比与月度预测必须用全量数据：自定义档的 data 只有范围内 bucket，
+        // 上一周期窗口和整月消耗都会被截断
+        val fullDaily = s.dailyData ?: data
+        val trendSource = if (range == TimeRange.HOURS_24) (hourlyBase ?: data) else fullDaily
+        _uiState.value = s.copy(
+            stats = StatsEngine.computeStats(data, range, devices, custom),
+            trendPercent = StatsEngine.computeTrendPercent(trendSource, range, custom),
+            toolDistribution = StatsEngine.computeToolDistribution(data, range, devices, custom),
+            modelCosts = StatsEngine.computeModelCosts(data, range, devices, custom),
+            dailyUsage = StatsEngine.computeDailyUsage(data, range, devices, custom),
+            hourlyUsage = StatsEngine.computeHourlyUsage(hourlyBase ?: data, devices),
+            todayHourlyUsage = StatsEngine.computeTodayHourlyUsage(hourlyBase ?: data, devices),
+            sessions = StatsEngine.computeDisplaySessions(data, range, devices, custom),
+            monthProjection = StatsEngine.computeMonthProjection(fullDaily, devices)
+        )
     }
 
     fun loadData(apiKey: String) {
@@ -102,11 +137,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val hourly = hourlyResult.getOrNull()?.let { StatsEngine.dedupResponse(it) }
 
             if (daily != null) {
-                val devices = StatsEngine.availableDevices(daily)
                 val tr = _uiState.value.selectedTimeRange
-                val data = if (tr == TimeRange.HOURS_24) hourly ?: daily else daily
 
-                // 检测降级情况
+                // 自定义范围：顺带刷新自定义数据源（失败保留旧值）
+                var custom = _uiState.value.customData
+                val cr = _uiState.value.customRange
+                if (tr == TimeRange.CUSTOM && cr != null) {
+                    repository.fetchCustomRange(apiKey, cr.from, cr.to).getOrNull()
+                        ?.let { custom = StatsEngine.dedupResponse(it) }
+                }
+
                 val note = if (tr == TimeRange.HOURS_24 && hourly == null) {
                     "24 小时粒度数据暂不可用，已自动降级为日粒度显示"
                 } else null
@@ -118,15 +158,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     granularityNote = note,
                     dailyData = daily,
                     hourlyData = hourly,
-                    availableDevices = devices,
-                    stats = StatsEngine.computeStats(data, tr),
-                    toolDistribution = StatsEngine.computeToolDistribution(data, tr),
-                    modelCosts = StatsEngine.computeModelCosts(data, tr),
-                    dailyUsage = StatsEngine.computeDailyUsage(data, tr),
-                    hourlyUsage = StatsEngine.computeHourlyUsage(hourly ?: daily),
-                    todayHourlyUsage = StatsEngine.computeTodayHourlyUsage(hourly ?: daily),
-                    sessions = StatsEngine.computeDisplaySessions(data, tr)
+                    customData = custom,
+                    availableDevices = StatsEngine.availableDevices(daily)
                 )
+                recompute(tr, dataForRange(tr) ?: daily)
             } else {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -144,30 +179,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else null
         _uiState.value = _uiState.value.copy(
             selectedTimeRange = range,
-            granularityNote = note,
-            stats = StatsEngine.computeStats(data, range, _uiState.value.selectedDevices),
-            toolDistribution = StatsEngine.computeToolDistribution(data, range),
-            modelCosts = StatsEngine.computeModelCosts(data, range),
-            dailyUsage = StatsEngine.computeDailyUsage(data, range),
-            sessions = StatsEngine.computeDisplaySessions(data, range)
+            granularityNote = note
         )
+        recompute(range, data)
+    }
+
+    /** 选择自定义日期范围：先切档展示旧数据，再拉取范围数据并重算。 */
+    fun setCustomRange(from: String, to: String) {
+        val apiKey = ApiKeyStore.get(getApplication())
+        val range = CustomRange(from, to)
+        _uiState.value = _uiState.value.copy(
+            selectedTimeRange = TimeRange.CUSTOM,
+            customRange = range,
+            granularityNote = null
+        )
+        // 先用全量数据本地过滤，界面立即可用；拉到范围数据后更精准
+        dataForRange(TimeRange.CUSTOM)?.let { recompute(TimeRange.CUSTOM, it) }
+        if (apiKey.isEmpty()) return
+        viewModelScope.launch {
+            repository.fetchCustomRange(apiKey, from, to).onSuccess { resp ->
+                val deduped = StatsEngine.dedupResponse(resp)
+                if (_uiState.value.customRange == range) {
+                    _uiState.value = _uiState.value.copy(customData = deduped)
+                    recompute(TimeRange.CUSTOM, deduped)
+                }
+            }
+        }
     }
 
     fun setDevices(devices: Set<String>) {
-        val data = dataForRange(_uiState.value.selectedTimeRange) ?: return
         val tr = _uiState.value.selectedTimeRange
-        _uiState.value = _uiState.value.copy(
-            selectedDevices = devices,
-            stats = StatsEngine.computeStats(data, tr, devices)
-        )
+        val data = dataForRange(tr) ?: return
+        _uiState.value = _uiState.value.copy(selectedDevices = devices)
+        recompute(tr, data)
     }
 
     /** 长按应用行：计算并展示该应用在当前时间范围的细分详情。 */
     fun showToolDetail(tool: String) {
-        val data = dataForRange(_uiState.value.selectedTimeRange) ?: return
         val tr = _uiState.value.selectedTimeRange
+        val data = dataForRange(tr) ?: return
         _uiState.value = _uiState.value.copy(
-            toolDetail = StatsEngine.computeToolDetail(data, tr, tool, _uiState.value.selectedDevices)
+            toolDetail = StatsEngine.computeToolDetail(data, tr, tool, _uiState.value.selectedDevices, customOf(tr))
         )
     }
 
@@ -179,10 +231,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 长按模型行：计算并展示该模型在当前时间范围的细分详情（含缓存命中率）。 */
     fun showModelDetail(model: String) {
-        val data = dataForRange(_uiState.value.selectedTimeRange) ?: return
         val tr = _uiState.value.selectedTimeRange
+        val data = dataForRange(tr) ?: return
         _uiState.value = _uiState.value.copy(
-            modelDetail = StatsEngine.computeModelDetail(data, tr, model, _uiState.value.selectedDevices)
+            modelDetail = StatsEngine.computeModelDetail(data, tr, model, _uiState.value.selectedDevices, customOf(tr))
         )
     }
 
@@ -251,7 +303,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 下载更新 APK（仅当已发现新版本）。 */
+    /** 下载更新 APK（仅当已发现新版本）；下载完成后做 SHA-256 校验（远端提供 hash 时）。 */
     fun downloadUpdate() {
         val st = _uiState.value.update
         if (st.status != UpdateStatus.AVAILABLE || st.apkUrl == null) return
@@ -264,10 +316,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val ok = UpdateChecker.downloadApk(st.apkUrl, file) { progress ->
                 setUpdate { it.copy(status = UpdateStatus.DOWNLOADING, progress = progress) }
             }
-            if (ok && file.length() > 0) {
-                setUpdate { it.copy(status = UpdateStatus.DOWNLOADED, progress = 1f) }
-            } else {
-                setUpdate { it.copy(status = UpdateStatus.FAILED, message = "下载失败，请重试") }
+            val verified = ok && UpdateChecker.verifyDownloadedApk(st.apkUrl, file)
+            when {
+                verified && file.length() > 0 ->
+                    setUpdate { it.copy(status = UpdateStatus.DOWNLOADED, progress = 1f) }
+                ok && file.length() > 0 ->
+                    setUpdate { it.copy(status = UpdateStatus.FAILED, message = "安装包校验失败，已阻止安装") }
+                else ->
+                    setUpdate { it.copy(status = UpdateStatus.FAILED, message = "下载失败，请重试") }
             }
         }
     }

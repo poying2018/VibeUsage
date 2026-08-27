@@ -50,10 +50,16 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 混淆 + 资源收缩：体积减半；规则见 proguard-rules.pro（Gson 模型已 keep）
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
+    }
+    testOptions {
+        // StatsEngine 引用 android.util.Log，单测默认值放行即可跑 JVM
+        unitTests.isReturnDefaultValues = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -72,6 +78,11 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
+}
+
+// 项目路径含非 ASCII（F:\项目）时测试 worker 类加载会乱码，强制 UTF-8
+tasks.withType<Test>().configureEach {
+    jvmArgs("-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8")
 }
 
 dependencies {
@@ -103,6 +114,12 @@ dependencies {
     // 液态玻璃：GPU RuntimeShader 折射 + 模糊 + 高光
     implementation("io.github.kyant0:backdrop:1.0.2")
 
+    // 桌面小组件（Glance）+ 后台定时同步（WorkManager）
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+
+    testImplementation("junit:junit:4.13.2")
 }

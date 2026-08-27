@@ -71,6 +71,9 @@ New-Item -ItemType Directory -Path $dist -Force | Out-Null
 $distApk = Join-Path $dist $apkName
 Copy-Item $apk $distApk -Force
 $sha = (Get-FileHash $distApk -Algorithm SHA256).Hash
+# Sidecar hash file for the app's in-app updater integrity check
+$hashFile = "$distApk.sha256"
+[System.IO.File]::WriteAllText($hashFile, "$sha  $apkName")
 Write-Host "[4/7] $apkName ($([math]::Round((Get-Item $distApk).Length/1MB,2)) MB)" -ForegroundColor Green
 Write-Host "      SHA-256: $sha" -ForegroundColor Green
 
@@ -92,9 +95,9 @@ if ($releaseExists) {
     foreach ($a in $oldAsset.assets) {
         gh release delete-asset $tag $a.name --repo $Repo --yes 2>$null
     }
-    gh release upload $tag $distApk --repo $Repo --clobber 2>$null
+    gh release upload $tag $distApk $hashFile --repo $Repo --clobber 2>$null
 } else {
-    gh release create $tag $distApk --repo $Repo --title "VibeUsage v$Version" --notes "VibeUsage v$Version (signed APK)" 2>$null
+    gh release create $tag $distApk $hashFile --repo $Repo --title "VibeUsage v$Version" --notes "VibeUsage v$Version (signed APK)" 2>$null
 }
 Write-Host "[6/7] Release $tag updated" -ForegroundColor Green
 

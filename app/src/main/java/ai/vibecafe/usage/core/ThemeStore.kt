@@ -2,11 +2,12 @@ package ai.vibecafe.usage.core
 
 import android.content.Context
 
-/** 外观模式：跟随系统 / 强制浅色 / 强制深色。 */
+/** 外观模式：跟随系统 / 强制浅色 / 强制深色 / AMOLED 纯黑。 */
 enum class ThemeMode(val label: String) {
     SYSTEM("跟随系统"),
     LIGHT("浅色"),
-    DARK("深色")
+    DARK("深色"),
+    AMOLED("纯黑")
 }
 
 /**

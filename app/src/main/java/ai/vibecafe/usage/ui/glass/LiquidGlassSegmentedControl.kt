@@ -127,6 +127,18 @@ fun LiquidGlassSegmentedControl(
                 ).size.width.toFloat()
             }
         }
+        // 7 档后单段变窄（如「24小时」四字），按段宽自动缩小字号，保证文字不挤不溢出
+        val fitScales = remember(items, segmentWidthPx) {
+            val minPad = with(density) { 6.dp.toPx() }
+            items.map { label ->
+                val w = textMeasurer.measure(
+                    text = AnnotatedString(label),
+                    style = GlassText.SegmentActive
+                ).size.width.toFloat()
+                val avail = segmentWidthPx - minPad
+                if (w > avail && w > 0f) (avail / w).coerceIn(0.72f, 1f) else 1f
+            }
+        }
         // 每个段「吸附到位」时滑块的目标【宽度】与【中心】：
         //  - 宽度 = 文字宽 + 2*pad，夹在 [pillMinPx, 整条宽*0.98] 之间（允许比单段更宽，跨段也不削内边距）。
         //  - 中间段：中心 = 段中心，文字居中、两侧留足 pad。
@@ -161,9 +173,17 @@ fun LiquidGlassSegmentedControl(
             pressedScale = 1.18f
         )
 
+        // selectedIndex 越界（如 -1）表示「当前无选中段」（自定义范围档），滑块隐藏
+        val hasSelection = selectedIndex in 0 until count
+        val pillAlpha by animateFloatAsState(
+            targetValue = if (hasSelection) 1f else 0f,
+            animationSpec = tween(220, easing = EaseOutQuint),
+            label = "pillAlpha"
+        )
+
         // 外部（ViewModel）改变选中项时，滑块 Q 弹过去
         LaunchedEffect(selectedIndex, drag) {
-            if (abs(drag.targetValue - selectedIndex) > 0.01f) {
+            if (hasSelection && abs(drag.targetValue - selectedIndex) > 0.01f) {
                 drag.springTo(selectedIndex.toFloat())
             }
         }
@@ -288,9 +308,11 @@ fun LiquidGlassSegmentedControl(
                             .fillMaxHeight(),
                         contentAlignment = Alignment.Center
                     ) {
+                        val fit = fitScales[index]
                         Text(
                             text = label,
-                            style = if (active) GlassText.SegmentActive else GlassText.SegmentIdle,
+                            style = (if (active) GlassText.SegmentActive else GlassText.SegmentIdle)
+                                .copy(fontSize = GlassText.SegmentActive.fontSize * fit),
                             color = color,
                             maxLines = 1,
                             textAlign = TextAlign.Center,
@@ -337,7 +359,10 @@ fun LiquidGlassSegmentedControl(
         val pillLeftX = pillCenterX - pillWidthPx / 2f
         Box(
             Modifier
-                .graphicsLayer { translationX = pillLeftX }
+                .graphicsLayer {
+                    translationX = pillLeftX
+                    alpha = pillAlpha
+                }
                 .width(with(density) { pillWidthPx.toDp() })
                 .fillMaxHeight()
                 .drawBackdrop(

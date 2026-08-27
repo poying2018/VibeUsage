@@ -10,7 +10,13 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-enum class TimeRange { TODAY, HOURS_24, DAYS_7, DAYS_30, ALL }
+enum class TimeRange { TODAY, HOURS_24, DAYS_7, DAYS_30, DAYS_90, ALL, CUSTOM }
+
+/** 自定义日期范围（yyyy-MM-dd，北京时间，含首尾两天）。 */
+data class CustomRange(val from: String, val to: String)
+
+/** 月度预测：本月已消耗 + 按日均推算的整月预测。 */
+data class MonthProjection(val monthCost: Double, val projected: Double)
 
 data class DashboardStats(
     val totalTokens: Long,
@@ -80,6 +86,7 @@ data class DisplaySession(
     val lastMessageAt: String,
     val durationSeconds: Long,
     val messageCount: Int,
+    /** 按消息数分摊到该会话的估算值（API 无会话级用量，只能按占比拆分）。 */
     val tokens: Long,
     val cost: Double
 )
@@ -146,10 +153,13 @@ object StatsEngine {
         val endHour: Date,
         val startHour: Date,
         val from7: Date,
-        val from30: Date
+        val from30: Date,
+        val from90: Date,
+        val customFrom: Date?,
+        val customTo: Date?
     )
 
-    private fun computeBoundaries(): TimeBoundaries {
+    private fun computeBoundaries(custom: CustomRange? = null): TimeBoundaries {
         val now = Date()
         val todayStr = dateFormat.format(now)
         val todayDate = dateFormat.parse(todayStr) ?: now
@@ -161,15 +171,22 @@ object StatsEngine {
         val startHour = Calendar.getInstance(beijingTz).apply {
             timeInMillis = endHour.time - 24L * 60L * 60L * 1000L
         }.time
-        val from7 = Calendar.getInstance(beijingTz).apply {
+        fun daysAgo(days: Int): Date = Calendar.getInstance(beijingTz).apply {
             time = todayDate
-            add(Calendar.DAY_OF_YEAR, -6)
+            add(Calendar.DAY_OF_YEAR, -days)
         }.time
-        val from30 = Calendar.getInstance(beijingTz).apply {
-            time = todayDate
-            add(Calendar.DAY_OF_YEAR, -29)
-        }.time
-        return TimeBoundaries(todayDate, todayStr, endHour, startHour, from7, from30)
+        val customFrom = custom?.let { dateFormat.parse(it.from) }
+        val customTo = custom?.let {
+            dateFormat.parse(it.to)?.let { end ->
+                // 含 to 当天：取 23:59:59.999
+                Calendar.getInstance(beijingTz).apply {
+                    time = end
+                    add(Calendar.DAY_OF_YEAR, 1)
+                    add(Calendar.MILLISECOND, -1)
+                }.time
+            }
+        }
+        return TimeBoundaries(todayDate, todayStr, endHour, startHour, daysAgo(6), daysAgo(29), daysAgo(89), customFrom, customTo)
     }
 
     /** 判断一个 Date 是否落在时间范围内。 */
@@ -179,14 +196,20 @@ object StatsEngine {
             TimeRange.HOURS_24 -> !t.before(b.startHour) && !t.after(b.endHour)
             TimeRange.DAYS_7 -> !t.before(b.from7)
             TimeRange.DAYS_30 -> !t.before(b.from30)
+            TimeRange.DAYS_90 -> !t.before(b.from90)
             TimeRange.ALL -> true
+            TimeRange.CUSTOM -> b.customFrom != null && b.customTo != null &&
+                !t.before(b.customFrom) && !t.after(b.customTo)
         }
     }
 
-    private fun filterByTimeRange(buckets: List<Bucket>, timeRange: TimeRange): List<Bucket> {
-        Log.d(TAG, "filter range=$timeRange input=${buckets.size}")
+    private fun filterByTimeRange(
+        buckets: List<Bucket>,
+        timeRange: TimeRange,
+        b: TimeBoundaries
+    ): List<Bucket> {
         if (timeRange == TimeRange.ALL) return buckets
-        val b = computeBoundaries()
+        Log.d(TAG, "filter range=$timeRange input=${buckets.size}")
         val result = buckets.filter { bucket ->
             val t = parseCached(bucket.bucketStart) ?: return@filter false
             dateInRange(t, timeRange, b)
@@ -195,31 +218,52 @@ object StatsEngine {
         return result
     }
 
-    private fun filterSessionsByTimeRange(sessions: List<Session>, timeRange: TimeRange): List<Session> {
+    private fun filterSessionsByTimeRange(
+        sessions: List<Session>,
+        timeRange: TimeRange,
+        b: TimeBoundaries
+    ): List<Session> {
         if (timeRange == TimeRange.ALL) return sessions
-        val b = computeBoundaries()
         return sessions.filter { s ->
             val t = parseCached(s.lastMessageAt) ?: return@filter false
             dateInRange(t, timeRange, b)
         }
     }
 
+    private fun scopedBuckets(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        b: TimeBoundaries,
+        devices: Set<String>
+    ): List<Bucket> {
+        val base = if (devices.isEmpty()) data.buckets
+        else data.buckets.filter { it.hostname in devices }
+        return filterByTimeRange(base, timeRange, b)
+    }
+
     fun filterBuckets(
         data: UsageResponse,
         timeRange: TimeRange,
-        devices: Set<String> = emptySet()
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
     ): List<Bucket> {
         clearIsoCache()
-        val base = if (devices.isEmpty()) data.buckets
-        else data.buckets.filter { it.hostname in devices }
-        return filterByTimeRange(base, timeRange).also {
+        val b = computeBoundaries(custom)
+        return scopedBuckets(data, timeRange, b, devices).also {
             clearIsoCache()
         }
     }
 
-    fun computeStats(data: UsageResponse, timeRange: TimeRange, devices: Set<String> = emptySet()): DashboardStats {
+    fun computeStats(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
+    ): DashboardStats {
         Log.d(TAG, "computeStats range=$timeRange devices=$devices")
-        val buckets = filterBuckets(data, timeRange, devices)
+        clearIsoCache()
+        val b = computeBoundaries(custom)
+        val buckets = scopedBuckets(data, timeRange, b, devices)
         val input = buckets.sumOf { it.inputTokens }
         val output = buckets.sumOf { it.outputTokens }
         val cached = buckets.sumOf { it.cachedInputTokens }
@@ -233,12 +277,17 @@ object StatsEngine {
             totalCost = buckets.sumOf { it.estimatedCost },
             toolCount = buckets.map { it.source }.distinct().size,
             modelCount = buckets.map { it.model }.distinct().size,
-            sessionCount = filterSessionsByTimeRange(data.sessions, timeRange).size
-        )
+            sessionCount = filterSessionsByTimeRange(data.sessions, timeRange, b).size
+        ).also { clearIsoCache() }
     }
 
-    fun computeToolDistribution(data: UsageResponse, timeRange: TimeRange): List<ToolDistribution> {
-        val buckets = filterBuckets(data, timeRange)
+    fun computeToolDistribution(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
+    ): List<ToolDistribution> {
+        val buckets = filterBuckets(data, timeRange, devices, custom)
         val total = buckets.sumOf { it.fullTokens() }.toFloat()
         return buckets.groupBy { it.source }
             .map { (tool, list) ->
@@ -253,8 +302,13 @@ object StatsEngine {
             .sortedByDescending { it.tokens }
     }
 
-    fun computeModelCosts(data: UsageResponse, timeRange: TimeRange): List<ModelCost> {
-        val buckets = filterBuckets(data, timeRange)
+    fun computeModelCosts(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
+    ): List<ModelCost> {
+        val buckets = filterBuckets(data, timeRange, devices, custom)
         return buckets.groupBy { it.model }
             .map { (model, list) ->
                 ModelCost(
@@ -271,13 +325,16 @@ object StatsEngine {
         data: UsageResponse,
         timeRange: TimeRange,
         tool: String,
-        devices: Set<String> = emptySet()
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
     ): ToolDetail? {
-        val scoped = filterBuckets(data, timeRange, devices)
+        clearIsoCache()
+        val b = computeBoundaries(custom)
+        val scoped = scopedBuckets(data, timeRange, b, devices)
         val buckets = scoped.filter { it.source == tool }
         if (buckets.isEmpty()) return null
         val total = scoped.sumOf { it.fullTokens() }.toFloat()
-        val sessions = filterSessionsByTimeRange(data.sessions, timeRange).filter { it.source == tool }
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b).filter { it.source == tool }
         return ToolDetail(
             tool = tool,
             cost = buckets.sumOf { it.estimatedCost },
@@ -289,7 +346,7 @@ object StatsEngine {
             modelCount = buckets.map { it.model }.distinct().size,
             sessionCount = sessions.size,
             percentage = if (total > 0f) buckets.sumOf { it.fullTokens() } / total * 100f else 0f
-        )
+        ).also { clearIsoCache() }
     }
 
     /** 长按模型详情：按模型名过滤出该模型在范围内的细分指标，并计算缓存命中率。 */
@@ -297,14 +354,17 @@ object StatsEngine {
         data: UsageResponse,
         timeRange: TimeRange,
         model: String,
-        devices: Set<String> = emptySet()
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
     ): ModelDetail? {
-        val scoped = filterBuckets(data, timeRange, devices)
+        clearIsoCache()
+        val b = computeBoundaries(custom)
+        val scoped = scopedBuckets(data, timeRange, b, devices)
         val buckets = scoped.filter { it.model == model }
         if (buckets.isEmpty()) return null
         val total = scoped.sumOf { it.fullTokens() }.toFloat()
         val sources = buckets.map { it.source }.toSet()
-        val sessions = filterSessionsByTimeRange(data.sessions, timeRange).filter { it.source in sources }
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b).filter { it.source in sources }
         val input = buckets.sumOf { it.inputTokens }
         val cached = buckets.sumOf { it.cachedInputTokens }
         return ModelDetail(
@@ -319,11 +379,16 @@ object StatsEngine {
             sessionCount = sessions.size,
             percentage = if (total > 0f) buckets.sumOf { it.fullTokens() } / total * 100f else 0f,
             cacheHitRate = if (input + cached > 0L) cached.toFloat() / (input + cached) * 100f else 0f
-        )
+        ).also { clearIsoCache() }
     }
 
-    fun computeDailyUsage(data: UsageResponse, timeRange: TimeRange): List<DailyUsage> {
-        val buckets = filterBuckets(data, timeRange)
+    fun computeDailyUsage(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
+    ): List<DailyUsage> {
+        val buckets = filterBuckets(data, timeRange, devices, custom)
         return buckets.groupBy { bucket ->
             val t = parseCached(bucket.bucketStart) ?: return@groupBy ""
             toBeijingDateOnly(t)
@@ -342,8 +407,12 @@ object StatsEngine {
             }
     }
 
-    fun computeHourlyUsage(data: UsageResponse): List<DailyUsage> {
-        return data.buckets
+    fun computeHourlyUsage(
+        data: UsageResponse,
+        devices: Set<String> = emptySet()
+    ): List<DailyUsage> {
+        val base = if (devices.isEmpty()) data.buckets else data.buckets.filter { it.hostname in devices }
+        return base
             .groupBy { bucket ->
                 val t = parseCached(bucket.bucketStart) ?: return@groupBy ""
                 toBeijingHour(t)
@@ -359,10 +428,14 @@ object StatsEngine {
     }
 
     /** 「今日」趋势：仅统计今天（北京时间）的 bucket，按小时聚合，0 点至当前小时补零。 */
-    fun computeTodayHourlyUsage(data: UsageResponse): List<DailyUsage> {
+    fun computeTodayHourlyUsage(
+        data: UsageResponse,
+        devices: Set<String> = emptySet()
+    ): List<DailyUsage> {
+        val base = if (devices.isEmpty()) data.buckets else data.buckets.filter { it.hostname in devices }
         val today = toBeijingDateOnly(Date())
         val sums = HashMap<String, DailyUsage>()
-        for (b in data.buckets) {
+        for (b in base) {
             val t = parseCached(b.bucketStart) ?: continue
             if (toBeijingDateOnly(t) != today) continue
             val key = toBeijingHour(t)
@@ -379,18 +452,37 @@ object StatsEngine {
         }
     }
 
-    fun computeDisplaySessions(data: UsageResponse, timeRange: TimeRange): List<DisplaySession> {
-        val buckets = filterBuckets(data, timeRange)
-        // 单次分组，避免重复遍历
-        val aggBySession = buckets.groupBy { SessionKey(it.source, it.hostname) }
-            .mapValues { (_, list) ->
-                list.sumOf { it.estimatedCost } to list.sumOf { it.fullTokens() }
-            }
-        return filterSessionsByTimeRange(data.sessions, timeRange)
+    fun computeDisplaySessions(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        devices: Set<String> = emptySet(),
+        custom: CustomRange? = null
+    ): List<DisplaySession> {
+        clearIsoCache()
+        val b = computeBoundaries(custom)
+        val buckets = scopedBuckets(data, timeRange, b, devices)
+        // 工具+主机维度的总消耗（bucket 只有工具粒度，无会话粒度）
+        data class Agg(var cost: Double, var tokens: Long, var messages: Int)
+        val agg = HashMap<SessionKey, Agg>()
+        for (bk in buckets) {
+            val key = SessionKey(bk.source, bk.hostname)
+            val a = agg.getOrPut(key) { Agg(0.0, 0L, 0) }
+            a.cost += bk.estimatedCost
+            a.tokens += bk.fullTokens()
+        }
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b)
+        // 分摊基数：该工具+主机在范围内所有会话的消息总数
+        for (s in sessions) {
+            val key = SessionKey(s.source, s.hostname)
+            agg.getOrPut(key) { Agg(0.0, 0L, 0) }.messages += s.messageCount
+        }
+        return sessions
             .sortedByDescending { it.lastMessageAt }
             .map { s ->
                 val key = SessionKey(s.source, s.hostname)
-                val (cost, tokens) = aggBySession[key] ?: (0.0 to 0L)
+                val a = agg[key] ?: Agg(0.0, 0L, 0)
+                // 按消息数占比分摊；无消息数信息时平摊
+                val share = if (a.messages > 0) s.messageCount.toFloat() / a.messages else 0f
                 DisplaySession(
                     source = s.source,
                     project = s.project,
@@ -398,10 +490,84 @@ object StatsEngine {
                     lastMessageAt = s.lastMessageAt,
                     durationSeconds = s.durationSeconds,
                     messageCount = s.messageCount,
-                    tokens = tokens,
-                    cost = cost
+                    tokens = (a.tokens * share).toLong(),
+                    cost = a.cost * share
                 )
             }
+            .also { clearIsoCache() }
+    }
+
+    /**
+     * 趋势百分比：当前范围 vs 等长的上一周期（按消耗金额）。
+     * ALL 档取近 30 天 vs 再前 30 天；数据不足（上一周期无消耗）返回 null。
+     */
+    fun computeTrendPercent(
+        data: UsageResponse,
+        timeRange: TimeRange,
+        custom: CustomRange? = null
+    ): Float? {
+        clearIsoCache()
+        val now = Date()
+        val today = dateFormat.parse(dateFormat.format(now)) ?: now
+        fun cal(base: Date, days: Int): Date = Calendar.getInstance(beijingTz).apply {
+            time = base
+            add(Calendar.DAY_OF_YEAR, days)
+        }.time
+        fun hoursAgo(h: Long): Date = Date(now.time - h * 3600_000L)
+
+        val (curStart, prevStart) = when (timeRange) {
+            TimeRange.TODAY -> cal(today, 0) to cal(today, -1)
+            TimeRange.HOURS_24 -> hoursAgo(24) to hoursAgo(48)
+            TimeRange.DAYS_7 -> cal(today, -6) to cal(today, -13)
+            TimeRange.DAYS_30 -> cal(today, -29) to cal(today, -59)
+            TimeRange.DAYS_90 -> cal(today, -89) to cal(today, -179)
+            TimeRange.ALL -> cal(today, -29) to cal(today, -59)
+            TimeRange.CUSTOM -> {
+                val from = custom?.let { dateFormat.parse(it.from) } ?: return null
+                val to = custom?.let { dateFormat.parse(it.to) } ?: return null
+                val len = ((to.time - from.time) / 86_400_000L).toInt() + 1
+                from to cal(from, -len)
+            }
+        }
+
+        var cur = 0.0
+        var prev = 0.0
+        for (bk in data.buckets) {
+            val t = parseCached(bk.bucketStart) ?: continue
+            if (!t.before(curStart)) {
+                cur += bk.estimatedCost
+            } else if (!t.before(prevStart)) {
+                prev += bk.estimatedCost
+            }
+        }
+        clearIsoCache()
+        if (prev <= 0.0 && cur <= 0.0) return null
+        if (prev <= 0.0) return null
+        return ((cur - prev) / prev).toFloat()
+    }
+
+    /** 月度预测：本月（北京时间）已消耗，按日均推算整月总额。 */
+    fun computeMonthProjection(data: UsageResponse, devices: Set<String> = emptySet()): MonthProjection? {
+        val base = if (devices.isEmpty()) data.buckets else data.buckets.filter { it.hostname in devices }
+        if (base.isEmpty()) return null
+        val nowCal = Calendar.getInstance(beijingTz)
+        val monthStartCal = (nowCal.clone() as Calendar).apply {
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val monthStart = monthStartCal.time
+        val monthCost = base.filter { bk ->
+            // 1 号 00:00 的 bucket 也属于本月（不早于月初）
+            (parseCached(bk.bucketStart)?.before(monthStart) == false)
+        }.sumOf { it.estimatedCost }
+        val daysElapsed = nowCal.get(Calendar.DAY_OF_MONTH)
+        val daysInMonth = nowCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        if (monthCost <= 0.0 || daysElapsed <= 0) return null
+        val dailyAvg = monthCost / daysElapsed
+        return MonthProjection(monthCost = monthCost, projected = dailyAvg * daysInMonth)
     }
 
     fun availableDevices(data: UsageResponse): List<String> =

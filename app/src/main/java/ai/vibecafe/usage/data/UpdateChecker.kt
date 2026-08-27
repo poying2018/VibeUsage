@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
@@ -168,6 +169,46 @@ object UpdateChecker {
      * 返回 `latest` 是否严格高于 `current`。
      */
     fun isNewer(latest: String, current: String): Boolean = compareVersions(latest, current) > 0
+
+    /**
+     * 下载完成后校验安装包：尝试获取 `<apkUrl>.sha256` 并与本地文件哈希比对。
+     * 远端未提供 hash（404/网络失败）时视为通过，保持对旧 Release 的兼容；
+     * 提供了但不匹配时返回 false，上层阻止安装。
+     */
+    suspend fun verifyDownloadedApk(apkUrl: String, file: File): Boolean = withContext(Dispatchers.IO) {
+        val expected = runCatching { fetchSha256(apkUrl + ".sha256") }.getOrNull()
+            ?: return@withContext true
+        val actual = sha256Of(file) ?: return@withContext true
+        expected.equals(actual, ignoreCase = true)
+    }
+
+    /** 拉取远端 hash 文本（首行第一段 hex）。 */
+    private fun fetchSha256(url: String): String? {
+        val request = Request.Builder()
+            .url(DownloadAccelerator.accelerate(url))
+            .header("User-Agent", "VibeUsage")
+            .header("X-App-Key", DownloadAccelerator.appKey())
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful || response.body == null) return null
+            val text = response.body!!.string().trim()
+            // 兼容 "abc123  filename.apk" 与纯 hex 两种格式
+            return text.split(Regex("\\s+")).firstOrNull()?.takeIf { it.matches(Regex("[0-9a-fA-F]{32,128}")) }
+        }
+    }
+
+    private fun sha256Of(file: File): String? = runCatching {
+        val md = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(8 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                md.update(buffer, 0, read)
+            }
+        }
+        md.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
 
     /** 版本号比较器：a < b 返回负数，相等返回 0，a > b 返回正数。 */
     private fun compareVersions(a: String, b: String): Int {

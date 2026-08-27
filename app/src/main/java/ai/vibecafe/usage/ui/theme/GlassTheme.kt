@@ -19,14 +19,20 @@ val LocalGlassPalette = staticCompositionLocalOf { LightGlassPalette }
  * 液态玻璃主题根：提供 [LocalGlassPalette] + MaterialTheme（排版/基础色），
  * 并同步系统栏图标明暗（亮色主题用深色图标，暗色主题用浅色图标）。
  *
- * @param darkTheme true 使用 [DarkGlassPalette]，false 使用 [LightGlassPalette]
+ * @param darkTheme true 使用暗色调色板，false 使用 [LightGlassPalette]
+ * @param amoled true 使用纯黑变体（要求 [darkTheme] 为 true）
  */
 @Composable
 fun GlassTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    amoled: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val palette = if (darkTheme) DarkGlassPalette else LightGlassPalette
+    val palette = when {
+        amoled -> AmoledGlassPalette
+        darkTheme -> DarkGlassPalette
+        else -> LightGlassPalette
+    }
 
     // 系统栏图标明暗跟随主题（enableEdgeToEdge 下由 insets controller 控制）
     val view = LocalView.current
