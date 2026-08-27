@@ -64,6 +64,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // 桌面小组件的后台用量同步（已安装小组件时每 30 分钟刷新）
         ai.vibecafe.usage.widget.UsageWidgetSync.ensureScheduled(this)
+        // 每日预算核对：预测整月消耗超阈值时发本地通知
+        ai.vibecafe.usage.budget.BudgetNotify.ensureScheduled(this)
+        // Android 13+ 通知权限（预算提醒用），静默请求一次
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerForActivityResult(
+                androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+            ) { }.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContent {
             AppRoot()
         }
@@ -117,6 +125,7 @@ private fun AppRoot() {
                 onDownloadUpdate = vm::downloadUpdate,
                 onInstallUpdate = vm::installUpdate,
                 onSelectCustomRange = vm::setCustomRange,
+                onShareCard = vm::shareCard,
                 themeMode = themeMode,
                 onThemeModeChange = { mode ->
                     themeMode = mode

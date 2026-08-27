@@ -92,7 +92,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun customOf(range: TimeRange): CustomRange? =
         if (range == TimeRange.CUSTOM) _uiState.value.customRange else null
 
-    /** 按当前范围/设备一次性重算全部派生数据。 */
+    /** 按当前范围/设备一次性重算全部派生数据（计算在后台线程，赋值回主线程）。 */
     private fun recompute(range: TimeRange, data: UsageResponse) {
         val s = _uiState.value
         val devices = s.selectedDevices
@@ -102,18 +102,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // 上一周期窗口和整月消耗都会被截断
         val fullDaily = s.dailyData ?: data
         val trendSource = if (range == TimeRange.HOURS_24) (hourlyBase ?: data) else fullDaily
-        _uiState.value = s.copy(
-            stats = StatsEngine.computeStats(data, range, devices, custom),
-            trendPercent = StatsEngine.computeTrendPercent(trendSource, range, custom),
-            toolDistribution = StatsEngine.computeToolDistribution(data, range, devices, custom),
-            modelCosts = StatsEngine.computeModelCosts(data, range, devices, custom),
-            dailyUsage = StatsEngine.computeDailyUsage(data, range, devices, custom),
-            hourlyUsage = StatsEngine.computeHourlyUsage(hourlyBase ?: data, devices),
-            todayHourlyUsage = StatsEngine.computeTodayHourlyUsage(hourlyBase ?: data, devices),
-            sessions = StatsEngine.computeDisplaySessions(data, range, devices, custom),
-            monthProjection = StatsEngine.computeMonthProjection(fullDaily, devices)
-        )
+        viewModelScope.launch {
+            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                Recomputed(
+                    stats = StatsEngine.computeStats(data, range, devices, custom),
+                    trendPercent = StatsEngine.computeTrendPercent(trendSource, range, custom),
+                    toolDistribution = StatsEngine.computeToolDistribution(data, range, devices, custom),
+                    modelCosts = StatsEngine.computeModelCosts(data, range, devices, custom),
+                    dailyUsage = StatsEngine.computeDailyUsage(data, range, devices, custom),
+                    hourlyUsage = StatsEngine.computeHourlyUsage(hourlyBase ?: data, devices),
+                    todayHourlyUsage = StatsEngine.computeTodayHourlyUsage(hourlyBase ?: data, devices),
+                    sessions = StatsEngine.computeDisplaySessions(data, range, devices, custom),
+                    monthProjection = StatsEngine.computeMonthProjection(fullDaily, devices)
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                stats = r.stats,
+                trendPercent = r.trendPercent,
+                toolDistribution = r.toolDistribution,
+                modelCosts = r.modelCosts,
+                dailyUsage = r.dailyUsage,
+                hourlyUsage = r.hourlyUsage,
+                todayHourlyUsage = r.todayHourlyUsage,
+                sessions = r.sessions,
+                monthProjection = r.monthProjection
+            )
+        }
     }
+
+    /** recompute 的批量结果，避免多次 copy 抖动。 */
+    private data class Recomputed(
+        val stats: DashboardStats,
+        val trendPercent: Float?,
+        val toolDistribution: List<ToolDistribution>,
+        val modelCosts: List<ModelCost>,
+        val dailyUsage: List<DailyUsage>,
+        val hourlyUsage: List<DailyUsage>,
+        val todayHourlyUsage: List<DailyUsage>,
+        val sessions: List<DisplaySession>,
+        val monthProjection: MonthProjection?
+    )
 
     fun loadData(apiKey: String) {
         viewModelScope.launch {
@@ -162,6 +190,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     availableDevices = StatsEngine.availableDevices(daily)
                 )
                 recompute(tr, dataForRange(tr) ?: daily)
+                // 桌面小组件数据跟着这次刷新走（免等 30 分钟周期任务）
+                ai.vibecafe.usage.widget.UsageWidgetSync.refreshNow(getApplication())
             } else {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -241,6 +271,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun hideModelDetail() {
         if (_uiState.value.modelDetail != null) {
             _uiState.value = _uiState.value.copy(modelDetail = null)
+        }
+    }
+
+    /** 生成玻璃风格总结分享卡并拉起系统分享（IO 线程绘制，主线程仅发起）。 */
+    fun shareCard() {
+        val s = _uiState.value
+        val stats = s.stats ?: return
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val payload = ai.vibecafe.usage.share.ShareCard.Payload(
+                rangeLabel = when (s.selectedTimeRange) {
+                    TimeRange.CUSTOM -> s.customRange?.let { "总消耗 ${it.from} ~ ${it.to}" } ?: "总消耗（自定义范围）"
+                    else -> "总消耗 · " + mapOf(
+                        TimeRange.TODAY to "今日", TimeRange.HOURS_24 to "近 24 小时",
+                        TimeRange.DAYS_7 to "近 7 天", TimeRange.DAYS_30 to "近 30 天",
+                        TimeRange.DAYS_90 to "近 90 天", TimeRange.ALL to "全部"
+                    )[s.selectedTimeRange].orEmpty()
+                },
+                totalCost = stats.totalCost,
+                totalTokens = stats.totalTokens,
+                toolCount = stats.toolCount,
+                modelCount = stats.modelCount,
+                sessionCount = stats.sessionCount,
+                monthProjected = s.monthProjection?.projected
+            )
+            val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                ai.vibecafe.usage.share.ShareCard.generate(app, payload)
+            }
+            runCatching { ai.vibecafe.usage.share.ShareCard.share(app, file) }
         }
     }
 

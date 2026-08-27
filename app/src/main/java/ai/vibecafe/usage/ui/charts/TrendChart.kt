@@ -176,14 +176,17 @@ fun TrendChart(
             .fillMaxWidth()
             .height(height)
             .pointerInput(data, metric) {
-                // 画布内边距与 draw 阶段保持一致：左右各 4dp
+                // 画布内边距与 draw 阶段保持一致：左右各 4dp；再点同一点取消选中
                 fun indexAt(x: Float): Int {
                     if (data.isEmpty()) return -1
                     val pad = 4.dp.toPx()
                     val plotW = (size.width - pad * 2).coerceAtLeast(1f)
                     return (((x - pad) / plotW) * (data.size - 1)).roundToInt().coerceIn(0, data.size - 1)
                 }
-                detectTapGestures { offset -> selected = indexAt(offset.x) }
+                detectTapGestures { offset ->
+                    val idx = indexAt(offset.x)
+                    selected = if (idx == selected) -1 else idx
+                }
             }
             .pointerInput(data, metric) {
                 // 仅响应横向拖动，不与外层纵向滚动手势冲突

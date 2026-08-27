@@ -15,9 +15,11 @@ import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.updateAll
@@ -136,19 +138,22 @@ class UsageWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val snapshot = UsageWidgetCache.read(context)
-        provideContent { Content(snapshot) }
+        provideContent { Content(context, snapshot) }
     }
 
     @Composable
-    private fun Content(snapshot: WidgetSnapshot?) {
+    private fun Content(context: Context, snapshot: WidgetSnapshot?) {
         // 远程视图无法运行 RuntimeShader 真实折射，改用暗色玻璃设计令牌：
-        // Rim 描边 + 深夜蓝底 + 同款强调色，视觉与 App 内玻璃卡一致
+        // Rim 描边 + 深夜蓝底 + 同款强调色，视觉与 App 内玻璃卡一致。
+        // 点击整块组件直接打开 App（Glance actionStartActivity 携带 Intent）
+        val launchIntent = android.content.Intent(context, ai.vibecafe.usage.MainActivity::class.java)
         GlanceTheme {
             Box(
                 modifier = GlanceModifier
                     .fillMaxSize()
                     .background(ColorProvider(DarkGlass.Rim))
                     .cornerRadius(24.dp)
+                    .clickable(actionStartActivity(launchIntent))
             ) {
                 Box(
                     modifier = GlanceModifier

@@ -73,6 +73,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.DatePickerDefaults
@@ -145,6 +146,7 @@ fun DashboardScreen(
     onDownloadUpdate: () -> Unit = {},
     onInstallUpdate: () -> Unit = {},
     onSelectCustomRange: (from: String, to: String) -> Unit = { _, _ -> },
+    onShareCard: () -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onThemeModeChange: (ThemeMode) -> Unit = {}
 ) {
@@ -417,6 +419,10 @@ fun DashboardScreen(
                     BackgroundStore.clear(context)
                     bgPath = null
                 },
+                onShareCard = {
+                    settingsExpanded = false
+                    onShareCard()
+                },
                 onLogout = {
                     settingsExpanded = false
                     onLogout()
@@ -588,6 +594,7 @@ private fun SettingsMenu(
     showReset: Boolean,
     onCustomBackground: () -> Unit,
     onResetBackground: () -> Unit,
+    onShareCard: () -> Unit,
     onLogout: () -> Unit,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
@@ -663,6 +670,12 @@ private fun SettingsMenu(
                 onDownloadUpdate = onDownloadUpdate,
                 onInstallUpdate = onInstallUpdate,
                 backdrop = backdrop
+            )
+            SettingsMenuItem(
+                backdrop = backdrop,
+                icon = Icons.Filled.Share,
+                label = "分享用量卡",
+                onClick = onShareCard
             )
             SettingsMenuItem(
                 backdrop = backdrop,
