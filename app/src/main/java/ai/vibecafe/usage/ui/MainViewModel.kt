@@ -52,6 +52,8 @@ data class UiState(
     val modelCosts: List<ModelCost> = emptyList(),
     val dailyUsage: List<DailyUsage> = emptyList(),
     val hourlyUsage: List<DailyUsage> = emptyList(),
+    /** 「今日」档的小时粒度序列（仅今天的 bucket，补零到当前小时）。 */
+    val todayHourlyUsage: List<DailyUsage> = emptyList(),
     val sessions: List<DisplaySession> = emptyList(),
     val availableDevices: List<String> = emptyList(),
     val selectedTimeRange: TimeRange = TimeRange.DAYS_7,
@@ -122,6 +124,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     modelCosts = StatsEngine.computeModelCosts(data, tr),
                     dailyUsage = StatsEngine.computeDailyUsage(data, tr),
                     hourlyUsage = StatsEngine.computeHourlyUsage(hourly ?: daily),
+                    todayHourlyUsage = StatsEngine.computeTodayHourlyUsage(hourly ?: daily),
                     sessions = StatsEngine.computeDisplaySessions(data, tr)
                 )
             } else {

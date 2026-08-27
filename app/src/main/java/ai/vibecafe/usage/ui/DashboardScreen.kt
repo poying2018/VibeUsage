@@ -13,6 +13,7 @@ import ai.vibecafe.usage.ui.ds.DsPanelViewModel
 import ai.vibecafe.usage.ui.charts.DonutChart
 import ai.vibecafe.usage.ui.charts.DonutSlice
 import ai.vibecafe.usage.ui.charts.TrendChart
+import ai.vibecafe.usage.ui.charts.TrendMetric
 import ai.vibecafe.usage.ui.glass.GlassBackground
 import ai.vibecafe.usage.ui.glass.LiquidGlassSegmentedControl
 import ai.vibecafe.usage.ui.glass.glassCard
@@ -111,7 +112,7 @@ private val RangeValues = listOf(
     TimeRange.ALL
 )
 
-private const val APP_VERSION = "v2.9.6"
+private const val APP_VERSION = "v2.9.7"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,6 +144,7 @@ fun DashboardScreen(
     var bgPath by remember { mutableStateOf(BackgroundStore.get(context)) }
     var settingsExpanded by remember { mutableStateOf(false) }
     var showDsPanel by remember { mutableStateOf(false) }  // DS+ Milky 面板切换
+    var trendMetric by remember { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     val dsPanelViewModel: DsPanelViewModel = viewModel()  // 与 DsPanelScreen 共享同一实例
     val wide = isWideScreen()
     val pullState = rememberPullToRefreshState()
@@ -255,7 +257,16 @@ fun DashboardScreen(
             }
 
             // ---- 用量趋势 ----
-            SectionTitle("用量趋势", modifier = Modifier.fadeSlideIn(50))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .fadeSlideIn(50),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SectionTitle("用量趋势")
+                TrendMetricToggle(trendMetric, onMetricChange = { trendMetric = it })
+            }
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -263,10 +274,10 @@ fun DashboardScreen(
                     .glassCard(backdrop)
                     .padding(horizontal = 18.dp, vertical = 16.dp)
             ) {
-                val series = if (state.selectedTimeRange == TimeRange.HOURS_24) {
-                    state.hourlyUsage
-                } else {
-                    state.dailyUsage
+                val series = when (state.selectedTimeRange) {
+                    TimeRange.HOURS_24 -> state.hourlyUsage
+                    TimeRange.TODAY -> state.todayHourlyUsage
+                    else -> state.dailyUsage
                 }
                 if (series.size < 2) {
                     Box(
@@ -276,7 +287,14 @@ fun DashboardScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            "暂无趋势数据，切换到更长的时间范围试试",
+                            when {
+                                state.selectedTimeRange == TimeRange.TODAY ->
+                                    "今日数据还不多，去看看 24 小时视图吧"
+                                state.selectedTimeRange == TimeRange.HOURS_24 ->
+                                    "暂无小时粒度数据"
+                                else ->
+                                    "暂无趋势数据，切换到更长的时间范围试试"
+                            },
                             style = GlassText.Label,
                             color = palette.InkMid
                         )
@@ -285,6 +303,7 @@ fun DashboardScreen(
                     TrendChart(
                         data = series,
                         height = if (wide) 180.dp else 152.dp,
+                        metric = trendMetric,
                         accent = palette.Accent,
                         secondary = Color(0xFF5C7FFF)
                     )
@@ -964,6 +983,43 @@ private fun SectionTitle(text: String, modifier: Modifier = Modifier) {
             style = GlassText.Section,
             color = palette.InkMid
         )
+    }
+}
+
+/** 趋势图纵轴指标切换：金额 / Tokens 小药丸控件。 */
+@Composable
+private fun TrendMetricToggle(
+    selected: TrendMetric,
+    onMetricChange: (TrendMetric) -> Unit
+) {
+    val palette = LocalGlassPalette.current
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(palette.InkHi.copy(alpha = 0.08f))
+            .border(1.dp, palette.InkHi.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        TrendMetric.entries.forEach { m ->
+            val isSel = m == selected
+            Text(
+                if (m == TrendMetric.COST) "金额" else "Tokens",
+                style = GlassText.ChartAxis.copy(
+                    fontSize = 11.sp,
+                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (isSel) palette.InkHi else palette.InkMid
+                ),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (isSel) palette.Accent.copy(alpha = 0.22f) else Color.Transparent)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onMetricChange(m) }
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            )
+        }
     }
 }
 

@@ -358,6 +358,27 @@ object StatsEngine {
             .sortedBy { it.date }
     }
 
+    /** 「今日」趋势：仅统计今天（北京时间）的 bucket，按小时聚合，0 点至当前小时补零。 */
+    fun computeTodayHourlyUsage(data: UsageResponse): List<DailyUsage> {
+        val today = toBeijingDateOnly(Date())
+        val sums = HashMap<String, DailyUsage>()
+        for (b in data.buckets) {
+            val t = parseCached(b.bucketStart) ?: continue
+            if (toBeijingDateOnly(t) != today) continue
+            val key = toBeijingHour(t)
+            val prev = sums[key] ?: DailyUsage(key, 0L, 0.0)
+            sums[key] = prev.copy(
+                tokens = prev.tokens + b.fullTokens(),
+                cost = prev.cost + b.estimatedCost
+            )
+        }
+        val nowHour = Calendar.getInstance(beijingTz).get(Calendar.HOUR_OF_DAY)
+        return (0..nowHour).map { h ->
+            val key = String.format(Locale.US, "%02d:00", h)
+            sums[key] ?: DailyUsage(key, 0L, 0.0)
+        }
+    }
+
     fun computeDisplaySessions(data: UsageResponse, timeRange: TimeRange): List<DisplaySession> {
         val buckets = filterBuckets(data, timeRange)
         // 单次分组，避免重复遍历
