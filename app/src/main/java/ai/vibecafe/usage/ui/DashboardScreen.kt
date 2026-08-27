@@ -131,7 +131,7 @@ private val RangeValues = listOf(
 /** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
 private val MetricLabels = listOf("金额", "Tokens")
 
-private const val APP_VERSION = "v2.9.7"
+private const val APP_VERSION = "v2.9.8"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
