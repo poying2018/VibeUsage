@@ -109,4 +109,5 @@ fun DonutChart(
 }
 
 /** 供图例使用：把占比转成可读的百分比文案。 */
-fun percentText(percentage: Float): String = "${min(percentage, 100f).let { String.format("%.0f", it) }}%"
+fun percentText(percentage: Float): String =
+    "${min(percentage, 100f).let { String.format(java.util.Locale.US, "%.0f", it) }}%"

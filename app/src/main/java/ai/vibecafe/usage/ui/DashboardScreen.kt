@@ -132,7 +132,7 @@ private val RangeValues = listOf(
 /** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
 private val MetricLabels = listOf("金额", "Tokens")
 
-private const val APP_VERSION = "v2.9.8"
+private const val APP_VERSION = "v2.9.9"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -596,8 +596,7 @@ private fun Header(
                     backdrop = backdrop,
                     onClick = onOpenSettings
                 )
-                IconGlassButton(
-                    imageVector = Icons.Filled.Cloud,
+                DeepSeekBalanceButton(
                     contentDescription = "DS余额",
                     backdrop = backdrop,
                     onClick = onToggleDsPanel
@@ -894,6 +893,31 @@ private fun SettingsMenuItem(
         )
         Spacer(Modifier.width(12.dp))
         Text(label, style = GlassText.Body)
+    }
+}
+
+/** DeepSeek 余额入口：使用官方 Logo，白色单色适配右上角三个玻璃按钮。 */
+@Composable
+private fun DeepSeekBalanceButton(
+    contentDescription: String,
+    backdrop: com.kyant.backdrop.Backdrop,
+    onClick: () -> Unit
+) {
+    val palette = LocalGlassPalette.current
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        Modifier
+            .size(40.dp)
+            .glassTile(backdrop, cornerRadius = 20.dp)
+            .clickable(interaction, null, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_tool_deepseek),
+            contentDescription = contentDescription,
+            tint = palette.InkHi,
+            modifier = Modifier.size(23.dp)
+        )
     }
 }
 

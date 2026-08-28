@@ -2,6 +2,7 @@ package ai.vibecafe.usage.ui.glass
 
 import ai.vibecafe.usage.render.GlassEngine
 import ai.vibecafe.usage.render.rememberLightState
+import android.annotation.SuppressLint
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.graphics.BitmapFactory
 import androidx.compose.animation.core.LinearEasing
@@ -51,6 +52,7 @@ fun rememberPageBackdrop(): LayerBackdrop = rememberLayerBackdrop()
  * [imagePath] 非空时，用该图片做 cover 铺底（用户自定义背景），并在其上方叠加一层
  * 半透明白纱 + 边缘提亮晕罩，保证文字可读、玻璃仍有可折射的内容。
  */
+@SuppressLint("NewApi")
 @Composable
 fun GlassBackground(
     backdrop: LayerBackdrop,
