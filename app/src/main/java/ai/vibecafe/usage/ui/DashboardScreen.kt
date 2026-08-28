@@ -39,6 +39,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -163,11 +164,11 @@ fun DashboardScreen(
     val selectedIndex = RangeValues.indexOf(state.selectedTimeRange).coerceAtLeast(0)
     val insets = WindowInsets.systemBars.asPaddingValues()
 
-    var bgPath by remember { mutableStateOf(BackgroundStore.get(context)) }
-    var settingsExpanded by remember { mutableStateOf(false) }
-    var showDsPanel by remember { mutableStateOf(false) }  // DS+ Milky 面板切换
-    var trendMetric by remember { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
-    var showCustomPicker by remember { mutableStateOf(false) }  // 自定义日期范围对话框
+    var bgPath by rememberSaveable { mutableStateOf(BackgroundStore.get(context)) }
+    var settingsExpanded by rememberSaveable { mutableStateOf(false) }
+    var showDsPanel by rememberSaveable { mutableStateOf(false) }  // DS+ Milky 面板切换
+    var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
+    var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
     val dsPanelViewModel: DsPanelViewModel = viewModel()  // 与 DsPanelScreen 共享同一实例
     val wide = isWideScreen()
     val pullState = rememberPullToRefreshState()
@@ -178,8 +179,25 @@ fun DashboardScreen(
         if (uri != null) bgPath = BackgroundStore.set(context, uri)
     }
 
+    // 极光颜色随指标联动：金额=青/蓝（默认），Tokens=紫/洋红（呼应趋势图渐变 secondary）
+    val auroraA by androidx.compose.animation.animateColorAsState(
+        targetValue = if (trendMetric == TrendMetric.TOKENS) Color(0xFF7C6BFF) else Color(0xFF1FE0C4),
+        animationSpec = tween(800),
+        label = "auroraA"
+    )
+    val auroraB by androidx.compose.animation.animateColorAsState(
+        targetValue = if (trendMetric == TrendMetric.TOKENS) Color(0xFFFF4D9D) else Color(0xFF6E8CFF),
+        animationSpec = tween(800),
+        label = "auroraB"
+    )
+
     Box(Modifier.fillMaxSize()) {
-        GlassBackground(backdrop, imagePath = bgPath)
+        GlassBackground(
+            backdrop,
+            imagePath = bgPath,
+            auroraColorA = auroraA,
+            auroraColorB = auroraB
+        )
 
         // 内容整体导出进 backdrop（用包裹 Box，避开 scroll modifier 对录制的影响），
         // 悬浮玻璃才能实时模糊到其背后的滚动内容

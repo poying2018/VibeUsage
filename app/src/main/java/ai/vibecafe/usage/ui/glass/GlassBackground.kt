@@ -1,7 +1,7 @@
 package ai.vibecafe.usage.ui.glass
 
 import ai.vibecafe.usage.render.GlassEngine
-import ai.vibecafe.usage.render.rememberLightDirection
+import ai.vibecafe.usage.render.rememberLightState
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.graphics.BitmapFactory
 import androidx.compose.animation.core.LinearEasing
@@ -55,24 +55,29 @@ fun rememberPageBackdrop(): LayerBackdrop = rememberLayerBackdrop()
 fun GlassBackground(
     backdrop: LayerBackdrop,
     modifier: Modifier = Modifier,
-    imagePath: String? = null
+    imagePath: String? = null, auroraColorA: Color? = null, auroraColorB: Color? = null
 ) {
     val p = LocalGlassPalette.current
     val imageBitmap = rememberDecodedImage(imagePath)
-    val transition = rememberInfiniteTransition(label = "orbs")
+    
 
     // ---- 自研渲染引擎（AGSL 极光层）：API 33+ 可用，绘制异常自动永久降级 ----
     val engineShader = remember { GlassEngine.newAuroraShader() }
     val engineFailed = remember { mutableStateOf(false) }
-    val light = rememberLightDirection()
-    // 动画时钟（仅着色器可用时驱动逐帧刷新）
+    val lightState by rememberLightState()
+    
+    // 动画时钟（仅当设备活动且着色器可用时，驱动 GPU 帧刷新；静止时锁帧休眠）
+    // 强制挂起：若 lightState.isActive 为 false，会撤除底层光斑和上层着色器的每帧刷新
     val timeSec = if (engineShader != null) {
-        produceState(0f) {
+        produceState(0f, lightState.isActive) {
+            if (!lightState.isActive) return@produceState
             var start = -1L
+            // 保存之前积累的时间补偿，让休眠唤醒后时间连贯不闪跳
+            val timeOffset = value
             while (true) {
                 withFrameNanos { f ->
                     if (start < 0) start = f
-                    value = (f - start) / 1_000_000_000f
+                    value = timeOffset + (f - start) / 1_000_000_000f
                 }
             }
         }
@@ -80,35 +85,30 @@ fun GlassBackground(
         remember { mutableStateOf(0f) }
     }
 
-    val p1 by transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(24_000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "orb1"
-    )
-    val p2 by transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(
-            tween(16_000, easing = LinearEasing), RepeatMode.Reverse,
-            StartOffset(7_000, StartOffsetType.FastForward)
-        ),
-        label = "orb2"
-    )
-    val p3 by transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(
-            tween(16_000, easing = LinearEasing), RepeatMode.Reverse,
-            StartOffset(12_000, StartOffsetType.FastForward)
-        ),
-        label = "orb3"
-    )
-    val p4 by transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(
-            tween(16_000, easing = LinearEasing), RepeatMode.Reverse,
-            StartOffset(3_000, StartOffsetType.FastForward)
-        ),
-        label = "orb4"
-    )
+    val orbsTimeSec = if (engineShader == null) {
+        produceState(0f, lightState.isActive) {
+            if (!lightState.isActive) return@produceState
+            var start = -1L
+            val timeOffset = value
+            while (true) {
+                withFrameNanos { f ->
+                    if (start < 0) start = f
+                    value = timeOffset + (f - start) / 1_000_000_000f
+                }
+            }
+        }
+    } else timeSec
+
+    // 手动映射循环插值：周期 T，往返
+    fun orbBounce(phase: Float, period: Float): Float {
+        val mod = (orbsTimeSec.value + phase) % (period * 2)
+        return if (mod < period) mod / period else 2f - (mod / period)
+    }
+
+    val p1 = orbBounce(0f, 24f)
+    val p2 = orbBounce(7f, 16f)
+    val p3 = orbBounce(12f, 16f)
+    val p4 = orbBounce(3f, 16f)
 
     Box(modifier.fillMaxSize().layerBackdrop(backdrop)) {
         Canvas(Modifier.fillMaxSize()) {
@@ -164,7 +164,7 @@ fun GlassBackground(
                 runCatching {
                     shader.setFloatUniform("uSize", w, h)
                     shader.setFloatUniform("uTime", timeSec.value)
-                    shader.setFloatUniform("uLight", light.value.x, light.value.y)
+                    shader.setFloatUniform("uLight", lightState.direction.x, lightState.direction.y)
                     // 自定义背景图上减弱极光，保持照片可读；暗色（自发光）比亮色稍强
                     val dark = p.OrbBlend == BlendMode.Plus
                     val strength = when {
@@ -174,9 +174,9 @@ fun GlassBackground(
                     }
                     shader.setFloatUniform("uStrength", strength)
                     shader.setFloatUniform("uColorA",
-                        p.OrbTeal.red, p.OrbTeal.green, p.OrbTeal.blue, 1f)
+                        (auroraColorA ?: p.OrbTeal).red, (auroraColorA ?: p.OrbTeal).green, (auroraColorA ?: p.OrbTeal).blue, 1f)
                     shader.setFloatUniform("uColorB",
-                        p.OrbBlue.red, p.OrbBlue.green, p.OrbBlue.blue, 1f)
+                        (auroraColorB ?: p.OrbBlue).red, (auroraColorB ?: p.OrbBlue).green, (auroraColorB ?: p.OrbBlue).blue, 1f)
                     drawRect(
                         brush = androidx.compose.ui.graphics.ShaderBrush(shader),
                         blendMode = p.OrbBlend
@@ -293,7 +293,7 @@ private fun DrawScope.orb(
 fun GlassScaffold(
     backdrop: LayerBackdrop,
     modifier: Modifier = Modifier,
-    imagePath: String? = null,
+    imagePath: String? = null, auroraColorA: Color? = null, auroraColorB: Color? = null,
     content: @Composable () -> Unit
 ) {
     Box(modifier.fillMaxSize()) {

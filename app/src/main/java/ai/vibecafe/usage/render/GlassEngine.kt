@@ -6,6 +6,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
@@ -13,18 +14,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.sin
+import kotlin.math.cos
 
 /**
  * 自研玻璃渲染引擎（AGSL / Android Graphics Shading Language）。
- *
- * Android 应用无法替换系统渲染管线（HWUI/Skia），本引擎在管线之上叠加一层
- * 程序化 GPU 着色：流光带 + 光源方向镜面高光 + 色散微闪，让玻璃背景拥有
- * 随设备倾角实时变化的光照——不采样任何 backdrop（彻底避免 RenderNode 循环），
- * API < 33 自动降级为无叠加（不崩溃）。
  */
 object GlassEngine {
 
-    /** AGSL 源码：双层错速流光带（细窄带）+ 光源镜面衰减 + RGB 通道微色散。 */
     val AURORA_AGSL = """
         uniform float2 uSize;
         uniform float uTime;
@@ -35,14 +34,11 @@ object GlassEngine {
 
         half4 main(float2 fragCoord) {
             float2 uv = fragCoord / uSize;
-            // 双层错速流光带（对角走向，细窄带避免大面积灰蒙）
             float b1 = sin((uv.x + uv.y * 0.55) * 6.2831 + uTime * 0.42);
             float b2 = sin((uv.x * 0.85 - uv.y) * 4.2 - uTime * 0.27);
             float sheen = smoothstep(0.88, 1.0, b1) * 0.6 + smoothstep(0.92, 1.0, b2) * 0.4;
-            // 光源方向镜面高光：光斑中心随倾角移动
             float2 toLight = uv - (float2(0.5, 0.38) + uLight * 0.28);
             float spec = exp(-dot(toLight, toLight) * 14.0);
-            // 色散微闪：三通道相位略错开
             float ca = 0.5 + 0.5 * sin(uTime * 0.9 + uv.x * 3.0);
             half3 rgb = mix(uColorA.rgb, uColorB.rgb, half(uv.x + 0.15 * ca));
             rgb += half3(0.04 * ca, 0.02, 0.05 * (1.0 - ca)) * half(sheen);
@@ -51,7 +47,6 @@ object GlassEngine {
         }
     """.trimIndent()
 
-    /** API 33+ 返回 Aurora 着色器实例，否则 null（调用方跳过叠加层）。 */
     fun newAuroraShader(): android.graphics.RuntimeShader? {
         if (Build.VERSION.SDK_INT < 33) return null
         return runCatching { android.graphics.RuntimeShader(AURORA_AGSL) }.getOrNull()
@@ -59,44 +54,82 @@ object GlassEngine {
 }
 
 /**
- * 光源方向：优先取加速度计倾角（拿起手机光斑会流动），
- * 无传感器 / 数值无效时退化为缓慢圆周漂移（基于时钟的确定性动画）。
+ * 光源方向及其关联的活动状态。
+ * [isActive] == false 意味着设备绝对静止超过一定时间（或处于省电模式），可以安全挂起渲染管线降频。
  */
+data class LightState(
+    val direction: Offset = Offset.Zero,
+    val isActive: Boolean = true
+)
+
 @Composable
-fun rememberLightDirection(): State<Offset> {
+fun rememberLightState(): State<LightState> {
     val context = LocalContext.current
-    val light = remember { mutableStateOf(Offset(0f, 0f)) }
+    val state = remember { mutableStateOf(LightState()) }
 
     DisposableEffect(context) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (pm?.isPowerSaveMode == true) {
+            // 省电模式下，强制宣告非活跃且光静止，触发全量挂起
+            state.value = LightState(Offset.Zero, false)
+            return@DisposableEffect onDispose {}
+        }
+
         val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         val sensor = sm?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        
         var hasReading = false
+        var lastGx = 0f
+        var lastGy = 0f
+        var lastActiveTime = System.nanoTime()
+
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                // 重力向量 → 倾角：屏幕平放时 (0,0,9.8)，竖起时 (0,9.8,0)
                 val gx = event.values.getOrNull(0) ?: return
                 val gy = event.values.getOrNull(1) ?: return
-                val norm = kotlin.math.hypot(gx, gy)
-                if (norm < 0.5f) return   // 平放无倾角：保留默认光位
+                
+                // 完全静止判定（变化低于 0.05 m/s² 视为未活动）
+                val changed = abs(gx - lastGx) > 0.05f || abs(gy - lastGy) > 0.05f
+                val now = System.nanoTime()
+                if (changed) {
+                    lastActiveTime = now
+                    lastGx = gx
+                    lastGy = gy
+                }
+                
+                // 持续静止超过 2.5 秒，则发出 inactive 信号使画布休眠
+                val isActive = (now - lastActiveTime) < 2_500_000_000L
+                val norm = hypot(gx, gy)
+                
+                if (norm < 0.5f) {
+                    state.value = state.value.copy(isActive = isActive)
+                    return
+                }
+                
                 hasReading = true
-                val k = 2.2f              // 灵敏度：光斑随倾角明显移动
-                light.value = Offset(
+                val k = 2.2f
+                val nextOffset = Offset(
                     (gx / norm * k).coerceIn(-1f, 1f),
                     (-gy / norm * k).coerceIn(-1f, 1f)
                 )
+                
+                // 只在状态变化或位置变化时更新
+                if (state.value.isActive != isActive || state.value.direction != nextOffset) {
+                    state.value = LightState(nextOffset, isActive)
+                }
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
         val registered = sm != null && sensor != null &&
             sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI)
-        // 模拟器/无传感器兜底：慢速圆周漂移（基于时钟，无陈旧捕获问题）
+            
         val poller = if (!registered) {
             val handler = android.os.Handler(android.os.Looper.getMainLooper())
             val drift = object : Runnable {
                 override fun run() {
                     if (!hasReading) {
                         val t = System.nanoTime() / 1_000_000_000f
-                        light.value = Offset(kotlin.math.sin(t * 0.45f), kotlin.math.cos(t * 0.33f))
+                        state.value = LightState(Offset(sin(t * 0.45f), cos(t * 0.33f)), true)
                     }
                     handler.postDelayed(this, 33)
                 }
@@ -104,10 +137,11 @@ fun rememberLightDirection(): State<Offset> {
             handler.post(drift)
             handler
         } else null
+        
         onDispose {
             sm?.unregisterListener(listener)
             poller?.removeCallbacksAndMessages(null)
         }
     }
-    return light
+    return state
 }
