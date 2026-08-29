@@ -109,16 +109,8 @@ fun LiquidGlassSegmentedControl(
         val segmentWidthPx = trackWidthPx / count
         val segmentWidth = with(density) { segmentWidthPx.toDp() }
 
-        // 测量每段文案真实宽度，供滑块「量体裁衣」：吸附到哪段就抱住那段文字的大小
+        // 测量每段文案真实宽度（用于按段宽自动缩字）
         val textMeasurer = rememberTextMeasurer()
-        // 文字与玻璃折射带之间的最小安全距离（内边距）。
-        // 放大到 22dp：边缘透镜折射最深约 14dp（按压态），22dp 能稳稳把字形挡在折射带之外，
-        // 不会再出现「吸附后边缘折射扫到字」。
-        // 关键：不再按「单段宽度 − 间隙」去 clamp 滑块宽度——否则宽标签（如「24小时」）的
-        // pill 会被压窄、文字贴边被折射扫到，且在段宽不同的设备上观感漂移。现在宽度 = 文字宽 + 2*pad，
-        // 必要时刻意允许比单段更宽（最多到整条宽），跨设备观感一致。
-        val pillPadPx = with(density) { 22.dp.toPx() }
-        val pillMinPx = with(density) { 56.dp.toPx() }
         // 文案宽度与自适应缩字一次测量完成（拖动动画每帧重组时此缓存不可失效，
         // 调用方必须传稳定引用的 items，否则每帧重测文字会直接掉帧）
         val textWidthsPx = remember(items) {
@@ -137,32 +129,13 @@ fun LiquidGlassSegmentedControl(
                 if (w > avail && w > 0f) (avail / w).coerceIn(0.72f, 1f) else 1f
             }
         }
-        // 每个段「吸附到位」时滑块的目标【宽度】与【中心】：
-        //  - 宽度 = 文字宽 + 2*pad，夹在 [pillMinPx, 整条宽*0.98] 之间（允许比单段更宽，跨段也不削内边距）。
-        //  - 中间段：中心 = 段中心，文字居中、两侧留足 pad。
-        //  - 最左段：左缘贴紧选择条左边框(x=0) ⇒ 中心 = 宽度/2。
-        //  - 最右段：右缘贴紧选择条右边框(x=trackWidth) ⇒ 中心 = trackWidth − 宽度/2。
-        // 效果：极端段滑块外缘与条边框严丝合缝；文字始终被 pad 护在折射带之外。
-        // 极端段宽度直接取「段宽」：这样外缘既贴紧选择条边框，文字又恰好落在滑块正中
-        // （pill 中心 = 段宽/2 = 段中心 = 文字中心），两侧内边距对称、文字始终居中。
-        // 中间段仍按文字宽度量体裁衣（文字宽 + 2*pad）。
-        val pillWidths = remember(items, pillPadPx, pillMinPx, segmentWidthPx, trackWidthPx, textWidthsPx) {
-            FloatArray(count) { i ->
-                when (i) {
-                    0 -> segmentWidthPx
-                    count - 1 -> segmentWidthPx
-                    else -> (textWidthsPx[i] + 2f * pillPadPx).coerceIn(pillMinPx, trackWidthPx * 0.98f)
-                }
-            }
+        // 滑块宽度与位置：与金额/Tokens 切换器同款——每段等宽，滑块恰好覆盖整段，
+        // 滑动时宽度恒定不跳变，只做平滑位移 + Q 弹过冲
+        val pillWidths = remember(count, segmentWidthPx) {
+            FloatArray(count) { segmentWidthPx }
         }
-        val pillCenters = remember(count, segmentWidthPx, pillWidths, trackWidthPx) {
-            FloatArray(count) { i ->
-                when (i) {
-                    0 -> pillWidths[0] / 2f                       // 段宽/2 = 文字中心 → 贴左缘且文字居中
-                    count - 1 -> trackWidthPx - pillWidths[count - 1] / 2f
-                    else -> (i + 0.5f) * segmentWidthPx           // 中间段：中心=文字中心，文字居中
-                }
-            }
+        val pillCenters = remember(count, segmentWidthPx) {
+            FloatArray(count) { i -> (i + 0.5f) * segmentWidthPx }
         }
 
         val drag = rememberGlassDragAnimation(

@@ -402,7 +402,9 @@ fun DashboardScreen(
         } // PullToRefreshBox 结束
         } // 内容导出 Box 结束
 
-        // ---- 底部悬浮时间选择器（DS+ 面板时不显示；不贴边，留出呼吸空间；实时模糊背后的滚动内容）----
+        // ---- 底部悬浮时间选择器（DS+ 面板时不显示；不贴边，留出呼吸空间）----
+        // 采样纯页面背景（与金额/Tokens 切换器同源），玻璃通透、折射彩色光斑，
+        // Q 弹滑动效果与切换器观感一致；不再磨砂模糊滚动内容
         if (!showDsPanel) {
             Box(
                 Modifier
@@ -419,7 +421,7 @@ fun DashboardScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onSelectRange(RangeValues[idx])
                     },
-                    backdrop = scrimBackdrop
+                    backdrop = backdrop
                 )
             }
         }
