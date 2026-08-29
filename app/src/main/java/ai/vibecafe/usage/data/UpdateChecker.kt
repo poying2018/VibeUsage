@@ -69,25 +69,42 @@ object UpdateChecker {
     /**
      * 检查是否有新版本。
      * 与 [currentVersion]（BuildConfig.VERSION_NAME）比较，返回结构化结果。
+     *
+     * 链路：优先 tags API；api.github.com 对未认证请求限流极严（Cloudflare 共享出口 IP
+     * 很容易被 403 打满），失败时自动降级为网页解析兜底：
+     *   最新版本 <- releases/latest 页面 HTML
+     *   APK 链接 <- releases/expanded_assets 页面 HTML
      */
     suspend fun checkForUpdate(currentVersion: String): CheckResult = withContext(Dispatchers.IO) {
         val tags = runCatching { fetchTags() }.getOrNull()
+        val latest: String?
+        var tagsFailed = false
         if (tags == null) {
-            return@withContext CheckResult(Status.FAILED, detail = "检查更新失败，请检查网络后重试")
+            // tags API 失败（限流/网络）：走 releases/latest 网页兜底
+            tagsFailed = true
+            latest = runCatching { fetchLatestViaLatestPage() }.getOrNull()
+            if (latest == null) {
+                return@withContext CheckResult(
+                    Status.FAILED,
+                    detail = "检查更新失败（GitHub 接口限流或网络不可达），请稍后重试"
+                )
+            }
+        } else {
+            // 只保留能解析出版本号的 tag，取语义最大者
+            val versioned = tags.mapNotNull { it.name?.takeIf { n -> versionNumbers(n).isNotEmpty() } }
+            if (versioned.isEmpty()) {
+                return@withContext CheckResult(Status.NO_RELEASE)
+            }
+            latest = versioned.maxWithOrNull(Comparator { a, b -> compareVersions(a, b) })!!
         }
-        // 只保留能解析出版本号的 tag，取语义最大者
-        val versioned = tags.mapNotNull { it.name?.takeIf { n -> versionNumbers(n).isNotEmpty() } }
-        if (versioned.isEmpty()) {
-            return@withContext CheckResult(Status.NO_RELEASE)
-        }
-        val latest = versioned.maxWithOrNull(Comparator { a, b -> compareVersions(a, b) })!!
 
         if (!isNewer(latest, currentVersion)) {
             return@withContext CheckResult(Status.UP_TO_DATE, latestVersion = latest)
         }
 
-        // 有新版本：查该 tag 是否有带 APK 的 Release（404 / 无 APK → 暂无安装包）
+        // 有新版本：查该 tag 是否有带 APK 的 Release（API 失败时走 expanded_assets 网页兜底）
         val apkUrl = runCatching { fetchReleaseApkUrl(latest) }.getOrNull()
+            ?: runCatching { fetchApkUrlViaExpandedAssets(latest) }.getOrNull()
         CheckResult(Status.UPDATE_AVAILABLE, latestVersion = latest, apkUrl = apkUrl)
     }
 
@@ -122,6 +139,53 @@ object UpdateChecker {
             return release.assets.firstOrNull {
                 it.browserDownloadUrl != null && it.name?.lowercase()?.endsWith(".apk") == true
             }?.browserDownloadUrl
+        }
+    }
+
+    /** releases/tag/ 链接里的版本号（如 v2.9.11）。 */
+    private val tagLinkRegex = Regex("releases/tag/(v[0-9][0-9A-Za-z.]*)")
+
+    /**
+     * 网页兜底：抓取 releases/latest 页面（github.com 网页，不走 api.github.com 限流），
+     * 从 HTML 里的 tag 链接解析最新版本号。代理 Worker 会跟随重定向到最终 Release 页。
+     */
+    private fun fetchLatestViaLatestPage(): String? {
+        val request = Request.Builder()
+            .url(DownloadAccelerator.accelerate("https://github.com/$REPO/releases/latest"))
+            .header("User-Agent", "VibeUsage")
+            .header("X-App-Key", DownloadAccelerator.appKey())
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful || response.body == null) return null
+            val html = response.body!!.string()
+            // 页面侧栏会列出多个历史 Release，取语义最大的那个
+            return tagLinkRegex.findAll(html)
+                .map { it.groupValues[1] }
+                .filter { versionNumbers(it).isNotEmpty() }
+                .maxWithOrNull(Comparator { a, b -> compareVersions(a, b) })
+        }
+    }
+
+    /**
+     * 网页兜底：抓取 expanded_assets 片段页（Release 页加载附件的接口，无 API 限流），
+     * 解析出第一个 APK 附件的下载地址。
+     */
+    private fun fetchApkUrlViaExpandedAssets(tag: String): String? {
+        val request = Request.Builder()
+            .url(DownloadAccelerator.accelerate("https://github.com/$REPO/releases/expanded_assets/$tag"))
+            .header("User-Agent", "VibeUsage")
+            .header("X-App-Key", DownloadAccelerator.appKey())
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful || response.body == null) return null
+            val html = response.body!!.string()
+            val match = Regex("href=\"([^\"]+\\.apk)\"").find(html) ?: return null
+            val path = match.groupValues[1]
+            return when {
+                path.startsWith("http") -> path
+                path.startsWith("/") -> "https://github.com$path"
+                else -> null
+            }
         }
     }
 
