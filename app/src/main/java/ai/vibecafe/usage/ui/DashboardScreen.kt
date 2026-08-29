@@ -821,7 +821,20 @@ private fun UpdateActionRow(label: String, onClick: () -> Unit, emphasis: Boolea
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(if (emphasis) palette.AccentWash.copy(alpha = 0.9f) else palette.AccentWash)
+            .then(
+                if (emphasis) {
+                    // 主 CTA（安装更新）：实色青蓝渐变 + 白字，与登录按钮同款，醒目不糊
+                    Modifier.background(
+                        Brush.horizontalGradient(
+                            listOf(palette.Accent, Color(0xFF4E7BFF)),
+                            startX = 0f,
+                            endX = 900f
+                        )
+                    )
+                } else {
+                    Modifier.background(palette.AccentWash)
+                }
+            )
             .clickable(interaction, null, onClick = onClick)
             .padding(vertical = 9.dp),
         horizontalArrangement = Arrangement.Center,
@@ -830,7 +843,7 @@ private fun UpdateActionRow(label: String, onClick: () -> Unit, emphasis: Boolea
         Text(
             label,
             style = GlassText.Chip,
-            color = palette.AccentInk
+            color = if (emphasis) Color.White else palette.AccentInk
         )
     }
 }
