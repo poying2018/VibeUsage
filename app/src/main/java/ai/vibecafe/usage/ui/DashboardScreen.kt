@@ -16,6 +16,8 @@ import ai.vibecafe.usage.ui.charts.DonutSlice
 import ai.vibecafe.usage.ui.charts.TrendChart
 import ai.vibecafe.usage.ui.charts.TrendMetric
 import ai.vibecafe.usage.ui.glass.GlassBackground
+import ai.vibecafe.usage.ui.glass.LiquidBottomTab
+import ai.vibecafe.usage.ui.glass.LiquidBottomTabs
 import ai.vibecafe.usage.ui.glass.LiquidGlassSegmentedControl
 import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.glass.glassRow
@@ -67,20 +69,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -106,6 +105,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -132,7 +132,7 @@ private val RangeValues = listOf(
 /** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
 private val MetricLabels = listOf("金额", "Tokens")
 
-private const val APP_VERSION = "v2.9.12"
+private const val APP_VERSION = "v2.9.13"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -165,7 +165,7 @@ fun DashboardScreen(
     val insets = WindowInsets.systemBars.asPaddingValues()
 
     var bgPath by rememberSaveable { mutableStateOf(BackgroundStore.get(context)) }
-    var settingsExpanded by rememberSaveable { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }  // 设置独立页（底部导航 Tab 3）
     var showDsPanel by rememberSaveable { mutableStateOf(false) }  // DS+ Milky 面板切换
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
@@ -235,9 +235,10 @@ fun DashboardScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(
                     top = insets.calculateTopPadding() + 18.dp,
-                    // 底部留出「选择条高 58 + 距底 14 + 呼吸 20」的空间：
-                    // 内容可滚动到悬浮选择条下方被实时模糊，滚到底时最后一行仍不会被遮挡
-                    bottom = insets.calculateBottomPadding() + 92.dp,
+                    // 底部留出「底部导航栏 64+14 +（概览页：时间选择条 58+10）+ 呼吸」的空间：
+                    // 内容可滚动到悬浮玻璃下方被实时模糊，滚到底时最后一行仍不会被遮挡
+                    bottom = insets.calculateBottomPadding() +
+                            (if (!showDsPanel && !showSettings) 176.dp else 106.dp),
                     start = 18.dp,
                     end = 18.dp
                 ),
@@ -248,9 +249,6 @@ fun DashboardScreen(
                     if (showDsPanel) dsPanelViewModel.loadBalance()
                     else onRefresh()
                 },
-                onOpenSettings = { settingsExpanded = true },
-                onToggleDsPanel = { showDsPanel = !showDsPanel },
-                showDsPanel = showDsPanel,
                 backdrop = backdrop,
                 wide = wide,
                 refreshing = state.isRefreshing
@@ -261,8 +259,27 @@ fun DashboardScreen(
                 GranularityNote(note, backdrop)
             }
 
-            // ---- DS+ Milky 面板 / 主内容切换 ----
-            if (showDsPanel) {
+            // ---- 设置页 / DS+ Milky 面板 / 主内容切换 ----
+            if (showSettings) {
+                SettingsScreen(
+                    backdrop = backdrop,
+                    showReset = bgPath != null,
+                    onCustomBackground = { pickImage.launch("image/*") },
+                    onResetBackground = {
+                        BackgroundStore.clear(context)
+                        bgPath = null
+                    },
+                    onShareCard = onShareCard,
+                    onLogout = onLogout,
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
+                    update = state.update,
+                    onCheckUpdate = onCheckUpdate,
+                    onDownloadUpdate = onDownloadUpdate,
+                    onInstallUpdate = onInstallUpdate,
+                    appVersion = APP_VERSION
+                )
+            } else if (showDsPanel) {
                 DsPanelScreen(backdrop = backdrop)
             } else {
                 // ---- 总消耗卡片 ----
@@ -405,13 +422,13 @@ fun DashboardScreen(
         // ---- 底部悬浮时间选择器（DS+ 面板时不显示；不贴边，留出呼吸空间）----
         // 采样纯页面背景（与金额/Tokens 切换器同源），玻璃通透、折射彩色光斑，
         // Q 弹滑动效果与切换器观感一致；不再磨砂模糊滚动内容
-        if (!showDsPanel) {
+        if (!showDsPanel && !showSettings) {
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .widthIn(max = 720.dp)
                     .fillMaxWidth()
-                    .padding(start = 18.dp, end = 18.dp, bottom = insets.calculateBottomPadding() + 14.dp)
+                    .padding(start = 18.dp, end = 18.dp, bottom = insets.calculateBottomPadding() + 88.dp)
             ) {
                 LiquidGlassSegmentedControl(
                     items = RangeLabels,
@@ -421,43 +438,83 @@ fun DashboardScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onSelectRange(RangeValues[idx])
                     },
-                    backdrop = backdrop
+                    backdrop = scrimBackdrop,  // 实时模糊背后滚动内容（酷安同款）
                 )
             }
         }
 
-        // 设置菜单：同组合渲染，玻璃可真实采样页面背景光晕
-        if (settingsExpanded) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .clickable { settingsExpanded = false }
-            )
-            SettingsMenu(
-                backdrop = scrimBackdrop,
-                showReset = bgPath != null,
-                onCustomBackground = { pickImage.launch("image/*") },
-                onResetBackground = {
-                    BackgroundStore.clear(context)
-                    bgPath = null
-                },
-                onShareCard = {
-                    settingsExpanded = false
-                    onShareCard()
-                },
-                onLogout = {
-                    settingsExpanded = false
-                    onLogout()
-                },
-                themeMode = themeMode,
-                onThemeModeChange = onThemeModeChange,
-                update = state.update,
-                onCheckUpdate = onCheckUpdate,
-                onDownloadUpdate = onDownloadUpdate,
-                onInstallUpdate = onInstallUpdate,
-                topPadding = insets.calculateTopPadding() + 18.dp + if (wide) 62.dp else 54.dp
-            )
+        // ---- 底部液态玻璃导航栏（酷安同款 LiquidBottomTabs）：概览 / DeepSeek / 设置 ----
+        // 三层结构：胶囊玻璃壳(64dp, blur8+lens24) -> 隐藏的 Accent 色内容层(供滑块折射) ->
+        // 纯折射滑块(56dp, 按压折射拉满+色散)。选中索引由既有状态派生：设置展开=2 / DS面板=1 / 概览=0，
+        // 与表头按钮、设置菜单状态完全互通。
+        // 跟随应用内主题（InkHi：亮色≈近黑 / 暗色≈近白）
+        val tabContentColor = LocalGlassPalette.current.InkHi
+        val onSelectTab: (Int) -> Unit = { idx ->
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            when (idx) {
+                0 -> {
+                    showDsPanel = false
+                    showSettings = false
+                }
+                1 -> {
+                    showDsPanel = true
+                    showSettings = false
+                }
+                else -> {
+                    showSettings = true
+                    showDsPanel = false
+                }
+            }
         }
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth()
+                .padding(start = 18.dp, end = 18.dp, bottom = insets.calculateBottomPadding() + 14.dp)
+        ) {
+            LiquidBottomTabs(
+                selectedTabIndex = {
+                    when {
+                        showSettings -> 2
+                        showDsPanel -> 1
+                        else -> 0
+                    }
+                },
+                onTabSelected = onSelectTab,
+                backdrop = scrimBackdrop,  // 背景+内容组合层：滚动内容实时进入玻璃模糊
+                tabsCount = 3
+            ) {
+                LiquidBottomTab({ onSelectTab(0) }) {
+                    Icon(
+                        Icons.Filled.DonutLarge,
+                        null,
+                        Modifier.size(22.dp),
+                        tint = tabContentColor
+                    )
+                    Text("概览", style = TextStyle(tabContentColor, 11.sp))
+                }
+                LiquidBottomTab({ onSelectTab(1) }) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Chat,
+                        null,
+                        Modifier.size(22.dp),
+                        tint = tabContentColor
+                    )
+                    Text("DeepSeek", style = TextStyle(tabContentColor, 11.sp))
+                }
+                LiquidBottomTab({ onSelectTab(2) }) {
+                    Icon(
+                        Icons.Filled.Settings,
+                        null,
+                        Modifier.size(22.dp),
+                        tint = tabContentColor
+                    )
+                    Text("设置", style = TextStyle(tabContentColor, 11.sp))
+                }
+            }
+        }
+
 
         // 自定义日期范围选择（与设置菜单同构：屏内 scrim + 液态玻璃面板，保持真实模糊层级）
         if (showCustomPicker) {
@@ -507,9 +564,6 @@ fun DashboardScreen(
 @Composable
 private fun Header(
     onRefresh: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onToggleDsPanel: () -> Unit = {},
-    showDsPanel: Boolean = false,
     backdrop: com.kyant.backdrop.Backdrop,
     wide: Boolean = false,
     refreshing: Boolean = false
@@ -582,357 +636,8 @@ private fun Header(
                 onClick = onRefresh,
                 spinning = refreshing
             )
-            if (showDsPanel) {
-                // DS 面板中：点击返回 VibeUsage
-                IconGlassButton(
-                    imageVector = Icons.Filled.Cloud,
-                    contentDescription = "VibeUsage",
-                    backdrop = backdrop,
-                    onClick = onToggleDsPanel
-                )
-            } else {
-                // 主面板：设置 + DS+ 切换
-                IconGlassButton(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = "设置",
-                    backdrop = backdrop,
-                    onClick = onOpenSettings
-                )
-                DeepSeekBalanceButton(
-                    contentDescription = "DS余额",
-                    backdrop = backdrop,
-                    onClick = onToggleDsPanel
-                )
-            }
+            // 设置 / DeepSeek 入口已统一移至底部液态玻璃导航栏，避免重复入口
         }
-    }
-}
-
-/** 同组合渲染的设置菜单（非 Popup 窗口），玻璃层能真实采样页面背景光晕。 */
-@Composable
-private fun SettingsMenu(
-    backdrop: com.kyant.backdrop.Backdrop,
-    showReset: Boolean,
-    onCustomBackground: () -> Unit,
-    onResetBackground: () -> Unit,
-    onShareCard: () -> Unit,
-    onLogout: () -> Unit,
-    themeMode: ThemeMode,
-    onThemeModeChange: (ThemeMode) -> Unit,
-    update: UpdateState,
-    onCheckUpdate: () -> Unit,
-    onDownloadUpdate: () -> Unit,
-    onInstallUpdate: () -> Unit,
-    topPadding: androidx.compose.ui.unit.Dp
-) {
-    val palette = LocalGlassPalette.current
-    // 拦截菜单列内的点击：菜单内非交互区域（文本/留白/状态行）的点击
-    // 若不消费，会穿透到下方全屏 scrim 导致菜单意外关闭（如点完「检查更新」后
-    // 按钮变文本，再点同一位置就关掉了菜单）。
-    val menuInteraction = remember { MutableInteractionSource() }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .padding(top = topPadding, end = 18.dp),
-        contentAlignment = Alignment.TopEnd
-    ) {
-        Column(
-            Modifier
-                .width(226.dp)
-                .clickable(menuInteraction, null, onClick = {}),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            SettingsMenuItem(
-                backdrop = backdrop,
-                icon = Icons.Filled.PhotoLibrary,
-                label = "自定义背景",
-                onClick = onCustomBackground
-            )
-            if (showReset) {
-                SettingsMenuItem(
-                    backdrop = backdrop,
-                    icon = Icons.Filled.RestartAlt,
-                    label = "恢复默认背景",
-                    onClick = onResetBackground
-                )
-            }
-            // 外观模式：跟随系统 / 浅色 / 深色
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .glassRow(backdrop, cornerRadius = 16.dp)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Filled.DarkMode,
-                        contentDescription = null,
-                        tint = palette.InkMid,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text("外观", style = GlassText.Body)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ThemeMode.entries.forEach { mode ->
-                        ThemeChip(
-                            mode = mode,
-                            selected = mode == themeMode,
-                            onClick = { onThemeModeChange(mode) }
-                        )
-                    }
-                }
-            }
-            // 检查更新 / 下载 / 安装
-            UpdateBlock(
-                update = update,
-                onCheckUpdate = onCheckUpdate,
-                onDownloadUpdate = onDownloadUpdate,
-                onInstallUpdate = onInstallUpdate,
-                backdrop = backdrop
-            )
-            SettingsMenuItem(
-                backdrop = backdrop,
-                icon = Icons.Filled.Share,
-                label = "分享用量卡",
-                onClick = onShareCard
-            )
-            SettingsMenuItem(
-                backdrop = backdrop,
-                icon = Icons.AutoMirrored.Filled.Logout,
-                label = "退出登录",
-                onClick = onLogout
-            )
-        }
-    }
-}
-
-/** 设置菜单里的「检查更新 / 下载 / 安装」面板，随流程阶段切换内容。 */
-@Composable
-private fun UpdateBlock(
-    update: UpdateState,
-    onCheckUpdate: () -> Unit,
-    onDownloadUpdate: () -> Unit,
-    onInstallUpdate: () -> Unit,
-    backdrop: com.kyant.backdrop.Backdrop
-) {
-    val palette = LocalGlassPalette.current
-
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .glassRow(backdrop, cornerRadius = 16.dp)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(9.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Filled.SystemUpdate,
-                contentDescription = null,
-                tint = palette.InkMid,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(10.dp))
-            Text("更新", style = GlassText.Body)
-        }
-
-        when (update.status) {
-            UpdateStatus.IDLE -> UpdateActionRow("检查更新", onClick = onCheckUpdate)
-
-            UpdateStatus.CHECKING -> Text(
-                "正在检查更新…",
-                style = GlassText.Meta,
-                color = palette.InkMid
-            )
-
-            UpdateStatus.UP_TO_DATE -> {
-                Text(
-                    update.message ?: "已是最新版本",
-                    style = GlassText.Meta,
-                    color = palette.AccentInk
-                )
-                UpdateActionRow("重新检查", onClick = onCheckUpdate)
-            }
-
-            UpdateStatus.AVAILABLE -> {
-                Text(
-                    "发现新版本 ${update.version?.removePrefix("v")}",
-                    style = GlassText.Meta,
-                    color = palette.InkHi
-                )
-                UpdateActionRow("下载更新", onClick = onDownloadUpdate)
-            }
-
-            UpdateStatus.DOWNLOADING -> {
-                Text(
-                    "正在下载… ${(update.progress * 100).toInt()}%",
-                    style = GlassText.Meta,
-                    color = palette.InkMid
-                )
-                LinearProgressIndicator(
-                    progress = { update.progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(5.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = palette.Accent,
-                    trackColor = palette.InkLo.copy(alpha = 0.5f)
-                )
-            }
-
-            UpdateStatus.DOWNLOADED -> {
-                Text(
-                    "${update.version?.removePrefix("v")} 已下载",
-                    style = GlassText.Meta,
-                    color = palette.AccentInk
-                )
-                UpdateActionRow("安装更新", onClick = onInstallUpdate, emphasis = true)
-            }
-
-            // 发现新版本但该版本尚未发布带 APK 的 Release（只打了 tag）
-            UpdateStatus.NO_APK -> {
-                Text(
-                    update.message ?: "发现新版本，安装包暂未发布",
-                    style = GlassText.Meta,
-                    color = palette.InkMid,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                UpdateActionRow("重新检查", onClick = onCheckUpdate)
-            }
-
-            UpdateStatus.FAILED -> {
-                update.message?.let {
-                    Text(it, style = GlassText.Meta, color = palette.Down)
-                }
-                UpdateActionRow("重试检查", onClick = onCheckUpdate)
-            }
-        }
-    }
-}
-
-/** 更新区块里的小按钮行。 */
-@Composable
-private fun UpdateActionRow(label: String, onClick: () -> Unit, emphasis: Boolean = false) {
-    val palette = LocalGlassPalette.current
-    val interaction = remember { MutableInteractionSource() }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .then(
-                if (emphasis) {
-                    // 主 CTA（安装更新）：实色青蓝渐变 + 白字，与登录按钮同款，醒目不糊
-                    Modifier.background(
-                        Brush.horizontalGradient(
-                            listOf(palette.Accent, Color(0xFF4E7BFF)),
-                            startX = 0f,
-                            endX = 900f
-                        )
-                    )
-                } else {
-                    Modifier.background(palette.AccentWash)
-                }
-            )
-            .clickable(interaction, null, onClick = onClick)
-            .padding(vertical = 9.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            label,
-            style = GlassText.Chip,
-            color = if (emphasis) Color.White else palette.AccentInk
-        )
-    }
-}
-
-@Composable
-private fun RowScope.ThemeChip(
-    mode: ThemeMode,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    val palette = LocalGlassPalette.current
-    val interaction = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(10.dp)
-    Box(
-        Modifier
-            .weight(1f)
-            .clip(shape)
-            .background(if (selected) palette.AccentWash else Color.Transparent)
-            .then(
-                if (selected) {
-                    Modifier.border(1.dp, palette.AccentRim, shape)
-                } else {
-                    Modifier
-                }
-            )
-            .clickable(interaction, null, onClick = onClick)
-            .padding(vertical = 7.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            mode.label,
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = if (selected) palette.AccentInk else palette.InkMid,
-            maxLines = 1
-        )
-    }
-}
-
-@Composable
-private fun SettingsMenuItem(
-    backdrop: com.kyant.backdrop.Backdrop,
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit
-) {
-    val palette = LocalGlassPalette.current
-    val interaction = remember { MutableInteractionSource() }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .glassRow(backdrop, cornerRadius = 16.dp)
-            .clickable(interaction, null, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = palette.InkMid,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(label, style = GlassText.Body)
-    }
-}
-
-/** DeepSeek 余额入口：使用官方 Logo，白色单色适配右上角三个玻璃按钮。 */
-@Composable
-private fun DeepSeekBalanceButton(
-    contentDescription: String,
-    backdrop: com.kyant.backdrop.Backdrop,
-    onClick: () -> Unit
-) {
-    val palette = LocalGlassPalette.current
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        Modifier
-            .size(40.dp)
-            .glassTile(backdrop, cornerRadius = 20.dp)
-            .clickable(interaction, null, onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_tool_deepseek),
-            contentDescription = contentDescription,
-            tint = palette.InkHi,
-            modifier = Modifier.size(23.dp)
-        )
     }
 }
 

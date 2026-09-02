@@ -4,6 +4,7 @@ import ai.vibecafe.usage.R
 import androidx.compose.material3.Typography
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -302,3 +303,7 @@ object GlassText {
         letterSpacing = 0.2.sp
     )
 }
+
+/** 应用内主题是否为暗色（以主文字亮度判定；应用可覆盖系统主题，玻璃组件选配方须以此为准）。 */
+val GlassPalette.isDark: Boolean
+    get() = InkHi.luminance() > 0.5f

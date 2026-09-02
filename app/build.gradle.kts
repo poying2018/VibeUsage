@@ -34,8 +34,8 @@ android {
         // 低版本会自动降级为无折射/无模糊的半透明玻璃，不会崩溃。
         minSdk = 26
         targetSdk = 34
-        versionCode = 39
-        versionName = "2.9.12"
+        versionCode = 40
+        versionName = "2.9.13"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -86,7 +86,7 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
-    // backdrop 1.0.2 依赖 Compose 1.10.0 / Kotlin stdlib 2.2.21，BOM 需 >= 该版本
+    // Compose BOM 2026.01.00：满足本地 :backdrop 模块（vendor 自 Kyant0/AndroidLiquidGlass 2.0.1）所需版本
     val composeBom = platform("androidx.compose:compose-bom:2026.01.00")
     implementation(composeBom)
 
@@ -112,7 +112,7 @@ dependencies {
     implementation("com.google.code.gson:gson:2.10.1")
 
     // 液态玻璃：GPU RuntimeShader 折射 + 模糊 + 高光
-    implementation("io.github.kyant0:backdrop:1.0.2")
+    implementation(project(":backdrop"))
 
     // 桌面小组件（Glance）+ 后台定时同步（WorkManager）
     implementation("androidx.glance:glance-appwidget:1.1.1")

@@ -68,10 +68,19 @@ fun GlassBackground(
     // 普通动画时钟：极光只做时间流动，不绑定任何设备传感器
     val timeSec = produceState(0f) {
         var start = -1L
+        var lastEmitted = -1f
         while (true) {
             withFrameNanos { f ->
                 if (start < 0) start = f
-                value = (f - start) / 1_000_000_000f
+                val t = (f - start) / 1_000_000_000f
+                // 性能：极光各分量运动周期 7~32s（AGSL 相位速度 ≤0.9 rad/s、光斑 16~24s 往返），
+                // 逐帧更新会让全屏 Canvas 每帧重绘、backdrop 每帧失效、所有玻璃层每帧重新采样 ——
+                // GPU 被空闲动画打满。限流到 ~10fps：每步相位 ≤0.09rad（柔焦光斑位移 2~3px），
+                // 肉眼无差别，空闲 GPU 负载降 ~85%。
+                if (t - lastEmitted >= 0.1f) {
+                    lastEmitted = t
+                    value = t
+                }
             }
         }
     }

@@ -38,6 +38,7 @@ fun Modifier.glassCard(
     return this.drawBackdrop(
         backdrop = backdrop,
         shape = { RoundedCornerShape(cornerRadius) },
+        sampleScale = 0.5f,  // 性能：纯模糊玻璃半分辨率采样，视觉无差，GPU 省 ~4x
         effects = {
             vibrancy()
             blur(blurRadius.toPx())
@@ -79,6 +80,7 @@ fun Modifier.glassRow(
     return this.drawBackdrop(
         backdrop = backdrop,
         shape = { RoundedCornerShape(cornerRadius) },
+        sampleScale = 0.5f,  // 性能：同 glassCard
         effects = {
             vibrancy()
             blur(16f.dp.toPx())

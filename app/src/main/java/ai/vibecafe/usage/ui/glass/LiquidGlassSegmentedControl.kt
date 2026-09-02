@@ -1,13 +1,12 @@
 package ai.vibecafe.usage.ui.glass
 
-import ai.vibecafe.usage.ui.theme.GlassText
-import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -15,65 +14,76 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.fastRoundToInt
 import androidx.compose.ui.util.lerp
-import kotlin.math.floor
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
+import ai.vibecafe.usage.ui.theme.GlassText
+import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import ai.vibecafe.usage.ui.theme.isDark
 import androidx.compose.material3.Text
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.sign
 
 private val Pill = RoundedCornerShape(percent = 50)
 private val EaseOutQuint = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
 /**
- * 液态玻璃分段控件 —— Web 原型 `.range-shell` 的 1:1 Compose 实现。
+ * 液态玻璃分段控件 —— 已统一为酷安底部导航栏同款配方
+ * （Kyant0/AndroidLiquidGlass Catalog · LiquidBottomTabs）：
  *
- * 视觉：
- *  - 选择条 58dp 高胶囊，rgba(255,255,255,.5) + blur(18) + saturate(150%)，内描边 1px 白 70%。
- *  - 滑块与选择条上下齐平；吸附到最左/最右段时外侧缘贴紧选择条边框（不留缝），中间段按文案宽度量体裁衣并居中。
- *  - 滑块为「纯玻璃」：只有 1px 白描边 + 边缘折射，不加任何白底/高光（全透）。
+ *  - 胶囊玻璃壳：vibrancy + blur(8) + lens(24,24)，按压整体微膨胀（+16dp/宽度）；
+ *  - 隐藏的 Accent 色内容层（alpha=0，tint 主题色）写入独立 backdrop，
+ *    滑块盖住的分段文字以 Accent 色从玻璃中折射透出（酷安图标发光弯曲同源）；
+ *  - 滑块为「纯折射」玻璃：无磨砂不挡文字，按压时折射强度拉满 + 色散
+ *    （chromaticAberration）+ 投影 + 内阴影，速度产生液体拉伸惯性；
+ *  - 拖拽越出两端时整条壳 4dp EaseOut 位移回弹，松手 Q 弹吸附最近分段。
  *
- * 交互（与 Web 版逐条对齐）：
- *  - 只有按在滑块内部才会触发按压放大（1 → 1.18）与拖拽跟随；
- *  - 按下瞬间折射强度拉满（对应 feDisplacementMap scale 6 → 15），实时把选择条边界折射成光线；
- *  - 点击其它分段只做 Q 弹位移，不放大；
- *  - 拖拽松手吸附到最近分段。
+ *  保留的原有行为：
+ *  - selectedIndex 越界（-1 = 自定义范围档）时滑块淡出隐藏；
+ *  - 点击任意分段直接跳转（Q 弹位移）；按住滑块可拖拽刮擦；
+ *  - 分段文案按段宽自动缩字（0.72~1.0）。
  *
  * @param backdrop 页面背景 backdrop，玻璃层从这里取样
  */
@@ -84,19 +94,20 @@ fun LiquidGlassSegmentedControl(
     onSelect: (Int) -> Unit,
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
-    height: Dp = 58.dp
+    height: Dp = 64.dp
 ) {
     val p = LocalGlassPalette.current
     val count = items.size
     if (count == 0) return
+    // 跟随应用内主题（见 LiquidBottomTabs 注释）
+    val isLightTheme = !p.isDark
+    val contentColor = if (isLightTheme) Color.Black else Color.White
+    val accentColor = p.Accent
+    val containerColor =
+        if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f)
+        else Color(0xFF121212).copy(0.4f)
 
-    // 选择条本体导出成一层 backdrop，让滑块把它一并折射进来 ——
-    // 这样滑块是「盖在选项上、清楚包住该选项字体」的玻璃块，而不是掏空成背景的洞
-    val shellBackdrop = rememberLayerBackdrop()
-    // 文案烘焙进一层 backdrop，滑块才能采样到文字并在滑动时折射它（液态玻璃精髓）
-    val textBackdrop = rememberLayerBackdrop()
-    // 页面背景 + 选择条本体 + 文字，三者一并折射
-    val pillBackdrop = rememberCombinedBackdrop(backdrop, shellBackdrop, textBackdrop)
+    val tabsBackdrop = rememberLayerBackdrop()
 
     BoxWithConstraints(
         modifier = modifier
@@ -105,14 +116,12 @@ fun LiquidGlassSegmentedControl(
         contentAlignment = Alignment.CenterStart
     ) {
         val density = LocalDensity.current
-        val trackWidthPx = constraints.maxWidth.toFloat()
-        val segmentWidthPx = trackWidthPx / count
-        val segmentWidth = with(density) { segmentWidthPx.toDp() }
+        val tabWidth = with(density) {
+            (constraints.maxWidth.toFloat() - 8f.dp.toPx()) / count
+        }
 
-        // 测量每段文案真实宽度（用于按段宽自动缩字）
+        // 测量每段文案真实宽度（按段宽自动缩字，保证文字不挤不溢出）
         val textMeasurer = rememberTextMeasurer()
-        // 文案宽度与自适应缩字一次测量完成（拖动动画每帧重组时此缓存不可失效，
-        // 调用方必须传稳定引用的 items，否则每帧重测文字会直接掉帧）
         val textWidthsPx = remember(items) {
             items.map { label ->
                 textMeasurer.measure(
@@ -121,276 +130,265 @@ fun LiquidGlassSegmentedControl(
                 ).size.width.toFloat()
             }
         }
-        // 7 档后单段变窄（如「24小时」四字），按段宽自动缩小字号，保证文字不挤不溢出
-        val fitScales = remember(textWidthsPx, segmentWidthPx) {
+        val fitScales = remember(textWidthsPx, tabWidth) {
             val minPad = with(density) { 6.dp.toPx() }
             textWidthsPx.map { w ->
-                val avail = segmentWidthPx - minPad
+                val avail = tabWidth - minPad
                 if (w > avail && w > 0f) (avail / w).coerceIn(0.72f, 1f) else 1f
             }
         }
-        // 滑块宽度与位置：与金额/Tokens 切换器同款——每段等宽，滑块恰好覆盖整段，
-        // 滑动时宽度恒定不跳变，只做平滑位移 + Q 弹过冲
-        val pillWidths = remember(count, segmentWidthPx) {
-            FloatArray(count) { segmentWidthPx }
-        }
-        val pillCenters = remember(count, segmentWidthPx) {
-            FloatArray(count) { i -> (i + 0.5f) * segmentWidthPx }
+
+        val offsetAnimation = remember { Animatable(0f) }
+        val panelOffset by remember(density) {
+            derivedStateOf {
+                val fraction = (offsetAnimation.value / constraints.maxWidth).fastCoerceIn(-1f, 1f)
+                with(density) {
+                    4f.dp.toPx() * fraction.sign * EaseOut.transform(abs(fraction))
+                }
+            }
         }
 
-        val drag = rememberGlassDragAnimation(
-            initialValue = selectedIndex.toFloat(),
-            valueRange = 0f..(count - 1).toFloat(),
-            pressedScale = 1.18f
+        val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+        val animationScope = rememberCoroutineScope()
+        var currentIndex by remember {
+            mutableIntStateOf(selectedIndex.coerceIn(0, count - 1))
+        }
+
+        // 滑块按压放大：酷安为 78/56（64dp 壳 + 14dp 隆起）；小尺寸控件按比例缩放并封顶
+        val pressedScale = minOf(
+            (height + 14.dp) / (height - 8.dp),
+            78f / 56f
         )
 
-        // selectedIndex 越界（如 -1）表示「当前无选中段」（自定义范围档），滑块隐藏
+        val dampedDragAnimation = remember(animationScope) {
+            DampedDragAnimation(
+                animationScope = animationScope,
+                initialValue = currentIndex.toFloat(),
+                valueRange = 0f..(count - 1).toFloat(),
+                visibilityThreshold = 0.001f,
+                initialScale = 1f,
+                pressedScale = pressedScale,
+                onDragStarted = {},
+                onDragStopped = {
+                    val target = targetValue.fastRoundToInt().fastCoerceIn(0, count - 1)
+                    currentIndex = target
+                    animateToValue(target.toFloat())
+                    animationScope.launch {
+                        offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f))
+                    }
+                },
+                onDrag = { _, dragAmount ->
+                    updateValue(
+                        (targetValue + dragAmount.x / tabWidth * if (isLtr) 1f else -1f)
+                            .fastCoerceIn(0f, (count - 1).toFloat())
+                    )
+                    animationScope.launch {
+                        offsetAnimation.snapTo(offsetAnimation.value + dragAmount.x)
+                    }
+                }
+            )
+        }
+        // 外部选择同步（ViewModel 驱动）；-1（自定义档）只隐藏滑块，不动滑块位置
+        LaunchedEffect(Unit) {
+            snapshotFlow { selectedIndex }
+                .collectLatest { idx ->
+                    if (idx in 0 until count && idx != currentIndex) currentIndex = idx
+                }
+        }
+        LaunchedEffect(dampedDragAnimation) {
+            snapshotFlow { currentIndex }
+                .drop(1)
+                .collectLatest { idx ->
+                    dampedDragAnimation.animateToValue(idx.toFloat())
+                    onSelect(idx)
+                }
+        }
+
+        val interactiveHighlight = remember(animationScope) {
+            InteractiveHighlight(
+                animationScope = animationScope,
+                position = { size, _ ->
+                    Offset(
+                        if (isLtr) (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset
+                        else size.width - (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset,
+                        size.height / 2f
+                    )
+                }
+            )
+        }
+
+        // ---------- 1. 胶囊玻璃壳（同底部导航栏：vibrancy + blur8 + lens24）----------
+        Row(
+            Modifier
+                .graphicsLayer { translationX = panelOffset }
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { Pill },
+                    effects = {
+                        vibrancy()
+                        blur(8f.dp.toPx())
+                        lens(24f.dp.toPx(), 24f.dp.toPx())
+                    },
+                    layerBlock = {
+                        val progress = dampedDragAnimation.pressProgress
+                        val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
+                        scaleX = scale
+                        scaleY = scale
+                    },
+                    onDrawSurface = { drawRect(containerColor) }
+                )
+                .then(interactiveHighlight.modifier)
+                .fillMaxSize()
+                .padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items.forEachIndexed { index, label ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable(
+                            interactionSource = null,
+                            indication = null,
+                            role = Role.Tab
+                        ) { currentIndex = index },
+                    contentAlignment = Alignment.Center
+                ) {
+                    val fit = fitScales[index]
+                    Text(
+                        text = label,
+                        style = GlassText.SegmentActive.copy(
+                            fontSize = GlassText.SegmentActive.fontSize * fit
+                        ),
+                        color = contentColor,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.graphicsLayer {
+                            val s = lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
+                            scaleX = s
+                            scaleY = s
+                        }
+                    )
+                }
+            }
+        }
+
+        // ---------- 2. 隐藏的 Accent 内容层（写入 tabsBackdrop 供滑块折射）----------
+        Row(
+            Modifier
+                .clearAndSetSemantics {}
+                .alpha(0f)
+                .layerBackdrop(tabsBackdrop)
+                .graphicsLayer { translationX = panelOffset }
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { Pill },
+                    effects = {
+                        val progress = dampedDragAnimation.pressProgress
+                        vibrancy()
+                        blur(8f.dp.toPx())
+                        lens(
+                            24f.dp.toPx() * progress,
+                            24f.dp.toPx() * progress
+                        )
+                    },
+                    highlight = {
+                        Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
+                    },
+                    onDrawSurface = { drawRect(containerColor) }
+                )
+                .then(interactiveHighlight.modifier)
+                .height(height - 8.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp)
+                .graphicsLayer { colorFilter = ColorFilter.tint(accentColor) },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items.forEachIndexed { index, label ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val fit = fitScales[index]
+                    Text(
+                        text = label,
+                        style = GlassText.SegmentActive.copy(
+                            fontSize = GlassText.SegmentActive.fontSize * fit
+                        ),
+                        color = contentColor,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+
+        // ---------- 3. 滑块（纯折射玻璃 + 按压色散，同底部导航栏）----------
+        // selectedIndex 越界（-1 = 自定义范围档）时滑块淡出隐藏
         val hasSelection = selectedIndex in 0 until count
         val pillAlpha by animateFloatAsState(
             targetValue = if (hasSelection) 1f else 0f,
             animationSpec = tween(220, easing = EaseOutQuint),
             label = "pillAlpha"
         )
-
-        // 外部（ViewModel）改变选中项时，滑块 Q 弹过去
-        LaunchedEffect(selectedIndex, drag) {
-            if (hasSelection && abs(drag.targetValue - selectedIndex) > 0.01f) {
-                drag.springTo(selectedIndex.toFloat())
-            }
-        }
-
-        // ---------- 1. 选择条玻璃本体 ----------
         Box(
             Modifier
-                .fillMaxSize()
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { Pill },
-                    effects = {
-                        vibrancy()
-                        colorControls(saturation = 1.8f)   // 提饱和，背后内容颜色更醒目
-                        blur(10f.dp.toPx())                // 模糊收窄，内容形态可辨
-                    },
-                    highlight = null,
-                    shadow = {
-                        Shadow(
-                            radius = 32f.dp,
-                            offset = androidx.compose.ui.unit.DpOffset(0f.dp, 12f.dp),
-                            color = p.ShadowBar
-                        )
-                    },
-                    innerShadow = {
-                        InnerShadow(
-                            radius = 6f.dp,
-                            offset = androidx.compose.ui.unit.DpOffset(0f.dp, 2f.dp),
-                            color = p.InnerTint
-                        )
-                    },
-                    // 选择条导出成 shellBackdrop，供滑块一并折射（滑块「包住」选项字体）
-                    exportedBackdrop = shellBackdrop,
-                    onDrawSurface = {
-                        drawRoundRect(
-                            color = p.SelectorSurface,
-                            cornerRadius = CornerRadius(size.height / 2f)
-                        )
-                    },
-                    // inset 0 0 0 1px rgba(255,255,255,.7)
-                    onDrawFront = { drawInsetRim(p.Rim, 1f.dp.toPx()) }
-                )
-        )
-
-        // ---------- 2. 文案层（先于滑块绘制，并烘焙进 textBackdrop 供滑块折射）----------
-        // 必须是滑块的「下层」：内容写入 textBackdrop 后，顶层滑块才能采样到文字、
-        // 在滑动时把文字折射成光线 —— 这才是液态玻璃的精髓（之前文字浮在滑块之上、
-        // 且不在任何 backdrop 中，导致滑块既折射不到文字、又显得不透明）。
-        Box(
-            Modifier
-                .fillMaxSize()
-                .layerBackdrop(textBackdrop)
-        ) {
-            Row(
-                Modifier
-                    .fillMaxSize()
-                    .pointerInput(count, segmentWidthPx, selectedIndex) {
-                        val slop = 5f.dp.toPx()
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            val startX = down.position.x
-                            val pillLeft = drag.value * segmentWidthPx
-                            // 只有按在滑块内部才允许按压 / 拖拽
-                            val onPill = startX >= pillLeft && startX <= pillLeft + segmentWidthPx
-                            val downIndex =
-                                (startX / segmentWidthPx).toInt().fastCoerceIn(0, count - 1)
-                            val startValue = drag.value
-                            var totalDx = 0f
-                            var moved = false
-
-                            if (onPill) drag.press()
-
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-
-                                if (change.changedToUpIgnoreConsumed()) {
-                                    if (onPill) {
-                                        drag.release()
-                                        if (moved) {
-                                            val target = drag.targetValue
-                                                .fastRoundToInt()
-                                                .fastCoerceIn(0, count - 1)
-                                            drag.springTo(target.toFloat())
-                                            if (target != selectedIndex) onSelect(target)
-                                        }
-                                    } else if (downIndex != selectedIndex) {
-                                        drag.springTo(downIndex.toFloat())
-                                        onSelect(downIndex)
-                                    }
-                                    break
-                                }
-
-                                if (onPill) {
-                                    totalDx += change.positionChange().x
-                                    if (!moved && abs(totalDx) > slop) moved = true
-                                    if (moved) {
-                                        change.consume()
-                                        drag.updateValue(startValue + totalDx / segmentWidthPx)
-                                    }
-                                }
-                            }
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                items.forEachIndexed { index, label ->
-                    val active = index == selectedIndex
-                    val color by animateColorAsState(
-                        targetValue = if (active) p.InkStrong else p.InkMid,
-                        animationSpec = tween(280, easing = EaseOutQuint),
-                        label = "segmentColor"
-                    )
-                    val scale by animateFloatAsState(
-                        targetValue = if (active) 1.06f else 1f,
-                        animationSpec = tween(280, easing = EaseOutQuint),
-                        label = "segmentScale"
-                    )
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val fit = fitScales[index]
-                        Text(
-                            text = label,
-                            style = (if (active) GlassText.SegmentActive else GlassText.SegmentIdle)
-                                .copy(fontSize = GlassText.SegmentActive.fontSize * fit),
-                            color = color,
-                            maxLines = 1,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
-        // ---------- 3. 滑块（顶层玻璃，采样 textBackdrop 折射文字）----------
-        // 滑块宽度随当前选项的文案宽度自动匹配：吸附到哪段就「抱住」那段文字的大小，
-        // 滑动时宽度在相邻两段之间平滑过渡（iOS 分段控件同款手感）
-        // 滑块位置/宽度在相邻两段目标之间平滑插值；并在两端【允许弹簧外溢】——
-        // 吸附到最左/最右时不把位置钉死在条边框内，让 Q 弹过冲可以跑出选择条，
-        // 落定时（f 恰为 0 / count-1）再精确与边框重合。
-        val f = drag.value
-        val pillCenterX: Float
-        val pillWidthPx: Float
-        when {
-            // 左侧过冲：f<0 时向左外推，滑块左缘短暂跑出选择条左端
-            f <= 0f -> {
-                val t = f
-                pillCenterX = lerp(pillCenters[0], pillCenters[1], t)
-                pillWidthPx = lerp(pillWidths[0], pillWidths[1], t)
-            }
-            // 右侧过冲：f>count-1 时向右外推，滑块右缘短暂跑出选择条右端
-            f >= (count - 1).toFloat() -> {
-                val t = f - (count - 2)
-                pillCenterX = lerp(pillCenters[count - 2], pillCenters[count - 1], t)
-                pillWidthPx = lerp(pillWidths[count - 2], pillWidths[count - 1], t)
-            }
-            else -> {
-                val i0 = floor(f).toInt().coerceIn(0, count - 2)
-                val i1 = i0 + 1
-                val t = f - i0
-                pillCenterX = lerp(pillCenters[i0], pillCenters[i1], t)
-                pillWidthPx = lerp(pillWidths[i0], pillWidths[i1], t)
-            }
-        }
-        val pillLeftX = pillCenterX - pillWidthPx / 2f
-        Box(
-            Modifier
+                .padding(horizontal = 4.dp)
                 .graphicsLayer {
-                    translationX = pillLeftX
+                    translationX =
+                        if (isLtr) dampedDragAnimation.value * tabWidth + panelOffset
+                        else size.width - (dampedDragAnimation.value + 1f) * tabWidth + panelOffset
                     alpha = pillAlpha
                 }
-                .width(with(density) { pillWidthPx.toDp() })
-                .fillMaxHeight()
+                .then(interactiveHighlight.gestureModifier)
+                .then(dampedDragAnimation.modifier)
                 .drawBackdrop(
-                    backdrop = pillBackdrop,
+                    backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
                     shape = { Pill },
                     effects = {
-                        val p = drag.pressProgress
-                        // saturate(150%) brightness(1.05)
-                        colorControls(brightness = 0.05f, saturation = 1.5f)
-                        // 关键：不做任何磨砂模糊 —— 模糊会把选项文字糊掉、挡住字体。
-                        // 透镜折射只作用在边缘，中心文字保持清晰可辨认
-                        lens(
-                            refractionHeight = lerp(6f.dp.toPx(), 14f.dp.toPx(), p),
-                            refractionAmount = lerp(8f.dp.toPx(), 18f.dp.toPx(), p),
-                            depthEffect = false,
+                        val progress = dampedDragAnimation.pressProgress
+                        // 静止时 progress=0，lens(0,0) 为恒等变换 —— 跳过整条 RenderEffect
+                        if (progress > 0f) lens(
+                            10f.dp.toPx() * progress,
+                            14f.dp.toPx() * progress,
                             chromaticAberration = true
                         )
                     },
-                    highlight = null,
+                    highlight = {
+                        Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
+                    },
                     shadow = {
-                        Shadow(
-                            radius = 24f.dp,
-                            offset = androidx.compose.ui.unit.DpOffset(0f.dp, 8f.dp),
-                            color = p.ShadowPill
+                        Shadow(alpha = dampedDragAnimation.pressProgress)
+                    },
+                    innerShadow = {
+                        val progress = dampedDragAnimation.pressProgress
+                        InnerShadow(
+                            radius = 8f.dp * progress,
+                            alpha = progress
                         )
                     },
                     layerBlock = {
-                        scaleX = drag.scaleX
-                        scaleY = drag.scaleY
-                        // 拖拽速度带来的轻微拉伸，让玻璃有「液体」惯性
-                        val v = drag.velocity / 10f
-                        scaleX /= 1f - (v * 0.75f).fastCoerceIn(-0.2f, 0.2f)
-                        scaleY *= 1f - (v * 0.25f).fastCoerceIn(-0.2f, 0.2f)
+                        scaleX = dampedDragAnimation.scaleX
+                        scaleY = dampedDragAnimation.scaleY
+                        // 拖拽速度带来的液体拉伸惯性
+                        val velocity = dampedDragAnimation.velocity / 10f
+                        scaleX /= 1f - (velocity * 0.75f).fastCoerceIn(-0.2f, 0.2f)
+                        scaleY *= 1f - (velocity * 0.25f).fastCoerceIn(-0.2f, 0.2f)
                     },
                     onDrawSurface = {
-                        // 全透：不再叠加任何白色底色，滑块只是一块「看得见折射、却无遮挡」
-                        // 的清玻璃，选项字体毫无保留地透出
-                        drawRoundRect(
-                            color = Color.White.copy(alpha = 0f),
-                            cornerRadius = CornerRadius(size.height / 2f)
+                        val progress = dampedDragAnimation.pressProgress
+                        drawRect(
+                            if (isLightTheme) Color.Black.copy(0.1f)
+                            else Color.White.copy(0.1f),
+                            alpha = 1f - progress
                         )
-                    },
-                    // border:1px —— 与选择条同一水平的描边（p.Rim），柔和不刺眼
-                    onDrawFront = { drawInsetRim(p.Rim, 1f.dp.toPx()) }
+                        drawRect(Color.Black.copy(alpha = 0.03f * progress))
+                    }
                 )
+                .height(height - 8.dp)
+                .fillMaxWidth(1f / count)
         )
     }
-}
-
-/** 画 1px 内描边（等价于 CSS 的 inset 0 0 0 1px / border:1px）。 */
-private fun DrawScope.drawInsetRim(color: Color, stroke: Float) {
-    val half = stroke / 2f
-    drawRoundRect(
-        color = color,
-        topLeft = Offset(half, half),
-        size = Size(size.width - stroke, size.height - stroke),
-        cornerRadius = CornerRadius((size.height - stroke) / 2f),
-        style = Stroke(stroke)
-    )
 }
