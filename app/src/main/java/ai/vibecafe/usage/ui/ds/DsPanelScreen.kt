@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ai.vibecafe.usage.data.ds.DsPanelState
+import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.glass.glassRow
 import com.kyant.backdrop.Backdrop
@@ -186,17 +187,13 @@ private fun DsLoginCard(
                 )
             }
 
-            // 查询按钮
-            Button(
+            // 查询按钮：液态玻璃胶囊 + DsAccent 表面
+            LiquidButton(
                 onClick = { onLogin(apiKey) },
+                backdrop = backdrop,
                 enabled = apiKey.isNotBlank() && !isLoading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = DsAccent
-                )
+                surfaceColor = DsAccent,
+                modifier = Modifier.fillMaxWidth()
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
@@ -208,10 +205,11 @@ private fun DsLoginCard(
                     Icon(
                         imageVector = Icons.Filled.AccountBalanceWallet,
                         contentDescription = null,
+                        tint = Color.White,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("查询余额", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("查询余额", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Color.White)
                 }
             }
 

@@ -1,7 +1,10 @@
 package ai.vibecafe.usage.ui
 
+import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.core.ThemeMode
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
+import ai.vibecafe.usage.ui.glass.LiquidButton
+import ai.vibecafe.usage.ui.glass.LiquidSlider
 import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.glass.glassTile
 import ai.vibecafe.usage.ui.theme.GlassText
@@ -30,6 +33,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -43,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,7 +57,7 @@ import com.kyant.backdrop.Backdrop
 /**
  * 独立设置页（底部导航第 3 个 Tab）。
  *
- * 整页滚动布局，分组卡片式信息架构：外观 / 背景 / 通用（更新·分享）/ 账号。
+ * 整页滚动布局，分组卡片式信息架构：外观 / 背景 / 液态玻璃 / 通用（更新·分享）/ 账号。
  * 每组一张全宽玻璃卡，行内项目带图标底座 + 标题 + 说明 + 右箭头，
  * 分组标题在卡外，错峰滑入。
  */
@@ -122,6 +127,7 @@ fun SettingsScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeMode.entries.forEach { mode ->
                     ThemeChip(
+                        backdrop = backdrop,
                         mode = mode,
                         selected = mode == themeMode,
                         onClick = { onThemeModeChange(mode) },
@@ -158,12 +164,86 @@ fun SettingsScreen(
             }
         }
 
+        // —— 液态玻璃（LockScreen 配方，全局实时生效）——
+        SectionLabel("液态玻璃")
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fadeSlideIn(120)
+                .glassCard(backdrop, cornerRadius = 26.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBase(Icons.Filled.Tune)
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("液态玻璃", style = GlassText.Body)
+                    Text(
+                        "LockScreen 配方 · 全部玻璃面板实时生效",
+                        style = GlassText.Meta,
+                        color = p.InkMid
+                    )
+                }
+            }
+            val style = GlassStyleStore.style
+            val context = LocalContext.current
+            GlassStyleSliderRow(
+                backdrop = backdrop,
+                label = "亮度",
+                valueText = String.format("%.2f", style.brightness),
+                value = style.brightness,
+                valueRange = -0.5f..0.5f,
+                onChange = { GlassStyleStore.set(context, style.copy(brightness = it)) }
+            )
+            GlassStyleSliderRow(
+                backdrop = backdrop,
+                label = "对比度",
+                valueText = String.format("%.2f", style.contrast),
+                value = style.contrast,
+                valueRange = 0.5f..1.5f,
+                onChange = { GlassStyleStore.set(context, style.copy(contrast = it)) }
+            )
+            GlassStyleSliderRow(
+                backdrop = backdrop,
+                label = "饱和度",
+                valueText = String.format("%.2f", style.saturation),
+                value = style.saturation,
+                valueRange = 0f..2f,
+                onChange = { GlassStyleStore.set(context, style.copy(saturation = it)) }
+            )
+            GlassStyleSliderRow(
+                backdrop = backdrop,
+                label = "模糊",
+                valueText = "${style.blurCardDp.toInt()}dp",
+                value = style.blurCardDp,
+                valueRange = 0f..32f,
+                onChange = { GlassStyleStore.set(context, style.copy(blurCardDp = it)) }
+            )
+            GlassStyleSliderRow(
+                backdrop = backdrop,
+                label = "白色叠加",
+                valueText = "${(style.whiteOverlay * 100).toInt()}%",
+                value = style.whiteOverlay,
+                valueRange = 0f..0.5f,
+                onChange = { GlassStyleStore.set(context, style.copy(whiteOverlay = it)) }
+            )
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.RestartAlt,
+                title = "恢复默认",
+                subtitle = "还原 LockScreen 初始参数",
+                showChevron = false,
+                onClick = { GlassStyleStore.set(context, GlassStyleStore.Default) }
+            )
+        }
+
         // —— 通用 ——
         SectionLabel("通用")
         Column(
             Modifier
                 .fillMaxWidth()
-                .fadeSlideIn(120)
+                .fadeSlideIn(160)
                 .glassCard(backdrop, cornerRadius = 26.dp)
         ) {
             // 软件更新（随流程阶段切换内容）
@@ -244,6 +324,7 @@ fun SettingsScreen(
                     UpdateStatus.NO_APK,
                     UpdateStatus.FAILED ->
                         UpdateButton(
+                            backdrop = backdrop,
                             label = when (update.status) {
                                 UpdateStatus.UP_TO_DATE -> "重新检查"
                                 UpdateStatus.FAILED -> "重试检查"
@@ -253,10 +334,10 @@ fun SettingsScreen(
                         )
 
                     UpdateStatus.AVAILABLE ->
-                        UpdateButton(label = "下载更新", onClick = onDownloadUpdate, emphasis = true)
+                        UpdateButton(backdrop = backdrop, label = "下载更新", onClick = onDownloadUpdate, emphasis = true)
 
                     UpdateStatus.DOWNLOADED ->
-                        UpdateButton(label = "安装更新", onClick = onInstallUpdate, emphasis = true)
+                        UpdateButton(backdrop = backdrop, label = "安装更新", onClick = onInstallUpdate, emphasis = true)
 
                     else -> {}
                 }
@@ -278,7 +359,7 @@ fun SettingsScreen(
         Column(
             Modifier
                 .fillMaxWidth()
-                .fadeSlideIn(160)
+                .fadeSlideIn(200)
                 .glassCard(backdrop, cornerRadius = 26.dp)
         ) {
             SettingRow(
@@ -417,35 +498,28 @@ private fun UpdateHint(text: String, color: Color) {
     Text(text, style = GlassText.Meta, color = color)
 }
 
-/** 更新动作按钮：次要为 Accent 洗色底，主要（下载/安装）为青蓝渐变 CTA。 */
+/** 更新动作按钮：液态玻璃胶囊；主要（下载/安装）叠青蓝渐变表面。 */
 @Composable
 private fun UpdateButton(
+    backdrop: Backdrop,
     label: String,
     onClick: () -> Unit,
     emphasis: Boolean = false
 ) {
     val p = LocalGlassPalette.current
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(38.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .then(
-                if (emphasis) {
-                    Modifier.background(
-                        Brush.horizontalGradient(
-                            listOf(p.Accent, Color(0xFF4E7BFF)),
-                            startX = 0f,
-                            endX = 900f
-                        )
-                    )
-                } else {
-                    Modifier.background(p.AccentWash)
-                }
+    LiquidButton(
+        onClick = onClick,
+        backdrop = backdrop,
+        surfaceBrush = if (emphasis) {
+            Brush.horizontalGradient(
+                listOf(p.Accent, Color(0xFF4E7BFF)),
+                startX = 0f,
+                endX = 900f
             )
-            .clickable(interaction, null, onClick = onClick),
-        contentAlignment = Alignment.Center
+        } else {
+            null
+        },
+        modifier = Modifier.fillMaxWidth()
     ) {
         Text(
             label,
@@ -457,6 +531,7 @@ private fun UpdateButton(
 
 @Composable
 private fun ThemeChip(
+    backdrop: Backdrop,
     mode: ThemeMode,
     selected: Boolean,
     onClick: () -> Unit,
@@ -468,8 +543,11 @@ private fun ThemeChip(
     Box(
         modifier
             .height(34.dp)
-            .clip(shape)
-            .background(if (selected) p.AccentWash else p.InkLo.copy(alpha = 0.08f))
+            .glassTile(
+                backdrop,
+                cornerRadius = 12.dp,
+                tint = if (selected) p.AccentWash else null
+            )
             .then(
                 if (selected) {
                     Modifier.border(1.dp, p.AccentRim, shape)
@@ -486,6 +564,34 @@ private fun ThemeChip(
             fontWeight = FontWeight.ExtraBold,
             color = if (selected) p.AccentInk else p.InkMid,
             maxLines = 1
+        )
+    }
+}
+
+/** 液态玻璃参数滑杆行：左侧标签 + 液态滑杆 + 右侧当前值。 */
+@Composable
+private fun GlassStyleSliderRow(
+    backdrop: Backdrop,
+    label: String,
+    valueText: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit
+) {
+    val p = LocalGlassPalette.current
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = GlassText.Label, color = p.InkMid)
+            Spacer(Modifier.weight(1f))
+            Text(valueText, style = GlassText.NumericSmall, color = p.InkHi)
+        }
+        LiquidSlider(
+            value = { value.coerceIn(valueRange.start, valueRange.endInclusive) },
+            onValueChange = onChange,
+            valueRange = valueRange,
+            visibilityThreshold = 0.01f,
+            backdrop = backdrop,
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }

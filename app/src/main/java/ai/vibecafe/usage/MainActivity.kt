@@ -1,11 +1,13 @@
 package ai.vibecafe.usage
 
 import ai.vibecafe.usage.core.ApiKeyStore
+import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.core.ThemeMode
 import ai.vibecafe.usage.core.ThemeStore
 import ai.vibecafe.usage.ui.DashboardScreen
 import ai.vibecafe.usage.ui.MainViewModel
 import ai.vibecafe.usage.ui.glass.GlassBackground
+import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.rememberPageBackdrop
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.GlassTheme
@@ -84,6 +86,9 @@ private fun AppRoot() {
     val vm: MainViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     var apiKey by remember { mutableStateOf(ApiKeyStore.get(context)) }
+
+    // 液态玻璃全局样式（LockScreen 配方，设置页可调）
+    remember { GlassStyleStore.init(context) }
 
     // 外观模式：跟随系统 / 浅色 / 深色 / 纯黑（持久化）
     var themeMode by remember { mutableStateOf(ThemeStore.get(context)) }
@@ -226,23 +231,17 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
-                // 登录按钮：青紫渐变玻璃
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(palette.Accent, Color(0xFF4E7BFF)),
-                                startX = 0f,
-                                endX = 480f
-                            )
-                        )
-                        .clickable(interaction, null, enabled = key.isNotBlank() && !verifying) {
-                            verifyAndLogin(key)
-                        }
-                        .padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center
+                // 登录按钮：液态玻璃胶囊 + 青紫渐变表面
+                LiquidButton(
+                    onClick = { verifyAndLogin(key) },
+                    backdrop = backdrop,
+                    enabled = key.isNotBlank() && !verifying,
+                    surfaceBrush = Brush.horizontalGradient(
+                        listOf(palette.Accent, Color(0xFF4E7BFF)),
+                        startX = 0f,
+                        endX = 480f
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     if (verifying) {
                         CircularProgressIndicator(

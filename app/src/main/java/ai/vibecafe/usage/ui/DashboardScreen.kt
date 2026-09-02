@@ -1,4 +1,4 @@
-package ai.vibecafe.usage.ui
+﻿package ai.vibecafe.usage.ui
 
 import ai.vibecafe.usage.R
 import ai.vibecafe.usage.core.BackgroundStore
@@ -544,7 +544,7 @@ fun DashboardScreen(
             ToolDetailOverlay(
                 detail = detail,
                 icon = toolIconFor(detail.tool),
-                backdrop = backdrop,
+                backdrop = scrimBackdrop,
                 onDismiss = onHideToolDetail
             )
         }
@@ -554,7 +554,7 @@ fun DashboardScreen(
             ModelDetailOverlay(
                 detail = detail,
                 icon = toolIconFor(detail.model),
-                backdrop = backdrop,
+                backdrop = scrimBackdrop,
                 onDismiss = onHideModelDetail
             )
         }

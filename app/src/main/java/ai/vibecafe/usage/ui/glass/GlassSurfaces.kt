@@ -1,163 +1,89 @@
 package ai.vibecafe.usage.ui.glass
 
-import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import ai.vibecafe.usage.core.GlassStyleStore
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.drawPlainBackdrop
 import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.vibrancy
-import com.kyant.backdrop.shadow.Shadow
+import com.kyant.backdrop.effects.colorControls
 
 /**
- * 玻璃卡片 —— 对应 Web 的 `.card`：
- * radius 30 / rgba(255,255,255,.55) / blur(28) saturate(150%) / 1px 白描边 70% /
- * 0 30px 80px rgba(70,90,130,.18)。自 v2.7.0 起颜色取自当前调色板（暗色自动适配），
- * 并叠加一条克制的水晶顶部高光（[sheen]）。
+ * 玻璃面 —— 统一采用 kyant catalog LockScreen 演示的配方：
+ * drawPlainBackdrop + colorControls(亮度/对比度/饱和度) + blur + 半透明白叠加。
+ *
+ * 参数由 [GlassStyleStore] 全局持有（设置页「液态玻璃」卡片实时调控）。
+ * 不画 highlight/shadow/lens：LockScreen 配方靠 colorControls + 白色叠加产生磨砂质感，
+ * 额外图层会跨过 backdrop 缓存边界、在不同 GPU 上放大色差形成"拼贴"分界线。
  */
+
+/** 卡片（对应 Web 的 `.card`，radius 30）。 */
 @Composable
 fun Modifier.glassCard(
     backdrop: Backdrop,
     cornerRadius: Dp = 30f.dp,
     tint: Color? = null,
-    blurRadius: Dp = 28f.dp,
-    sheen: Boolean = true
-): Modifier {
-    val p = LocalGlassPalette.current
-    return this.drawBackdrop(
-        backdrop = backdrop,
-        shape = { RoundedCornerShape(cornerRadius) },
-        sampleScale = 0.5f,  // 性能：纯模糊玻璃半分辨率采样，视觉无差，GPU 省 ~4x
-        effects = {
-            vibrancy()
-            blur(blurRadius.toPx())
-        },
-        highlight = null,
-        shadow = {
-            Shadow(
-                radius = 40f.dp,
-                offset = DpOffset(0f.dp, 16f.dp),
-                color = p.ShadowSoft
-            )
-        },
-        onDrawSurface = {
-            drawRoundRect(
-                color = tint ?: p.Surface,
-                cornerRadius = CornerRadius(cornerRadius.toPx())
-            )
-        },
-        onDrawFront = {
-            drawRim(p.Rim, 1f.dp.toPx(), cornerRadius.toPx())
-            if (sheen) {
-                drawTopSheen(p.SheenTop, cornerRadius.toPx())
-            }
-        }
-    )
-}
+    blurRadius: Dp? = null
+): Modifier = lockScreenGlass(
+    backdrop = backdrop,
+    cornerRadius = cornerRadius,
+    blurDp = blurRadius?.value ?: GlassStyleStore.style.blurCardDp,
+    overlay = tint
+)
 
-/**
- * 玻璃列表行 —— 对应 Web 的 `.row`：
- * radius 20 / rgba(255,255,255,.5) / blur(16) / 1px 白描边 60% / 0 8px 20px rgba(70,90,130,.1)
- */
+/** 列表行（对应 Web 的 `.row`，radius 20）。 */
 @Composable
 fun Modifier.glassRow(
     backdrop: Backdrop,
-    cornerRadius: Dp = 20f.dp,
-    sheen: Boolean = false
-): Modifier {
-    val p = LocalGlassPalette.current
-    return this.drawBackdrop(
-        backdrop = backdrop,
-        shape = { RoundedCornerShape(cornerRadius) },
-        sampleScale = 0.5f,  // 性能：同 glassCard
-        effects = {
-            vibrancy()
-            blur(16f.dp.toPx())
-        },
-        highlight = null,
-        shadow = {
-            Shadow(
-                radius = 20f.dp,
-                offset = DpOffset(0f.dp, 8f.dp),
-                color = p.ShadowRow
-            )
-        },
-        onDrawSurface = {
-            drawRoundRect(color = p.SurfaceSoft, cornerRadius = CornerRadius(cornerRadius.toPx()))
-        },
-        onDrawFront = {
-            // 与选择条同一水平的描边（p.Rim）
-            drawRim(p.Rim, 1f.dp.toPx(), cornerRadius.toPx())
-            if (sheen) {
-                drawTopSheen(p.SheenTop.copy(alpha = p.SheenTop.alpha * 0.7f), cornerRadius.toPx())
-            }
-        }
-    )
-}
+    cornerRadius: Dp = 20f.dp
+): Modifier = lockScreenGlass(
+    backdrop = backdrop,
+    cornerRadius = cornerRadius,
+    blurDp = GlassStyleStore.style.blurRowDp
+)
 
-/** 小玻璃块（列表行左侧图标底座 / 头像 / logo 容器）。 */
+/** 小玻璃块（图标底座 / 头像 / logo 容器 / 芯片按钮）。 */
 @Composable
 fun Modifier.glassTile(
     backdrop: Backdrop,
-    cornerRadius: Dp = 12f.dp
+    cornerRadius: Dp = 12f.dp,
+    tint: Color? = null
+): Modifier = lockScreenGlass(
+    backdrop = backdrop,
+    cornerRadius = cornerRadius,
+    blurDp = GlassStyleStore.style.blurTileDp,
+    tint = tint
+)
+
+/** LockScreen 配方核心：colorControls + blur + 白色叠加（tint 可选叠加其上）。 */
+@Composable
+private fun Modifier.lockScreenGlass(
+    backdrop: Backdrop,
+    cornerRadius: Dp,
+    blurDp: Float,
+    overlay: Color? = null,
+    tint: Color? = null
 ): Modifier {
-    val p = LocalGlassPalette.current
-    return this.drawBackdrop(
+    val s = GlassStyleStore.style
+    val density = LocalDensity.current
+    val blurPx = with(density) { blurDp.coerceAtLeast(0f).dp.toPx() }
+    val overlayColor = overlay ?: Color.White.copy(alpha = s.whiteOverlay)
+    return this.drawPlainBackdrop(
         backdrop = backdrop,
         shape = { RoundedCornerShape(cornerRadius) },
         effects = {
-            vibrancy()
-            blur(10f.dp.toPx())
+            colorControls(brightness = s.brightness, contrast = s.contrast, saturation = s.saturation)
+            blur(blurPx)
         },
-        highlight = null,
-        shadow = null,
-        onDrawSurface = {
-            drawRoundRect(
-                color = p.PillTint,
-                cornerRadius = CornerRadius(cornerRadius.toPx())
-            )
-        },
-        onDrawFront = {
-            drawRim(p.Rim, 1f.dp.toPx(), cornerRadius.toPx())
+        onDrawBackdrop = { drawBackdrop ->
+            drawBackdrop()
+            drawRect(overlayColor)
+            tint?.let { drawRect(it) }
         }
-    )
-}
-
-/** 内描边（CSS `border:1px solid` / `inset 0 0 0 1px` 的等价画法）。 */
-internal fun DrawScope.drawRim(color: Color, stroke: Float, radius: Float) {
-    val half = stroke / 2f
-    drawRoundRect(
-        color = color,
-        topLeft = Offset(half, half),
-        size = Size(size.width - stroke, size.height - stroke),
-        cornerRadius = CornerRadius((radius - half).coerceAtLeast(0f)),
-        style = Stroke(stroke)
-    )
-}
-
-/** 水晶高光：玻璃上缘一道竖直渐变亮带，模拟光线在曲面边缘的折射。 */
-private fun DrawScope.drawTopSheen(color: Color, radius: Float) {
-    if (color.alpha <= 0.01f) return
-    val band = size.height * 0.52f
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colorStops = arrayOf(0f to color, 0.55f to color.copy(alpha = 0f)),
-            startY = 0f,
-            endY = band
-        ),
-        topLeft = Offset(0f, 0f),
-        size = Size(size.width, band),
-        cornerRadius = CornerRadius(radius)
     )
 }

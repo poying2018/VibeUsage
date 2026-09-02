@@ -145,28 +145,14 @@ fun GlassBackground(
                 )
             }
 
-            // ---- 自研渲染引擎叠加层：程序化极光 + 光源镜面高光（无传感器时缓慢漂移）----
+            // ---- 自研渲染引擎叠加层：程序化极光（暂时关闭以避免对角线白色高光带干扰）----
+            // shader 仍然按帧创建但不再 drawRect。
+            // 残留的 4 个 orb 色块（orbPink/Blue/Teal/Amber）已提供足够的背景层次。
             val shader = engineShader
             if (shader != null && !engineFailed.value) {
                 runCatching {
                     shader.setFloatUniform("uSize", w, h)
                     shader.setFloatUniform("uTime", timeSec.value)
-                    // 自定义背景图上减弱极光，保持照片可读；暗色（自发光）比亮色稍强
-                    val dark = p.OrbBlend == BlendMode.Plus
-                    val strength = when {
-                        imageBitmap != null -> 0.40f
-                        dark -> 0.75f
-                        else -> 0.45f
-                    }
-                    shader.setFloatUniform("uStrength", strength)
-                    shader.setFloatUniform("uColorA",
-                        (auroraColorA ?: p.OrbTeal).red, (auroraColorA ?: p.OrbTeal).green, (auroraColorA ?: p.OrbTeal).blue, 1f)
-                    shader.setFloatUniform("uColorB",
-                        (auroraColorB ?: p.OrbBlue).red, (auroraColorB ?: p.OrbBlue).green, (auroraColorB ?: p.OrbBlue).blue, 1f)
-                    drawRect(
-                        brush = androidx.compose.ui.graphics.ShaderBrush(shader),
-                        blendMode = p.OrbBlend
-                    )
                 }.onFailure { engineFailed.value = true }
             }
         }
