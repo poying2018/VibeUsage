@@ -27,6 +27,7 @@ object ExtraQuotaApi {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
+            .dns(DnsResolver)
             .build()
     }
 
@@ -355,6 +356,30 @@ object ExtraQuotaApi {
     }
 }
 
+/** 把服务端错误响应体转成适合展示的短文案：HTML/空 body 换成友好提示，
+ *  JSON 错误尽量提取 message 字段（兼容 OpenAI 嵌套 / OAuth error_description 等风格）。 */
+internal fun httpErrorBody(text: String, code: Int): String {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return "HTTP $code"
+    if (trimmed.startsWith("<")) return "HTTP $code（服务端返回异常页面）"
+    if (trimmed.startsWith("{")) {
+        try {
+            val obj = com.google.gson.JsonParser.parseString(trimmed).asJsonObject
+            val err = obj.get("error")
+            val candidates = listOfNotNull(
+                (err as? com.google.gson.JsonObject)?.get("message")?.takeIf { it.isJsonPrimitive }?.asString,
+                obj.get("message")?.takeIf { it.isJsonPrimitive }?.asString,
+                obj.get("error_description")?.takeIf { it.isJsonPrimitive }?.asString,
+                (err as? com.google.gson.JsonPrimitive)?.takeIf { it.isString }?.asString,
+            )
+            candidates.firstOrNull { it.isNotBlank() }?.let { return it }
+        } catch (_: Exception) {
+            // 非 JSON 错误结构 → 原样截断
+        }
+    }
+    return trimmed.take(300)
+}
+
 /** HTTP 底座：直连 ⇄ 中转双路。 */
 internal object QuotaHttp {
 
@@ -364,6 +389,7 @@ internal object QuotaHttp {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
+            .dns(DnsResolver)
             .build()
     }
 
@@ -422,7 +448,7 @@ internal object QuotaHttp {
                 client.newCall(req.build()).execute().use { resp ->
                     val text = resp.body?.string().orEmpty()
                     if (!resp.isSuccessful) {
-                        throw ExtraQuotaApi.QuotaException(resp.code, text.take(300).ifEmpty { "HTTP ${resp.code}" })
+                        throw ExtraQuotaApi.QuotaException(resp.code, httpErrorBody(text, resp.code))
                     }
                     return text
                 }

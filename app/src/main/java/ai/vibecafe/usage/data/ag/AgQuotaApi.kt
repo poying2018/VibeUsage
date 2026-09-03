@@ -47,6 +47,7 @@ object AgQuotaApi {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
+            .dns(ai.vibecafe.usage.data.quota.DnsResolver)
             .build()
     }
 
@@ -122,32 +123,83 @@ object AgQuotaApi {
             "&code_challenge=$challenge&code_challenge_method=S256" +
             "&state=${java.net.URLEncoder.encode(state, "UTF-8")}"
 
-    /** 授权码兑换令牌：经内置中转（secret 由服务端补），失败回退直连。 */
+    /** 授权码兑换令牌：多线路容错（中转 /token → 中转通用转发 → 直连）。 */
     fun exchangeCode(code: String, verifier: String): TokenResult {
-        try {
-            val form = FormBody.Builder()
-                .add("grant_type", "authorization_code")
-                .add("code", code)
-                .add("code_verifier", verifier)
-                .add("redirect_uri", REDIRECT_URI)
-                .build()
-            val resp = post("$BUILTIN_PROXY/token", form, bearer = null, browserUa = true)
-            return parseToken(resp)
-        } catch (e: AgException) {
-            throw e
-        } catch (_: Exception) {
-            // 中转不可用 → 直连（需能访问 Google）
-        }
         val form = FormBody.Builder()
             .add("grant_type", "authorization_code")
             .add("code", code)
             .add("code_verifier", verifier)
             .add("redirect_uri", REDIRECT_URI)
+            .build()
+        return tokenViaAny(form, "授权兑换失败")
+    }
+
+    /**
+     * 令牌端点多线路尝试：中转 /token（secret 由服务端补）→ 中转 /proxy 通用转发 → 直连（需能访问 Google）。
+     * 任一线路成功即返回；网络错误每线路重试一次；全部失败时优先抛出拿到过服务器应答的错误
+     * （如 invalid_grant，说明链路本身是通的、授权码无效），否则汇总各线路网络错误便于定位。
+     */
+    private fun tokenViaAny(baseForm: FormBody, failLabel: String): TokenResult {
+        val credBuilder = FormBody.Builder()
+        for (i in 0 until baseForm.size) {
+            credBuilder.add(baseForm.name(i), baseForm.value(i))
+        }
+        val credForm = credBuilder
             .add("client_id", CLIENT_ID)
             .add("client_secret", CLIENT_SECRET)
             .build()
-        val resp = post(TOKEN_URL, form, bearer = null, browserUa = true)
-        return parseToken(resp)
+        val proxiedToken = "$BUILTIN_PROXY/proxy?url=" + java.net.URLEncoder.encode(TOKEN_URL, "UTF-8")
+        val routes = listOf(
+            Triple("$BUILTIN_PROXY/token", baseForm, "中转"),
+            Triple(proxiedToken, credForm, "中转备用"),
+            Triple(TOKEN_URL, credForm, "直连"),
+        )
+        val errors = mutableListOf<String>()
+        var serverError: AgException? = null
+        for ((url, form, label) in routes) {
+            for (attempt in 1..2) {
+                try {
+                    return parseToken(post(url, form, bearer = null, browserUa = true))
+                } catch (e: AgException) {
+                    if (serverError == null) serverError = friendlyTokenError(e)
+                    break
+                } catch (e: Exception) {
+                    if (attempt == 1) continue  // 网络抖动重试一次
+                    errors.add("$label: ${e.message ?: "网络错误"}")
+                }
+            }
+        }
+        throw serverError ?: AgException(0, "$failLabel（${errors.joinToString("；")}）")
+    }
+
+    /** 把服务器返回的 JSON 错误体转成可读文案（解析失败保留原始内容）。 */
+    private fun friendlyTokenError(e: AgException): AgException {
+        val raw = e.message?.trim() ?: return e
+        if (!raw.startsWith("{")) return e
+        return try {
+            val obj = gson.fromJson(raw, TokenResponse::class.java)
+            AgException(e.code, obj?.errorDescription ?: obj?.error ?: raw)
+        } catch (_: Exception) {
+            e
+        }
+    }
+
+    /** API 端点多线路尝试：中转 /proxy 通用转发 → 直连（大陆网络下直连 Google 通常不通）。 */
+    private fun postViaAny(target: String, body: okhttp3.RequestBody, bearer: String): String {
+        val proxied = "$BUILTIN_PROXY/proxy?url=" + java.net.URLEncoder.encode(target, "UTF-8")
+        var serverError: AgException? = null
+        var netErr: Exception? = null
+        for (url in listOf(proxied, target)) {
+            try {
+                return post(url, body, bearer = bearer)
+            } catch (e: AgException) {
+                if (e.code == 401) throw e
+                if (serverError == null) serverError = e
+            } catch (e: Exception) {
+                if (netErr == null) netErr = e
+            }
+        }
+        throw serverError ?: netErr ?: AgException(0, "请求失败")
     }
 
     private fun parseToken(resp: String): TokenResult {
@@ -187,42 +239,13 @@ object AgQuotaApi {
 
     // ─── 高层操作 ───
 
-    /** 用 refresh_token 换新的 access_token（走内置中转，失败回退直连） */
+    /** 用 refresh_token 换新的 access_token（多线路容错，与 exchangeCode 同路径） */
     fun refreshAccessToken(refreshToken: String): TokenResult {
-        // 中转：secret 由服务端补充
-        try {
-            val form = FormBody.Builder()
-                .add("refresh_token", refreshToken)
-                .add("grant_type", "refresh_token")
-                .build()
-            val resp = post("$BUILTIN_PROXY/token", form, bearer = null, browserUa = true)
-            val parsed = gson.fromJson(resp, TokenResponse::class.java)
-            if (parsed.accessToken != null) {
-                return TokenResult(parsed.accessToken, parsed.expiresIn)
-            }
-            throw AgException(
-                401,
-                parsed.errorDescription ?: parsed.error ?: "刷新令牌失败"
-            )
-        } catch (e: AgException) {
-            throw e
-        } catch (_: Exception) {
-            // 中转不可用 → 直连（需能访问 Google）
-        }
-        // 直连：本地带 client_id/secret
         val form = FormBody.Builder()
             .add("refresh_token", refreshToken)
             .add("grant_type", "refresh_token")
-            .add("client_id", CLIENT_ID)
-            .add("client_secret", CLIENT_SECRET)
             .build()
-        val resp = post(TOKEN_URL, form, bearer = null, browserUa = true)
-        val parsed = gson.fromJson(resp, TokenResponse::class.java)
-            ?: throw AgException(0, "响应解析失败")
-        if (parsed.accessToken == null) {
-            throw AgException(401, parsed.errorDescription ?: parsed.error ?: "刷新令牌失败")
-        }
-        return TokenResult(parsed.accessToken, parsed.expiresIn)
+        return tokenViaAny(form, "刷新令牌失败")
     }
 
     /** 拉取项目 ID + 订阅等级 */
@@ -232,7 +255,7 @@ object AgQuotaApi {
             try {
                 val body = """{"metadata":{"ideType":"ANTIGRAVITY"}}"""
                     .toRequestBody(JSON_TYPE)
-                val resp = post("$ep/v1internal:loadCodeAssist", body, accessToken)
+                val resp = postViaAny("$ep/v1internal:loadCodeAssist", body, accessToken)
                 val json = gson.fromJson(resp, AssistResponse::class.java)
                 val tier = json.paidTier ?: json.currentTier
                 return AssistInfo(
@@ -260,7 +283,7 @@ object AgQuotaApi {
             )
             for (raw in bodies) {
                 try {
-                    val resp = post(
+                    val resp = postViaAny(
                         "$ep/v1internal:retrieveUserQuotaSummary",
                         raw.toRequestBody(JSON_TYPE),
                         accessToken
@@ -335,7 +358,7 @@ object AgQuotaApi {
         client.newCall(builder.build()).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                throw AgException(resp.code, text.take(300).ifEmpty { "HTTP ${resp.code}" })
+                throw AgException(resp.code, ai.vibecafe.usage.data.quota.httpErrorBody(text, resp.code))
             }
             return text
         }
