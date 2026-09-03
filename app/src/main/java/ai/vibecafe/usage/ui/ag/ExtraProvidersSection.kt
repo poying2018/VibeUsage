@@ -1,6 +1,10 @@
 package ai.vibecafe.usage.ui.ag
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -9,7 +13,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -18,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -40,8 +44,13 @@ private val ErrorColor = Color(0xFFFF5A5A)
 data class QuotaOption(val label: String, val color: Color)
 
 /**
- * 额度页供应商切换器（液态玻璃下拉）：
- * 收起时为胶囊按钮（色点 + 当前平台 + 箭头）；展开后为全屏半透明遮罩 + 背后内容实时模糊的玻璃菜单。
+ * 额度页供应商切换器（液态玻璃下拉，参考 tongzhewang 液态玻璃下拉组件的动效）：
+ * - 折叠态：玻璃胶囊（色点 + 平台名），展开时原胶囊淡出放大消失
+ * - 展开：菜单从按钮位置液滴式长出（scale 0.25→1、白色高光闪落定），
+ *   选项行错峰上浮淡入；选中行右侧白色对勾
+ * - 动画进度一律在 draw 相位读取（graphicsLayer 内），动画期间零重组；
+ *   禁用逐帧 Modifier.blur（RenderEffect 在 MuMu 转译层每帧重建会卡死）
+ * - 点行选择并收起；点遮罩收起（收起遵循参考：直接消失）
  * [menuBackdrop] 应传入叠加了内容层的合成 backdrop，菜单才能模糊到其背后的滚动内容。
  */
 @Composable
@@ -54,15 +63,42 @@ fun QuotaSwitcher(
     content: @Composable () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var menuVisible by remember { mutableStateOf(false) }
     val current = options[selectedIndex.coerceIn(0, options.lastIndex)]
-    val arrowRotation by animateFloatAsState(if (expanded) 180f else 0f, label = "quotaArrow")
+    // 原胶囊淡出放大（liquid 态 label 消失），弹簧回弹
+    val labelAlpha by animateFloatAsState(
+        targetValue = if (expanded) 0f else 1f,
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 320f),
+        label = "quotaLabel"
+    )
+    // 菜单长出进度：0 起点（液滴）→ 1 落定，弹簧带轻微过冲
+    val reveal = remember { Animatable(0f) }
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            menuVisible = true
+            reveal.snapTo(0f)
+            reveal.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 420f))
+        } else if (menuVisible) {
+            // 收起：快速回缩后再移除，不生硬瞬灭
+            reveal.animateTo(0f, tween(150, easing = FastOutSlowInEasing))
+            menuVisible = false
+        }
+    }
 
     Box(Modifier.fillMaxWidth()) {
         Column {
             LiquidButton(
                 onClick = { expanded = !expanded },
                 backdrop = buttonBackdrop,
-                modifier = Modifier.fillMaxWidth().height(44.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        alpha = labelAlpha
+                        val s = 1f + 0.08f * (1f - labelAlpha)
+                        scaleX = s
+                        scaleY = s
+                    }
+                    .height(44.dp)
             ) {
                 Spacer(Modifier.width(6.dp))
                 Box(
@@ -80,77 +116,99 @@ fun QuotaSwitcher(
                     maxLines = 1
                 )
                 Spacer(Modifier.weight(1f))
-                Icon(
-                    Icons.Filled.KeyboardArrowDown,
-                    contentDescription = if (expanded) "收起" else "切换平台",
-                    Modifier
-                        .size(20.dp)
-                        .graphicsLayer { rotationZ = arrowRotation },
-                    tint = Color.White.copy(alpha = 0.85f)
-                )
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(16.dp))
             }
             Spacer(Modifier.height(6.dp))
             content()
         }
 
-        if (expanded) {
-            // 遮罩：点击任意处收起
+        if (menuVisible) {
+            // 轻遮罩：点击任意处收起；透明度随长出进度淡入淡出
             Box(
                 Modifier
                     .matchParentSize()
-                    .background(Color.Black.copy(alpha = 0.32f))
+                    .graphicsLayer { alpha = (reveal.value * 2.5f).coerceIn(0f, 1f) }
+                    .background(Color.Black.copy(alpha = 0.14f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { expanded = false }
             )
-            Column(
+
+            Box(
                 Modifier
-                    .padding(top = 50.dp)
-                    .glassCard(menuBackdrop, cornerRadius = 20.dp)
-                    .padding(vertical = 6.dp)
+                    .graphicsLayer {
+                        // draw 相位读进度：动画期间零重组（重组相位读会导致整棵子树每帧重组）
+                        val p = reveal.value
+                        val s = 0.25f + 0.75f * p
+                        scaleX = s
+                        scaleY = s
+                        translationX = -28.dp.toPx() * (1f - p)
+                        translationY = -14.dp.toPx() * (1f - p)
+                        transformOrigin = TransformOrigin(0.1f, 0.4f)
+                        alpha = (p * 3f).coerceAtMost(1f)
+                    }
             ) {
-                options.forEachIndexed { i, opt ->
-                    val selected = i == selectedIndex.coerceIn(0, options.lastIndex)
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                onSelect(i)
-                                expanded = false
-                            }
-                            .padding(horizontal = 18.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
+                Column(
+                    Modifier
+                        .glassCard(menuBackdrop, cornerRadius = 20.dp)
+                        .padding(vertical = 8.dp)
+                ) {
+                    options.forEachIndexed { i, opt ->
+                        val selected = i == selectedIndex.coerceIn(0, options.lastIndex)
+                        Row(
                             Modifier
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(opt.color)
-                        )
-                        Spacer(Modifier.width(11.dp))
-                        Text(
-                            opt.label,
-                            fontSize = 14.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected) Color.White else MutedColor,
-                            maxLines = 1
-                        )
-                        Spacer(Modifier.weight(1f))
-                        if (selected) {
-                            Icon(
-                                Icons.Filled.Check,
-                                contentDescription = "已选择",
-                                Modifier.size(16.dp),
-                                tint = opt.color
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    onSelect(i)
+                                    expanded = false
+                                }
+                                // 参考动效：行错峰上浮淡入；弹簧过冲让行浮过头 1~2dp 再落回（液态感）
+                                .graphicsLayer {
+                                    val c = (reveal.value * 1.7f - i * 0.09f).coerceIn(0f, 1.18f)
+                                    alpha = 0.35f + 0.65f * c.coerceIn(0f, 1f)
+                                    translationY = 12.dp.toPx() * (1f - c)
+                                }
+                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(9.dp)
+                                    .clip(CircleShape)
+                                    .background(opt.color)
                             )
+                            Spacer(Modifier.width(11.dp))
+                            Text(
+                                opt.label,
+                                fontSize = 14.sp,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                color = Color.White,
+                                maxLines = 1
+                            )
+                            Spacer(Modifier.weight(1f))
+                            if (selected) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "已选择",
+                                    Modifier.size(16.dp),
+                                    tint = Color.White
+                                )
+                            }
                         }
                     }
                 }
+                // 液滴高光：展开瞬间白色闪光，随进度消退（弹簧过冲时钳 0）
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = (0.45f * (1f - reveal.value)).coerceAtLeast(0f) }
+                        .background(Color.White)
+                )
             }
         }
     }
