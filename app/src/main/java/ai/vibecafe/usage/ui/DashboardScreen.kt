@@ -1,5 +1,6 @@
 ﻿package ai.vibecafe.usage.ui
 
+import ai.vibecafe.usage.BuildConfig
 import ai.vibecafe.usage.R
 import ai.vibecafe.usage.core.BackgroundStore
 import ai.vibecafe.usage.core.ThemeMode
@@ -132,7 +133,7 @@ private val RangeValues = listOf(
 /** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
 private val MetricLabels = listOf("金额", "Tokens")
 
-private const val APP_VERSION = "v2.9.13"
+private val APP_VERSION = "v" + BuildConfig.VERSION_NAME
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
