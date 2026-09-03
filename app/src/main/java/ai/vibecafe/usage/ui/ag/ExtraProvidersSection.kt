@@ -4,11 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BubbleChart
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -16,57 +14,36 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.Bar
-import ai.vibecafe.usage.data.quota.ClaudeOAuth
-import ai.vibecafe.usage.data.quota.CodexOAuth
 import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import com.kyant.backdrop.Backdrop
 import java.util.Locale
-import kotlinx.coroutines.launch
-import org.json.JSONObject
 
-/** 三平台品牌色。 */
-private val CodexColor = Color(0xFF10A37F)
-private val ClaudeColor = Color(0xFFD97757)
 private val MiniMaxColor = Color(0xFFF0483E)
 private val MutedColor = Color(0xFF9A9AAF)
 private val ErrorColor = Color(0xFFFF5A5A)
 
-/** 「额度」页可切换的平台（反重力为独立面板，不在此列）。 */
-enum class ExtraProvider(val title: String, val color: Color, val icon: ImageVector) {
-    CODEX("Codex", CodexColor, Icons.Filled.Terminal),
-    CLAUDE("Claude Code", ClaudeColor, Icons.Filled.AutoAwesome),
-    MINIMAX("MiniMax", MiniMaxColor, Icons.Filled.BubbleChart),
-}
-
 /**
- * 单平台独立页面：整页只展示一个平台的接入与额度明细，
- * 按时间窗口（5 小时 / 每周 / 模型细分）分组。
+ * MiniMax 独立页面：整页展示接入与额度明细，按时间窗口（5 小时 / 每周）分组。
+ * 凭据为 Token Plan API Key（sk-cp-...），粘贴一次即保存在本机。
  */
 @Composable
 fun ProviderPage(
-    provider: ExtraProvider,
     backdrop: Backdrop,
     viewModel: ExtraQuotaViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val ps = when (provider) {
-        ExtraProvider.CODEX -> state.codex
-        ExtraProvider.CLAUDE -> state.claude
-        ExtraProvider.MINIMAX -> state.minimax
-    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        SectionHeader(provider.title, provider.color, provider.icon)
+        SectionHeader("MiniMax", MiniMaxColor, Icons.Filled.BubbleChart)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -74,154 +51,62 @@ fun ProviderPage(
                 .glassCard(backdrop, cornerRadius = 20.dp)
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
-            if (!ps.loggedIn) {
-                ProviderLoginArea(provider, ps, backdrop, viewModel)
+            if (!state.loggedIn) {
+                LoginArea(state, backdrop, viewModel)
             } else {
-                ProviderLoggedArea(provider, ps, viewModel)
+                LoggedArea(state, viewModel)
             }
         }
     }
 }
 
-// ─── 未接入：一键授权 / 手动粘贴 ───
+// ─── 未接入：粘贴 API Key ───
 
 @Composable
-private fun ProviderLoginArea(
-    provider: ExtraProvider,
-    ps: ProviderState,
-    backdrop: Backdrop,
-    viewModel: ExtraQuotaViewModel
-) {
+private fun LoginArea(ps: ProviderState, backdrop: Backdrop, viewModel: ExtraQuotaViewModel) {
     var input by remember { mutableStateOf("") }
-    var oauthBusy by remember { mutableStateOf(false) }
-    var showManual by remember { mutableStateOf(provider == ExtraProvider.MINIMAX) }
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val key = provider.name.lowercase()
 
     Column {
-        if (provider != ExtraProvider.MINIMAX) {
-            // ── 一键授权：浏览器完成官方登录，凭据自动保存 ──
-            LiquidButton(
-                onClick = {
-                    if (oauthBusy) return@LiquidButton
-                    oauthBusy = true
-                    viewModel.clearError(key)
-                    scope.launch {
-                        try {
-                            when (provider) {
-                                ExtraProvider.CODEX -> {
-                                    val t = CodexOAuth.login(context)
-                                    viewModel.loginCodex(
-                                        JSONObject().apply {
-                                            put("tokens", JSONObject().apply {
-                                                put("access_token", t.accessToken)
-                                                t.accountId?.let { put("account_id", it) }
-                                                t.refreshToken?.let { put("refresh_token", it) }
-                                            })
-                                        }.toString()
-                                    )
-                                }
-                                ExtraProvider.CLAUDE -> {
-                                    val t = ClaudeOAuth.login(context)
-                                    viewModel.loginClaude(
-                                        JSONObject().apply {
-                                            put("claudeAiOauth", JSONObject().apply {
-                                                put("accessToken", t.accessToken)
-                                                t.refreshToken?.let { put("refreshToken", it) }
-                                            })
-                                        }.toString()
-                                    )
-                                }
-                                else -> {}
-                            }
-                        } catch (e: Exception) {
-                            viewModel.setProviderError(key, "授权失败：${e.message?.take(140) ?: "未知错误"}")
-                        } finally {
-                            oauthBusy = false
-                        }
-                    }
-                },
-                backdrop = backdrop,
-                enabled = !oauthBusy,
-                surfaceColor = provider.color,
-                modifier = Modifier.fillMaxWidth().height(46.dp)
-            ) {
-                if (oauthBusy) {
-                    CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("等待浏览器授权…", fontSize = 14.sp, color = Color.White)
-                } else {
-                    Text("一键授权登录", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
-                }
-            }
-            if (ps.error != null) {
-                Text(ps.error!!, color = ErrorColor, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-            }
-            TextButton(onClick = { showManual = !showManual }) {
-                Text(
-                    if (showManual) "收起手动输入" else "手动粘贴凭据",
-                    color = MutedColor, fontSize = 12.sp
-                )
-            }
-        }
-
-        if (showManual) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it; viewModel.clearError(key) },
-                label = { Text("凭据") },
-                placeholder = {
-                    Text(
-                        when (provider) {
-                            ExtraProvider.CODEX -> "{\"tokens\": {\"access_token\": \"...\"}}"
-                            ExtraProvider.CLAUDE -> "{\"claudeAiOauth\": {\"accessToken\": \"...\"}}"
-                            ExtraProvider.MINIMAX -> "sk-cp-..."
-                        },
-                        maxLines = 1
-                    )
-                },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = provider.color,
-                    unfocusedBorderColor = Color(0xFF3A3A4E),
-                    cursorColor = provider.color,
-                    focusedLabelColor = provider.color,
-                    unfocusedLabelColor = MutedColor,
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                ),
-                shape = RoundedCornerShape(12.dp),
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
-            )
-            Spacer(Modifier.height(10.dp))
-            LiquidButton(
-                onClick = {
-                    when (provider) {
-                        ExtraProvider.CODEX -> viewModel.loginCodex(input)
-                        ExtraProvider.CLAUDE -> viewModel.loginClaude(input)
-                        ExtraProvider.MINIMAX -> viewModel.loginMiniMax(input)
-                    }
-                },
-                backdrop = backdrop,
-                enabled = input.isNotBlank() && !ps.isLoading,
-                surfaceColor = provider.color,
-                modifier = Modifier.fillMaxWidth().height(42.dp)
-            ) {
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it; viewModel.clearError() },
+            label = { Text("凭据") },
+            placeholder = { Text("sk-cp-...") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MiniMaxColor,
+                unfocusedBorderColor = Color(0xFF3A3A4E),
+                cursorColor = MiniMaxColor,
+                focusedLabelColor = MiniMaxColor,
+                unfocusedLabelColor = MutedColor,
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White
+            ),
+            shape = RoundedCornerShape(12.dp),
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+        )
+        Spacer(Modifier.height(10.dp))
+        LiquidButton(
+            onClick = { viewModel.login(input) },
+            backdrop = backdrop,
+            enabled = input.isNotBlank() && !ps.isLoading,
+            surfaceColor = MiniMaxColor,
+            modifier = Modifier.fillMaxWidth().height(42.dp)
+        ) {
+            if (ps.isLoading) {
+                CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("查询中…", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
+            } else {
                 Text("接入", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
             }
-            if (ps.error != null && provider == ExtraProvider.MINIMAX) {
-                Text(ps.error!!, color = ErrorColor, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-            }
         }
-
+        if (ps.error != null) {
+            Text(ps.error!!, color = ErrorColor, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        }
         Text(
-            when (provider) {
-                ExtraProvider.CODEX -> "跳转 ChatGPT 官方登录（需 Plus/Pro 订阅），凭据只保存在本机"
-                ExtraProvider.CLAUDE -> "跳转 Claude 官方登录（需 Pro/Max 订阅），凭据只保存在本机"
-                ExtraProvider.MINIMAX -> "国内：platform.minimaxi.com → 接口密钥；国际：platform.minimax.io → API Keys。粘贴 sk-cp- 开头的 Token Plan 密钥"
-            },
+            "国内：platform.minimaxi.com → 接口密钥；国际：platform.minimax.io → API Keys。粘贴 sk-cp- 开头的 Token Plan 密钥",
             color = Color(0xFF5A5A6E),
             fontSize = 10.sp,
             modifier = Modifier.padding(top = 8.dp)
@@ -232,12 +117,7 @@ private fun ProviderLoginArea(
 // ─── 已接入：状态行 + 分组明细 ───
 
 @Composable
-private fun ProviderLoggedArea(
-    provider: ExtraProvider,
-    ps: ProviderState,
-    viewModel: ExtraQuotaViewModel
-) {
-    val key = provider.name.lowercase()
+private fun LoggedArea(ps: ProviderState, viewModel: ExtraQuotaViewModel) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -246,30 +126,24 @@ private fun ProviderLoggedArea(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                 if (ps.isLoading) {
-                    CircularProgressIndicator(Modifier.size(14.dp), color = provider.color, strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(14.dp), color = MiniMaxColor, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
                 if (ps.account != null) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(provider.color.copy(alpha = 0.16f))
+                            .background(MiniMaxColor.copy(alpha = 0.16f))
                             .padding(horizontal = 9.dp, vertical = 3.dp)
                     ) {
-                        Text(ps.account!!, fontSize = 10.sp, color = provider.color, maxLines = 1)
+                        Text(ps.account!!, fontSize = 10.sp, color = MiniMaxColor, maxLines = 1)
                     }
                 }
             }
-            IconButton(onClick = {
-                when (provider) {
-                    ExtraProvider.CODEX -> viewModel.refreshCodex()
-                    ExtraProvider.CLAUDE -> viewModel.refreshClaude()
-                    ExtraProvider.MINIMAX -> viewModel.refreshMiniMax()
-                }
-            }, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = { viewModel.refresh() }, modifier = Modifier.size(30.dp)) {
                 Icon(Icons.Filled.Refresh, "刷新", Modifier.size(16.dp), tint = MutedColor)
             }
-            IconButton(onClick = { viewModel.logout(key) }, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = { viewModel.logout() }, modifier = Modifier.size(30.dp)) {
                 Icon(Icons.Filled.Logout, "解绑", Modifier.size(15.dp), tint = MutedColor)
             }
         }
@@ -294,7 +168,7 @@ private fun ProviderLoggedArea(
             Spacer(Modifier.height(8.dp))
             bars.forEachIndexed { idx, bar ->
                 if (idx > 0) Spacer(Modifier.height(12.dp))
-                BarRow(bar, provider.color)
+                BarRow(bar, MiniMaxColor)
             }
         }
 

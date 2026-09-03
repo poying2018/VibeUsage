@@ -2,34 +2,19 @@ package ai.vibecafe.usage.data.quota
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
- * Codex / Claude Code / MiniMax 三家额度查询客户端（端点均来自开源工具逆向：
- * openai/codex 官方 CLI、CCSeva、onWatch / minimax-usage-checker）。
+ * MiniMax 额度查询客户端（端点来自开源工具 minimax-usage-checker 逆向）。
  *
- * api.anthropic.com 在大陆无法直连，先走内置 Cloudflare Worker 中转（需 worker 白名单
- * 包含对应域名），失败自动回退直连；chatgpt.com 会拦截 Worker 出口（403 质询页）只能直连；
  * MiniMax 为国内服务，始终直连、不经中转（国内域名优先，失败回退国际域名）。
  */
 object ExtraQuotaApi {
-
-    private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
-
-    private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .dns(DnsResolver)
-            .build()
-    }
 
     private val gson = Gson()
 
@@ -46,199 +31,6 @@ object ExtraQuotaApi {
     data class Usage(val account: String?, val groups: Map<String, List<Bar>>)
 
     class QuotaException(val code: Int, message: String) : Exception(message)
-
-    // ─── Codex（ChatGPT 计划额度）───
-
-    object Codex {
-        private const val USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
-        private const val TOKEN_URL = "https://auth.openai.com/oauth/token"
-        private const val CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-
-        data class Auth(val accessToken: String, val accountId: String?, val refreshToken: String?)
-
-        /** 解析 ~/.codex/auth.json 粘贴内容；也接受裸 access_token（无账号 ID 时查询会 401）。 */
-        fun parseAuth(raw: String): Auth? = try {
-            val input = raw.trim()
-            if (!input.contains("{")) {
-                val token = raw.filter { it in '!'..'~' }
-                token.takeIf { it.length >= 40 }?.let { Auth(it, null, null) }
-            } else {
-                val obj = gson.fromJson(input, JsonObject::class.java)
-                val tokens = obj?.getAsJsonObject("tokens")
-                val access = tokens?.get("access_token")?.asString
-                    ?: obj?.get("access_token")?.asString
-                access?.takeIf { it.isNotBlank() }?.let {
-                    Auth(
-                        accessToken = it,
-                        accountId = tokens?.get("account_id")?.asString
-                            ?: obj?.get("account_id")?.asString,
-                        refreshToken = tokens?.get("refresh_token")?.asString
-                            ?: obj?.get("refresh_token")?.asString
-                    )
-                }
-            }
-        } catch (_: Exception) {
-            null
-        }
-
-        /** 用 refresh_token 换新 access_token（官方 Codex CLI 客户端）。 */
-        fun refreshAccessToken(refreshToken: String): String {
-            val body = gson.toJson(
-                JsonObject().apply {
-                    addProperty("client_id", CLIENT_ID)
-                    addProperty("grant_type", "refresh_token")
-                    addProperty("refresh_token", refreshToken)
-                    addProperty("scope", "openid profile email")
-                }
-            ).toRequestBody(JSON_TYPE)
-            val resp = QuotaHttp.post(TOKEN_URL, body, bearer = null, proxyFirst = true, ua = "codex_cli_rs")
-            val obj = gson.fromJson(resp, JsonObject::class.java)
-            val access = obj?.get("access_token")?.asString
-            return access ?: throw QuotaException(
-                401,
-                obj?.get("error_description")?.asString ?: obj?.get("error")?.asString ?: "刷新令牌失败"
-            )
-        }
-
-        /** 查询额度：主窗口（5h 滚动）+ 次窗口（每周）+ 附加限额。
-         *  chatgpt.com 会对 Cloudflare Worker 出口返回人机质询页（403 HTML），中转不可用，必须直连。 */
-        fun fetchUsage(accessToken: String, accountId: String?): Usage {
-            val resp = QuotaHttp.get(
-                USAGE_URL,
-                bearer = accessToken,
-                proxyFirst = false,
-                ua = "codex_cli_rs",
-                directOnly = true,
-                extraHeaders = accountId?.let { mapOf("ChatGPT-Account-Id" to it) }.orEmpty()
-            )
-            val obj = try {
-                gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
-            } catch (e: com.google.gson.JsonSyntaxException) {
-                throw QuotaException(0, "响应格式异常：${resp.take(150)}")
-            }
-            val groups = linkedMapOf<String, MutableList<Bar>>()
-
-            val rateLimit = obj.optObject("rate_limit")
-            parseWindow(rateLimit?.optObject("primary_window"), short = true)?.let {
-                groups.getOrPut("5 小时滚动窗口") { mutableListOf() } += it
-            }
-            parseWindow(rateLimit?.optObject("secondary_window"), short = false)?.let {
-                groups.getOrPut("每周窗口") { mutableListOf() } += it
-            }
-            // 附加限额（如 codex_other 等计量桶），结构可能演进，逐个防御解析
-            obj.optArray("additional_rate_limits")?.forEach { el ->
-                val o = el as? JsonObject ?: return@forEach
-                val name = jstr(o, "display_name") ?: jstr(o, "limit_id") ?: return@forEach
-                val rl = o.optObject("rate_limit") ?: o
-                parseWindow(rl.optObject("primary_window"), short = true)?.let {
-                    groups.getOrPut("其他限额") { mutableListOf() } += it.copy(label = name)
-                }
-            }
-            return Usage(jstr(obj, "plan_type")?.uppercase(), groups)
-        }
-
-        /** window: used_percent → 剩余/已用百分比；resets_after_seconds → 倒计时说明。 */
-        private fun parseWindow(w: JsonObject?, short: Boolean): Bar? = try {
-            val used = w?.get("used_percent")?.asDouble ?: return null
-            val usedPct = used.toInt().coerceIn(0, 100)
-            val remaining = (100.0 - used).coerceIn(0.0, 100.0).toInt()
-            val resetSec = w.get("resets_after_seconds")?.asLong
-            val mins = w.get("window_minutes")?.asLong
-            val windowName = when {
-                mins != null && mins >= 10000 -> "本周"
-                mins != null -> "${mins / 60}小时窗口"
-                short -> "5小时窗口"
-                else -> "每周窗口"
-            }
-            val reset = resetSec?.takeIf { it > 0 }?.let { "重置：${formatCountdown(it * 1000)}后" }
-            Bar(label = windowName, percentRemaining = remaining, usedPercent = usedPct, reset = reset)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    // ─── Claude Code（OAuth 订阅额度）───
-
-    object Claude {
-        private const val USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-
-        // 新版 Claude 登录/刷新统一走 platform.claude.com（claude.com/cai/oauth/authorize 流程）
-        private const val TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
-        private const val CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-
-        data class Auth(val accessToken: String, val refreshToken: String?)
-
-        /** 解析 ~/.claude/.credentials.json 粘贴内容（claudeAiOauth 嵌套或平铺）。 */
-        fun parseCredentials(raw: String): Auth? = try {
-            val input = raw.trim()
-            if (!input.contains("{")) {
-                val token = raw.filter { it in '!'..'~' }
-                token.takeIf { it.length >= 40 }?.let { Auth(it, null) }
-            } else {
-                val obj = gson.fromJson(input, JsonObject::class.java)
-                val oauth = obj?.getAsJsonObject("claudeAiOauth") ?: obj
-                val access = oauth?.get("accessToken")?.asString
-                access?.takeIf { it.isNotBlank() }?.let {
-                    Auth(
-                        accessToken = it,
-                        refreshToken = oauth.get("refreshToken")?.asString
-                    )
-                }
-            }
-        } catch (_: Exception) {
-            null
-        }
-
-        /** Claude Code OAuth refresh。 */
-        fun refreshAccessToken(refreshToken: String): String {
-            val body = gson.toJson(
-                JsonObject().apply {
-                    addProperty("client_id", CLIENT_ID)
-                    addProperty("grant_type", "refresh_token")
-                    addProperty("refresh_token", refreshToken)
-                }
-            ).toRequestBody(JSON_TYPE)
-            val resp = QuotaHttp.post(TOKEN_URL, body, bearer = null, proxyFirst = true, ua = "claude-cli")
-            val obj = gson.fromJson(resp, JsonObject::class.java)
-            val access = obj?.get("access_token")?.asString
-            return access ?: throw QuotaException(
-                401,
-                obj?.get("error_description")?.asString ?: obj?.get("error")?.asString ?: "刷新令牌失败"
-            )
-        }
-
-        /**
-         * 查询额度。响应为 { five_hour: {utilization, resets_at}|null, seven_day: ...,
-         * seven_day_opus / seven_day_sonnet ... }，utilization 为已用百分比。
-         */
-        fun fetchUsage(accessToken: String): Usage {
-            val resp = QuotaHttp.get(
-                USAGE_URL,
-                bearer = accessToken,
-                proxyFirst = true,
-                ua = "claude-cli/2.1.175 (external, cli)",
-                extraHeaders = mapOf("anthropic-beta" to "oauth-2025-04-20")
-            )
-            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
-            val groups = linkedMapOf<String, MutableList<Bar>>()
-
-            fun barOf(key: String, label: String): Bar? {
-                val w = obj.getAsJsonObject(key) ?: return null
-                val util = w.get("utilization")?.asDouble ?: return null
-                val used = if (util in 0.0..1.0 && util != util.toLong().toDouble()) util * 100 else util
-                val usedPct = used.toInt().coerceIn(0, 100)
-                val remaining = (100.0 - used).coerceIn(0.0, 100.0).toInt()
-                val reset = w.get("resets_at")?.asString?.let { formatReset(it) }
-                return Bar(label, remaining, usedPct, reset = reset)
-            }
-
-            barOf("five_hour", "5 小时会话")?.let { groups.getOrPut("滚动窗口") { mutableListOf() } += it }
-            barOf("seven_day", "7 天总额")?.let { groups.getOrPut("滚动窗口") { mutableListOf() } += it }
-            barOf("seven_day_opus", "Opus")?.let { groups.getOrPut("模型细分（7 天）") { mutableListOf() } += it }
-            barOf("seven_day_sonnet", "Sonnet")?.let { groups.getOrPut("模型细分（7 天）") { mutableListOf() } += it }
-            return Usage(null, groups)
-        }
-    }
 
     // ─── MiniMax（Token Plan / Coding Plan 请求次数额度）───
 
@@ -266,7 +58,7 @@ object ExtraQuotaApi {
                         ua = "MiniMax-Usage-Checker"
                     )
                     val obj = gson.fromJson(resp, JsonObject::class.java) ?: continue
-                    val base = obj.getAsJsonObject("base_resp")
+                    val base = obj.optObject("base_resp")
                     val code = base?.get("status_code")?.asInt
                     if (code != null && code != 0) {
                         throw QuotaException(
@@ -275,7 +67,7 @@ object ExtraQuotaApi {
                         )
                     }
                     val groups = linkedMapOf<String, MutableList<Bar>>()
-                    val remains = obj.getAsJsonArray("model_remains") ?: continue
+                    val remains = obj.optArray("model_remains") ?: continue
                     for (el in remains) {
                         val m = el as? JsonObject ?: continue
                         val name = m.get("model_name")?.asString ?: continue
@@ -365,8 +157,6 @@ object ExtraQuotaApi {
 /** 防御式取值：成员存在但类型不符时返回 null，而不是抛 ClassCastException */
 internal fun JsonObject.optObject(key: String): JsonObject? = get(key) as? JsonObject
 internal fun JsonObject.optArray(key: String): com.google.gson.JsonArray? = get(key) as? com.google.gson.JsonArray
-internal fun jstr(o: JsonObject, key: String): String? =
-    (o.get(key) as? com.google.gson.JsonPrimitive)?.takeIf { it.isString }?.asString
 
 /** 把服务端错误响应体转成适合展示的短文案：HTML/空 body 换成友好提示，
  *  JSON 错误尽量提取 message 字段（兼容 OpenAI 嵌套 / OAuth error_description 等风格）。 */

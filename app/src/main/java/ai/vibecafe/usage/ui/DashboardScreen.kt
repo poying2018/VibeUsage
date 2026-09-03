@@ -11,7 +11,6 @@ import ai.vibecafe.usage.stats.ToolDetail
 import ai.vibecafe.usage.ui.anim.AnimatedCounter
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
 import ai.vibecafe.usage.ui.ag.AgPanelScreen
-import ai.vibecafe.usage.ui.ag.ExtraProvider
 import ai.vibecafe.usage.ui.ag.ProviderPage
 import ai.vibecafe.usage.ui.ag.AgPanelViewModel
 import ai.vibecafe.usage.ui.charts.DonutChart
@@ -136,7 +135,7 @@ private val RangeValues = listOf(
 private val MetricLabels = listOf("金额", "Tokens")
 
 /** 额度页平台切换标签：同为稳定引用 */
-private val QuotaTabLabels = listOf("反重力", "Codex", "Claude", "MiniMax")
+private val QuotaTabLabels = listOf("反重力", "MiniMax")
 
 private val APP_VERSION = "v" + BuildConfig.VERSION_NAME
 
@@ -173,7 +172,7 @@ fun DashboardScreen(
     var bgPath by rememberSaveable { mutableStateOf(BackgroundStore.get(context)) }
     var showSettings by rememberSaveable { mutableStateOf(false) }  // 设置独立页（底部导航 Tab 3）
     var showAgPanel by rememberSaveable { mutableStateOf(false) }  // 反重力额度面板切换
-    var quotaTab by rememberSaveable { mutableStateOf(0) }  // 额度页平台切换：0 反重力 / 1 Codex / 2 Claude / 3 MiniMax
+    var quotaTab by rememberSaveable { mutableStateOf(0) }  // 额度页平台切换：0 反重力 / 1 MiniMax（旧版本存档可能越界，使用处钳制）
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
     val agPanelViewModel: AgPanelViewModel = viewModel()  // 与 AgPanelScreen 共享同一实例
@@ -292,7 +291,7 @@ fun DashboardScreen(
                     // 列本身已有 18dp 水平内边距，这里不再叠加）
                     LiquidGlassSegmentedControl(
                         items = QuotaTabLabels,
-                        selectedIndex = quotaTab,
+                        selectedIndex = quotaTab.coerceAtMost(QuotaTabLabels.lastIndex),
                         onSelect = { idx ->
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             quotaTab = idx
@@ -301,10 +300,8 @@ fun DashboardScreen(
                         height = 44.dp,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    when (quotaTab) {
-                        1 -> ProviderPage(ExtraProvider.CODEX, backdrop = backdrop)
-                        2 -> ProviderPage(ExtraProvider.CLAUDE, backdrop = backdrop)
-                        3 -> ProviderPage(ExtraProvider.MINIMAX, backdrop = backdrop)
+                    when (quotaTab.coerceAtMost(QuotaTabLabels.lastIndex)) {
+                        1 -> ProviderPage(backdrop = backdrop)
                         else -> AgPanelScreen(backdrop = backdrop)
                     }
                 }
