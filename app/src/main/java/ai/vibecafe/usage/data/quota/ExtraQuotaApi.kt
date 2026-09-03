@@ -15,9 +15,9 @@ import java.util.concurrent.TimeUnit
  * Codex / Claude Code / MiniMax 三家额度查询客户端（端点均来自开源工具逆向：
  * openai/codex 官方 CLI、CCSeva、onWatch / minimax-usage-checker）。
  *
- * chatgpt.com 与 api.anthropic.com 在大陆无法直连，默认先走内置 Cloudflare Worker
- * 中转（需 worker 白名单包含对应域名），失败自动回退直连；MiniMax 为国内服务，
- * 始终直连、不经中转（国内域名优先，失败回退国际域名）。
+ * api.anthropic.com 在大陆无法直连，先走内置 Cloudflare Worker 中转（需 worker 白名单
+ * 包含对应域名），失败自动回退直连；chatgpt.com 会拦截 Worker 出口（403 质询页）只能直连；
+ * MiniMax 为国内服务，始终直连、不经中转（国内域名优先，失败回退国际域名）。
  */
 object ExtraQuotaApi {
 
@@ -100,41 +100,45 @@ object ExtraQuotaApi {
             )
         }
 
-        /** 查询额度：主窗口（5h 滚动）+ 次窗口（每周）+ 附加限额。 */
+        /** 查询额度：主窗口（5h 滚动）+ 次窗口（每周）+ 附加限额。
+         *  chatgpt.com 会对 Cloudflare Worker 出口返回人机质询页（403 HTML），中转不可用，必须直连。 */
         fun fetchUsage(accessToken: String, accountId: String?): Usage {
             val resp = QuotaHttp.get(
                 USAGE_URL,
                 bearer = accessToken,
-                proxyFirst = true,
+                proxyFirst = false,
                 ua = "codex_cli_rs",
+                directOnly = true,
                 extraHeaders = accountId?.let { mapOf("ChatGPT-Account-Id" to it) }.orEmpty()
             )
-            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            val obj = try {
+                gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            } catch (e: com.google.gson.JsonSyntaxException) {
+                throw QuotaException(0, "响应格式异常：${resp.take(150)}")
+            }
             val groups = linkedMapOf<String, MutableList<Bar>>()
 
-            val rateLimit = obj.getAsJsonObject("rate_limit")
-            parseWindow(rateLimit?.getAsJsonObject("primary_window"), short = true)?.let {
+            val rateLimit = obj.optObject("rate_limit")
+            parseWindow(rateLimit?.optObject("primary_window"), short = true)?.let {
                 groups.getOrPut("5 小时滚动窗口") { mutableListOf() } += it
             }
-            parseWindow(rateLimit?.getAsJsonObject("secondary_window"), short = false)?.let {
+            parseWindow(rateLimit?.optObject("secondary_window"), short = false)?.let {
                 groups.getOrPut("每周窗口") { mutableListOf() } += it
             }
             // 附加限额（如 codex_other 等计量桶），结构可能演进，逐个防御解析
-            obj.getAsJsonArray("additional_rate_limits")?.forEach { el ->
+            obj.optArray("additional_rate_limits")?.forEach { el ->
                 val o = el as? JsonObject ?: return@forEach
-                val name = o.get("display_name")?.asString
-                    ?: o.get("limit_id")?.asString
-                    ?: return@forEach
-                val rl = o.getAsJsonObject("rate_limit") ?: o
-                parseWindow(rl?.getAsJsonObject("primary_window"), short = true)?.let {
+                val name = jstr(o, "display_name") ?: jstr(o, "limit_id") ?: return@forEach
+                val rl = o.optObject("rate_limit") ?: o
+                parseWindow(rl.optObject("primary_window"), short = true)?.let {
                     groups.getOrPut("其他限额") { mutableListOf() } += it.copy(label = name)
                 }
             }
-            return Usage(obj.get("plan_type")?.asString?.uppercase(), groups)
+            return Usage(jstr(obj, "plan_type")?.uppercase(), groups)
         }
 
         /** window: used_percent → 剩余/已用百分比；resets_after_seconds → 倒计时说明。 */
-        private fun parseWindow(w: JsonObject?, short: Boolean): Bar? {
+        private fun parseWindow(w: JsonObject?, short: Boolean): Bar? = try {
             val used = w?.get("used_percent")?.asDouble ?: return null
             val usedPct = used.toInt().coerceIn(0, 100)
             val remaining = (100.0 - used).coerceIn(0.0, 100.0).toInt()
@@ -147,7 +151,9 @@ object ExtraQuotaApi {
                 else -> "每周窗口"
             }
             val reset = resetSec?.takeIf { it > 0 }?.let { "重置：${formatCountdown(it * 1000)}后" }
-            return Bar(label = windowName, percentRemaining = remaining, usedPercent = usedPct, reset = reset)
+            Bar(label = windowName, percentRemaining = remaining, usedPercent = usedPct, reset = reset)
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -356,6 +362,12 @@ object ExtraQuotaApi {
     }
 }
 
+/** 防御式取值：成员存在但类型不符时返回 null，而不是抛 ClassCastException */
+internal fun JsonObject.optObject(key: String): JsonObject? = get(key) as? JsonObject
+internal fun JsonObject.optArray(key: String): com.google.gson.JsonArray? = get(key) as? com.google.gson.JsonArray
+internal fun jstr(o: JsonObject, key: String): String? =
+    (o.get(key) as? com.google.gson.JsonPrimitive)?.takeIf { it.isString }?.asString
+
 /** 把服务端错误响应体转成适合展示的短文案：HTML/空 body 换成友好提示，
  *  JSON 错误尽量提取 message 字段（兼容 OpenAI 嵌套 / OAuth error_description 等风格）。 */
 internal fun httpErrorBody(text: String, code: Int): String {
@@ -453,8 +465,9 @@ internal object QuotaHttp {
                     return text
                 }
             } catch (e: ExtraQuotaApi.QuotaException) {
-                // 鉴权类错误在直连/中转下语义一致，直接抛；其余错误试完所有线路再抛
-                if (e.code == 401 || e.code == 403 || index == urls.distinct().lastIndex) throw e
+                // 鉴权类错误（401）在直连/中转下语义一致，直接抛；
+                // 403 可能只是某条线路被拦（如 Cloudflare 质询页），要给备用线路机会，试完所有线路再抛
+                if (e.code == 401 || index == urls.distinct().lastIndex) throw e
                 lastErr = e
             } catch (e: Exception) {
                 lastErr = e
