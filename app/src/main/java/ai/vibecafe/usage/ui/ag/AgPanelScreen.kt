@@ -25,6 +25,7 @@ import ai.vibecafe.usage.data.ag.AgQuotaApi.QuotaBucket
 import ai.vibecafe.usage.data.quota.AgGoogleOAuth
 import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.glassCard
+import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
 
@@ -32,8 +33,6 @@ import kotlinx.coroutines.launch
 private val AgBlue = Color(0xFF4A7DFF)
 private val AgPurple = Color(0xFF9B6CFF)
 private val AgAmber = Color(0xFFFFB020)
-private val AgRed = Color(0xFFFF5A5A)
-private val AgMuted = Color(0xFF9A9AAF)
 
 /**
  * 反重力（Google Antigravity）额度面板 —— 液态玻璃 + 5h/每周配额桶。
@@ -82,6 +81,7 @@ private fun AgLoginCard(
     var showManual by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val palette = LocalGlassPalette.current
 
     Box(
         modifier = Modifier
@@ -122,12 +122,12 @@ private fun AgLoginCard(
                 text = "反重力额度",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = palette.InkHi
             )
             Text(
                 text = "Google Antigravity 配额查询",
                 fontSize = 13.sp,
-                color = AgMuted,
+                color = palette.InkMid,
                 modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
             )
 
@@ -186,7 +186,7 @@ private fun AgLoginCard(
             if (error != null) {
                 Text(
                     error,
-                    color = AgRed,
+                    color = palette.Down,
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 12.dp)
@@ -197,7 +197,7 @@ private fun AgLoginCard(
             TextButton(onClick = { showManual = !showManual }) {
                 Text(
                     if (showManual) "收起手动输入" else "手动粘贴账号 JSON / refresh_token",
-                    color = AgMuted,
+                    color = palette.InkMid,
                     fontSize = 12.sp
                 )
             }
@@ -212,12 +212,12 @@ private fun AgLoginCard(
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = AgBlue,
-                        unfocusedBorderColor = Color(0xFF3A3A4E),
+                        unfocusedBorderColor = palette.Rim,
                         cursorColor = AgBlue,
                         focusedLabelColor = AgBlue,
-                        unfocusedLabelColor = AgMuted,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        unfocusedLabelColor = palette.InkMid,
+                        focusedTextColor = palette.InkHi,
+                        unfocusedTextColor = palette.InkHi
                     ),
                     shape = RoundedCornerShape(14.dp)
                 )
@@ -244,7 +244,7 @@ private fun AgLoginCard(
 
                 Text(
                     "粘贴 Antigravity.Tools 导出的账号 JSON（.antigravity_tools\\accounts\\*.json），或直接粘贴 refresh_token",
-                    color = Color(0xFF5A5A6E),
+                    color = palette.InkLo,
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 12.dp)
@@ -263,6 +263,7 @@ private fun AgLoggedInContent(
     onRefresh: () -> Unit,
     onLogout: () -> Unit
 ) {
+    val palette = LocalGlassPalette.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -302,7 +303,7 @@ private fun AgLoggedInContent(
                     "反重力额度",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.White
+                    color = palette.InkHi
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -317,7 +318,7 @@ private fun AgLoggedInContent(
                     Icon(
                         imageVector = Icons.Filled.Refresh,
                         contentDescription = "刷新",
-                        tint = AgMuted,
+                        tint = palette.InkMid,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -325,11 +326,11 @@ private fun AgLoggedInContent(
                     Icon(
                         imageVector = Icons.Filled.ExitToApp,
                         contentDescription = "退出",
-                        tint = AgMuted,
+                        tint = palette.InkMid,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("退出", color = AgMuted, fontSize = 12.sp)
+                    Text("退出", color = palette.InkMid, fontSize = 12.sp)
                 }
             }
         }
@@ -351,7 +352,7 @@ private fun AgLoggedInContent(
                         state.email ?: "Antigravity 账号",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color.White,
+                        color = palette.InkHi,
                         maxLines = 1
                     )
                     Text(
@@ -359,7 +360,7 @@ private fun AgLoggedInContent(
                             "HH:mm:ss", java.util.Locale.getDefault()
                         ).format(java.util.Date(state.updatedAt)) else "尚未获取额度",
                         fontSize = 11.sp,
-                        color = AgMuted,
+                        color = palette.InkMid,
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
@@ -385,7 +386,7 @@ private fun AgLoggedInContent(
         if (state.error != null) {
             Text(
                 state.error!!,
-                color = AgRed,
+                color = palette.Down,
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
@@ -423,6 +424,7 @@ private fun BucketsCard(
     backdrop: Backdrop
 ) {
     if (buckets.isEmpty()) return
+    val palette = LocalGlassPalette.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -434,7 +436,7 @@ private fun BucketsCard(
                 title,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
-                color = AgMuted
+                color = palette.InkMid
             )
             Spacer(Modifier.height(12.dp))
             buckets.forEachIndexed { idx, bucket ->
@@ -447,11 +449,12 @@ private fun BucketsCard(
 
 @Composable
 private fun BucketRow(bucket: QuotaBucket) {
+    val palette = LocalGlassPalette.current
     val percent = bucket.percentRemaining
     val barColor = when {
         percent >= 50 -> AgBlue
         percent >= 20 -> AgAmber
-        else -> AgRed
+        else -> palette.Down
     }
     Column {
         Row(
@@ -462,7 +465,7 @@ private fun BucketRow(bucket: QuotaBucket) {
             Text(
                 bucket.label,
                 fontSize = 14.sp,
-                color = Color.White,
+                color = palette.InkHi,
                 maxLines = 1,
                 modifier = Modifier.weight(1f)
             )
@@ -480,7 +483,7 @@ private fun BucketRow(bucket: QuotaBucket) {
                 .fillMaxWidth()
                 .height(8.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color.White.copy(alpha = 0.12f))
+                .background(palette.InkHi.copy(alpha = 0.10f))
         ) {
             Box(
                 modifier = Modifier
@@ -495,7 +498,7 @@ private fun BucketRow(bucket: QuotaBucket) {
             Text(
                 resetText,
                 fontSize = 11.sp,
-                color = AgMuted,
+                color = palette.InkMid,
                 modifier = Modifier.padding(top = 5.dp)
             )
         }

@@ -37,9 +37,6 @@ import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import com.kyant.backdrop.Backdrop
 import java.util.Locale
 
-private val MutedColor = Color(0xFF9A9AAF)
-private val ErrorColor = Color(0xFFFF5A5A)
-
 /** 额度页供应商下拉选项。 */
 data class QuotaOption(val label: String, val color: Color)
 
@@ -65,6 +62,7 @@ fun QuotaSwitcher(
     var expanded by remember { mutableStateOf(false) }
     var menuVisible by remember { mutableStateOf(false) }
     val current = options[selectedIndex.coerceIn(0, options.lastIndex)]
+    val palette = LocalGlassPalette.current
     // 原胶囊淡出放大（liquid 态 label 消失），弹簧回弹
     val labelAlpha by animateFloatAsState(
         targetValue = if (expanded) 0f else 1f,
@@ -111,7 +109,7 @@ fun QuotaSwitcher(
                     current.label,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color.White,
+                    color = palette.InkHi,
                     maxLines = 1
                 )
                 Spacer(Modifier.width(18.dp))
@@ -187,7 +185,7 @@ fun QuotaSwitcher(
                                 opt.label,
                                 fontSize = 14.sp,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                color = Color.White,
+                                color = if (selected) palette.InkStrong else palette.InkMid,
                                 maxLines = 1
                             )
                             Spacer(Modifier.weight(1f))
@@ -196,7 +194,7 @@ fun QuotaSwitcher(
                                     Icons.Filled.Check,
                                     contentDescription = "已选择",
                                     Modifier.size(16.dp),
-                                    tint = Color.White
+                                    tint = palette.InkStrong
                                 )
                             }
                         }
@@ -254,6 +252,7 @@ private fun LoginArea(
     viewModel: ExtraQuotaViewModel
 ) {
     var inputs by remember(provider.id) { mutableStateOf(List(provider.credLabels.size) { "" }) }
+    val palette = LocalGlassPalette.current
 
     Column {
         provider.credLabels.forEachIndexed { i, label ->
@@ -268,15 +267,15 @@ private fun LoginArea(
                 placeholder = { Text(provider.credPlaceholders[i]) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = provider.color,
-                    unfocusedBorderColor = Color(0xFF3A3A4E),
-                    cursorColor = provider.color,
-                    focusedLabelColor = provider.color,
-                    unfocusedLabelColor = MutedColor,
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = provider.color,
+                unfocusedBorderColor = palette.Rim,
+                cursorColor = provider.color,
+                focusedLabelColor = provider.color,
+                unfocusedLabelColor = palette.InkMid,
+                focusedTextColor = palette.InkHi,
+                unfocusedTextColor = palette.InkHi
+            ),
                 shape = RoundedCornerShape(12.dp),
                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
             )
@@ -298,11 +297,11 @@ private fun LoginArea(
             }
         }
         if (ps.error != null) {
-            Text(ps.error!!, color = ErrorColor, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+            Text(ps.error!!, color = palette.Down, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         }
         Text(
             provider.hint,
-            color = Color(0xFF5A5A6E),
+            color = palette.InkLo,
             fontSize = 10.sp,
             modifier = Modifier.padding(top = 8.dp)
         )
@@ -328,6 +327,7 @@ private fun LoggedArea(
     ps: ProviderState,
     viewModel: ExtraQuotaViewModel
 ) {
+    val palette = LocalGlassPalette.current
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -351,17 +351,17 @@ private fun LoggedArea(
                 }
             }
             IconButton(onClick = { viewModel.refresh(provider.id) }, modifier = Modifier.size(30.dp)) {
-                Icon(Icons.Filled.Refresh, "刷新", Modifier.size(16.dp), tint = MutedColor)
+                Icon(Icons.Filled.Refresh, "刷新", Modifier.size(16.dp), tint = palette.InkMid)
             }
             IconButton(onClick = { viewModel.logout(provider.id) }, modifier = Modifier.size(30.dp)) {
-                Icon(Icons.Filled.Logout, "解绑", Modifier.size(15.dp), tint = MutedColor)
+                Icon(Icons.Filled.Logout, "解绑", Modifier.size(15.dp), tint = palette.InkMid)
             }
         }
 
         if (ps.error != null) {
             Text(
                 ps.error!!,
-                color = ErrorColor,
+                color = palette.Down,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
             )
@@ -373,7 +373,7 @@ private fun LoggedArea(
                 groupTitle,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
-                color = MutedColor
+                color = palette.InkMid
             )
             Spacer(Modifier.height(8.dp))
             bars.forEachIndexed { idx, bar ->
@@ -385,7 +385,7 @@ private fun LoggedArea(
         if (ps.groups.isEmpty() && !ps.isLoading && ps.error == null) {
             Text(
                 "暂无额度数据",
-                color = MutedColor,
+                color = palette.InkMid,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 8.dp)
             )
@@ -420,11 +420,12 @@ private fun SectionHeader(text: String, color: Color, icon: ImageVector) {
 
 @Composable
 private fun BarRow(bar: Bar, color: Color) {
+    val palette = LocalGlassPalette.current
     val percent = bar.percentRemaining.coerceIn(0, 100)
     val barColor = when {
         percent >= 50 -> color
         percent >= 20 -> Color(0xFFFFB020)
-        else -> Color(0xFFFF5A5A)
+        else -> palette.Down
     }
     Column {
         Row(
@@ -437,12 +438,12 @@ private fun BarRow(bar: Bar, color: Color) {
                     bar.label,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color.White,
+                    color = palette.InkHi,
                     maxLines = 1
                 )
                 bar.counts?.let {
                     Spacer(Modifier.width(8.dp))
-                    Text(it, fontSize = 11.sp, color = MutedColor, maxLines = 1)
+                    Text(it, fontSize = 11.sp, color = palette.InkMid, maxLines = 1)
                 }
             }
             Text(
@@ -461,7 +462,7 @@ private fun BarRow(bar: Bar, color: Color) {
                 .fillMaxWidth()
                 .height(6.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color.White.copy(alpha = 0.12f))
+                .background(palette.InkHi.copy(alpha = 0.10f))
         ) {
             Box(
                 modifier = Modifier
@@ -475,7 +476,7 @@ private fun BarRow(bar: Bar, color: Color) {
             Text(
                 bar.reset,
                 fontSize = 10.sp,
-                color = MutedColor,
+                color = palette.InkMid,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
