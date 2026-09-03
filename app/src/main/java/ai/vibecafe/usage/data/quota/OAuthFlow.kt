@@ -61,7 +61,7 @@ object OAuthFlow {
     /**
      * loopback 回调服务器：绑定 127.0.0.1:[port]，等待浏览器重定向。
      * 逐连接处理；非回调路径（预连/探测）直接回 404 并继续等，收到 code 或 error 才返回。
-     * 5 分钟无回调则抛超时。
+     * 等待 15 分钟；同端口重复发起时自动接管（旧等待流程随即取消）。
      */
     class LoopbackServer(private val port: Int, private val path: String) {
 
@@ -70,14 +70,34 @@ object OAuthFlow {
         private var server: ServerSocket? = null
 
         suspend fun await(): Callback = withContext(Dispatchers.IO) {
+            // 接管同端口旧实例：重复发起授权时旧等待流程让位，避免绑定冲突
+            liveSockets.remove(port)?.let { old ->
+                try { old.close() } catch (_: Exception) { }
+            }
             val ss = ServerSocket()
             ss.reuseAddress = true
-            ss.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port))
+            try {
+                ss.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port))
+            } catch (e: Exception) {
+                throw QuotaException(
+                    0,
+                    if (e is java.net.BindException) "本地回调端口被占用，请稍等片刻后重新发起授权"
+                    else "回调服务器启动失败：${e.message?.take(80) ?: "未知错误"}"
+                )
+            }
             server = ss
-            ss.soTimeout = 5 * 60_000
+            liveSockets[port] = ss
+            ss.soTimeout = 15 * 60_000
             try {
                 while (true) {
-                    val cb = handle(ss.accept())
+                    val sock = try {
+                        ss.accept()
+                    } catch (e: java.net.SocketTimeoutException) {
+                        throw QuotaException(0, "授权等待超时，请回到应用重新点击「一键授权」")
+                    } catch (e: java.net.SocketException) {
+                        throw QuotaException(0, "已发起新的授权，本次等待已取消")
+                    }
+                    val cb = handle(sock)
                     if (cb.code != null || cb.error != null) return@withContext cb
                 }
             } finally {
@@ -113,11 +133,16 @@ object OAuthFlow {
         }
 
         fun stop() {
-            try { server?.close() } catch (_: Exception) { }
+            val ss = server
             server = null
+            if (ss != null) liveSockets.remove(port, ss)
+            try { ss?.close() } catch (_: Exception) { }
         }
 
         private companion object {
+            /** 各端口当前存活的服务器：重复发起授权时接管端口用 */
+            val liveSockets = java.util.concurrent.ConcurrentHashMap<Int, ServerSocket>()
+
             val SUCCESS_HTML = """<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="background:#141218;color:#E6E0E9;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1>&#10003;</h1><p>授权成功，请返回 VibeUsage</p></div></body></html>"""
             const val NOT_FOUND_HTML = "<html><body>Not Found</body></html>"
         }
