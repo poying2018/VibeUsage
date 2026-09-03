@@ -91,7 +91,6 @@ fun QuotaSwitcher(
                 onClick = { expanded = !expanded },
                 backdrop = buttonBackdrop,
                 modifier = Modifier
-                    .fillMaxWidth()
                     .graphicsLayer {
                         alpha = labelAlpha
                         val s = 1f + 0.08f * (1f - labelAlpha)
@@ -100,7 +99,7 @@ fun QuotaSwitcher(
                     }
                     .height(44.dp)
             ) {
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(18.dp))
                 Box(
                     Modifier
                         .size(9.dp)
@@ -115,8 +114,7 @@ fun QuotaSwitcher(
                     color = Color.White,
                     maxLines = 1
                 )
-                Spacer(Modifier.weight(1f))
-                Spacer(Modifier.width(16.dp))
+                Spacer(Modifier.width(18.dp))
             }
             Spacer(Modifier.height(6.dp))
             content()
@@ -151,6 +149,8 @@ fun QuotaSwitcher(
             ) {
                 Column(
                     Modifier
+                        // 贴内容宽度的窄面板（不再横向撑满），整体左对齐在按钮下方
+                        .widthIn(min = 230.dp, max = 320.dp)
                         .glassCard(menuBackdrop, cornerRadius = 20.dp)
                         .padding(vertical = 8.dp)
                 ) {
@@ -173,7 +173,7 @@ fun QuotaSwitcher(
                                     alpha = 0.35f + 0.65f * c.coerceIn(0f, 1f)
                                     translationY = 12.dp.toPx() * (1f - c)
                                 }
-                                .padding(horizontal = 14.dp, vertical = 9.dp),
+                                .padding(horizontal = 16.dp, vertical = 13.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
