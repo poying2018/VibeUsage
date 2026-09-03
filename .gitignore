@@ -44,3 +44,5 @@
 
 # npx »º´æ(ÎğÌá½»)
 /.npm-cache/
+.wrangler/
+.zcode/
