@@ -21,67 +21,84 @@ data class ProviderState(
 )
 
 /**
- * MiniMax 额度 ViewModel。
- * 凭据来源（粘贴一次即持久化）：Token Plan API Key（sk-cp-...）。
+ * 「额度」页凭据型供应商（MiniMax / GLM / Kimi / DeepSeek / 无问芯穹 / 百炼 / 方舟）的额度 ViewModel。
+ * 凭据粘贴一次即持久化到 quota_extra prefs（火山方舟为 AK/SK 双字段）。
  */
 class ExtraQuotaViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _state = MutableStateFlow(ProviderState())
-    val state: StateFlow<ProviderState> = _state.asStateFlow()
+    private val _state = MutableStateFlow<Map<String, ProviderState>>(emptyMap())
+    val state: StateFlow<Map<String, ProviderState>> = _state.asStateFlow()
 
     private val prefs = application.getSharedPreferences("quota_extra", Application.MODE_PRIVATE)
 
     init {
-        // 清理历史版本（v2.10.2 及之前）残留的 Codex/Claude 凭据
+        // 清理 v2.10.2 及之前残留的 Codex/Claude 凭据（两平台已移除）
         prefs.edit()
             .remove("codex_auth_raw").remove("codex_access").remove("codex_access_exp")
             .remove("claude_creds_raw").remove("claude_access").remove("claude_access_exp")
             .apply()
-        if (prefs.getString("minimax_key", null) != null) {
-            _state.value = ProviderState(loggedIn = true)
-            refresh()
+        ExtraProvider.entries.forEach { p ->
+            if (p.credPrefsKeys.all { prefs.getString(it, null) != null }) {
+                _state.value = _state.value.toMutableMap().apply { put(p.id, ProviderState(loggedIn = true)) }
+                refresh(p.id)
+            }
         }
     }
 
     // ─── 登录（粘贴凭据）───
 
-    fun login(key: String) {
-        val k = key.filter { it in '!'..'~' }
-        if (k.length < 20) {
-            _state.value = _state.value.copy(error = "API Key 格式不对（应以 sk- 开头）")
+    fun login(id: String, creds: List<String>) {
+        val provider = ExtraProvider.byId(id) ?: return
+        val cleaned = creds.map { it.filter { c -> c in '!'..'~' } }
+        if (cleaned.any { it.length < 16 }) {
+            update(id) { it.copy(error = "凭据格式不对（长度不足，请粘贴完整密钥）") }
             return
         }
-        prefs.edit().putString("minimax_key", k).apply()
-        _state.value = ProviderState(loggedIn = true, isLoading = true)
-        refresh()
+        prefs.edit().apply {
+            provider.credPrefsKeys.forEachIndexed { i, k -> putString(k, cleaned[i]) }
+        }.apply()
+        update(id) { ProviderState(loggedIn = true, isLoading = true) }
+        refresh(id)
     }
 
     // ─── 刷新 ───
 
-    fun refresh() = viewModelScope.launch {
-        _state.value = _state.value.copy(isLoading = true, error = null)
+    fun refresh(id: String) = viewModelScope.launch {
+        val provider = ExtraProvider.byId(id) ?: return@launch
+        update(id) { it.copy(isLoading = true, error = null) }
         try {
-            val key = prefs.getString("minimax_key", null) ?: return@launch
-            val usage = withContext(Dispatchers.IO) { ExtraQuotaApi.MiniMax.fetchUsage(key) }
-            _state.value = _state.value.copy(
-                isLoading = false,
-                groups = usage.groups,
-                account = null,
-                error = if (usage.groups.isEmpty()) "计划未返回额度数据" else null
-            )
+            val creds = provider.credPrefsKeys.map { k ->
+                prefs.getString(k, null) ?: throw ExtraQuotaApi.QuotaException(0, "凭据缺失，请重新接入")
+            }
+            val usage = withContext(Dispatchers.IO) { provider.fetch(creds) }
+            update(id) {
+                it.copy(
+                    isLoading = false,
+                    account = usage.account,
+                    groups = usage.groups,
+                    error = if (usage.groups.isEmpty()) "计划未返回额度数据" else null
+                )
+            }
         } catch (e: Exception) {
-            _state.value = _state.value.copy(isLoading = false, error = "查询失败：${e.message ?: "未知错误"}")
+            update(id) { it.copy(isLoading = false, error = "查询失败：${e.message ?: "未知错误"}") }
         }
     }
 
     // ─── 解绑 ───
 
-    fun logout() {
-        prefs.edit().remove("minimax_key").apply()
-        _state.value = ProviderState()
+    fun logout(id: String) {
+        val provider = ExtraProvider.byId(id) ?: return
+        prefs.edit().apply {
+            provider.credPrefsKeys.forEach { remove(it) }
+        }.apply()
+        _state.value = _state.value.toMutableMap().apply { put(id, ProviderState()) }
     }
 
-    fun clearError() {
-        _state.value = _state.value.copy(error = null)
+    fun clearError(id: String) = update(id) { it.copy(error = null) }
+
+    private fun update(id: String, f: (ProviderState) -> ProviderState) {
+        _state.value = _state.value.toMutableMap().apply {
+            put(id, f(get(id) ?: ProviderState()))
+        }
     }
 }

@@ -1,10 +1,15 @@
 package ai.vibecafe.usage.ui.ag
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BubbleChart
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -13,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,23 +33,143 @@ import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import com.kyant.backdrop.Backdrop
 import java.util.Locale
 
-private val MiniMaxColor = Color(0xFFF0483E)
 private val MutedColor = Color(0xFF9A9AAF)
 private val ErrorColor = Color(0xFFFF5A5A)
 
+/** 额度页供应商下拉选项。 */
+data class QuotaOption(val label: String, val color: Color)
+
 /**
- * MiniMax 独立页面：整页展示接入与额度明细，按时间窗口（5 小时 / 每周）分组。
- * 凭据为 Token Plan API Key（sk-cp-...），粘贴一次即保存在本机。
+ * 额度页供应商切换器（液态玻璃下拉）：
+ * 收起时为胶囊按钮（色点 + 当前平台 + 箭头）；展开后为全屏半透明遮罩 + 背后内容实时模糊的玻璃菜单。
+ * [menuBackdrop] 应传入叠加了内容层的合成 backdrop，菜单才能模糊到其背后的滚动内容。
+ */
+@Composable
+fun QuotaSwitcher(
+    options: List<QuotaOption>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    buttonBackdrop: Backdrop,
+    menuBackdrop: Backdrop,
+    content: @Composable () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val current = options[selectedIndex.coerceIn(0, options.lastIndex)]
+    val arrowRotation by animateFloatAsState(if (expanded) 180f else 0f, label = "quotaArrow")
+
+    Box(Modifier.fillMaxWidth()) {
+        Column {
+            LiquidButton(
+                onClick = { expanded = !expanded },
+                backdrop = buttonBackdrop,
+                modifier = Modifier.fillMaxWidth().height(44.dp)
+            ) {
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    Modifier
+                        .size(9.dp)
+                        .clip(CircleShape)
+                        .background(current.color)
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    current.label,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White,
+                    maxLines = 1
+                )
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起" else "切换平台",
+                    Modifier
+                        .size(20.dp)
+                        .graphicsLayer { rotationZ = arrowRotation },
+                    tint = Color.White.copy(alpha = 0.85f)
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+            Spacer(Modifier.height(6.dp))
+            content()
+        }
+
+        if (expanded) {
+            // 遮罩：点击任意处收起
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.32f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { expanded = false }
+            )
+            Column(
+                Modifier
+                    .padding(top = 50.dp)
+                    .glassCard(menuBackdrop, cornerRadius = 20.dp)
+                    .padding(vertical = 6.dp)
+            ) {
+                options.forEachIndexed { i, opt ->
+                    val selected = i == selectedIndex.coerceIn(0, options.lastIndex)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                onSelect(i)
+                                expanded = false
+                            }
+                            .padding(horizontal = 18.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            Modifier
+                                .size(9.dp)
+                                .clip(CircleShape)
+                                .background(opt.color)
+                        )
+                        Spacer(Modifier.width(11.dp))
+                        Text(
+                            opt.label,
+                            fontSize = 14.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected) Color.White else MutedColor,
+                            maxLines = 1
+                        )
+                        Spacer(Modifier.weight(1f))
+                        if (selected) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = "已选择",
+                                Modifier.size(16.dp),
+                                tint = opt.color
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 凭据型供应商独立页面：整页展示接入与额度明细，按时间窗口（5 小时 / 每周等）分组。
  */
 @Composable
 fun ProviderPage(
+    provider: ExtraProvider,
     backdrop: Backdrop,
     viewModel: ExtraQuotaViewModel = viewModel()
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
+    val stateMap by viewModel.state.collectAsStateWithLifecycle()
+    val ps = stateMap[provider.id] ?: ProviderState()
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        SectionHeader("MiniMax", MiniMaxColor, Icons.Filled.BubbleChart)
+        SectionHeader(provider.title, provider.color, provider.icon)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -51,47 +177,58 @@ fun ProviderPage(
                 .glassCard(backdrop, cornerRadius = 20.dp)
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
-            if (!state.loggedIn) {
-                LoginArea(state, backdrop, viewModel)
+            if (!ps.loggedIn) {
+                LoginArea(provider, ps, backdrop, viewModel)
             } else {
-                LoggedArea(state, viewModel)
+                LoggedArea(provider, ps, viewModel)
             }
         }
     }
 }
 
-// ─── 未接入：粘贴 API Key ───
+// ─── 未接入：粘贴凭据（1 个 API Key，或方舟 AK/SK 双字段）───
 
 @Composable
-private fun LoginArea(ps: ProviderState, backdrop: Backdrop, viewModel: ExtraQuotaViewModel) {
-    var input by remember { mutableStateOf("") }
+private fun LoginArea(
+    provider: ExtraProvider,
+    ps: ProviderState,
+    backdrop: Backdrop,
+    viewModel: ExtraQuotaViewModel
+) {
+    var inputs by remember(provider.id) { mutableStateOf(List(provider.credLabels.size) { "" }) }
 
     Column {
-        OutlinedTextField(
-            value = input,
-            onValueChange = { input = it; viewModel.clearError() },
-            label = { Text("凭据") },
-            placeholder = { Text("sk-cp-...") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MiniMaxColor,
-                unfocusedBorderColor = Color(0xFF3A3A4E),
-                cursorColor = MiniMaxColor,
-                focusedLabelColor = MiniMaxColor,
-                unfocusedLabelColor = MutedColor,
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White
-            ),
-            shape = RoundedCornerShape(12.dp),
-            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
-        )
+        provider.credLabels.forEachIndexed { i, label ->
+            if (i > 0) Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = inputs[i],
+                onValueChange = { v ->
+                    inputs = inputs.toMutableList().also { it[i] = v }
+                    viewModel.clearError(provider.id)
+                },
+                label = { Text(label) },
+                placeholder = { Text(provider.credPlaceholders[i]) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = provider.color,
+                    unfocusedBorderColor = Color(0xFF3A3A4E),
+                    cursorColor = provider.color,
+                    focusedLabelColor = provider.color,
+                    unfocusedLabelColor = MutedColor,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                ),
+                shape = RoundedCornerShape(12.dp),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp)
+            )
+        }
         Spacer(Modifier.height(10.dp))
         LiquidButton(
-            onClick = { viewModel.login(input) },
+            onClick = { viewModel.login(provider.id, inputs) },
             backdrop = backdrop,
-            enabled = input.isNotBlank() && !ps.isLoading,
-            surfaceColor = MiniMaxColor,
+            enabled = inputs.all { it.isNotBlank() } && !ps.isLoading,
+            surfaceColor = provider.color,
             modifier = Modifier.fillMaxWidth().height(42.dp)
         ) {
             if (ps.isLoading) {
@@ -106,7 +243,7 @@ private fun LoginArea(ps: ProviderState, backdrop: Backdrop, viewModel: ExtraQuo
             Text(ps.error!!, color = ErrorColor, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
         }
         Text(
-            "国内：platform.minimaxi.com → 接口密钥；国际：platform.minimax.io → API Keys。粘贴 sk-cp- 开头的 Token Plan 密钥",
+            provider.hint,
             color = Color(0xFF5A5A6E),
             fontSize = 10.sp,
             modifier = Modifier.padding(top = 8.dp)
@@ -114,10 +251,25 @@ private fun LoginArea(ps: ProviderState, backdrop: Backdrop, viewModel: ExtraQuo
     }
 }
 
+private val ExtraProvider.credPlaceholders: List<String>
+    get() = when (this) {
+        ExtraProvider.MINIMAX -> listOf("sk-cp-...")
+        ExtraProvider.GLM -> listOf("xxxxxxxx.yyyyyyyy")
+        ExtraProvider.KIMI -> listOf("sk-kimi-...")
+        ExtraProvider.DEEPSEEK -> listOf("sk-...")
+        ExtraProvider.INFINI -> listOf("sk-cp-...")
+        ExtraProvider.BAILIAN -> listOf("sk-...（DashScope 业务 Key）")
+        ExtraProvider.ARK -> listOf("AKTPL...（AccessKey ID）", "Secret AccessKey")
+    }
+
 // ─── 已接入：状态行 + 分组明细 ───
 
 @Composable
-private fun LoggedArea(ps: ProviderState, viewModel: ExtraQuotaViewModel) {
+private fun LoggedArea(
+    provider: ExtraProvider,
+    ps: ProviderState,
+    viewModel: ExtraQuotaViewModel
+) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -126,24 +278,24 @@ private fun LoggedArea(ps: ProviderState, viewModel: ExtraQuotaViewModel) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                 if (ps.isLoading) {
-                    CircularProgressIndicator(Modifier.size(14.dp), color = MiniMaxColor, strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(14.dp), color = provider.color, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
                 if (ps.account != null) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(MiniMaxColor.copy(alpha = 0.16f))
+                            .background(provider.color.copy(alpha = 0.16f))
                             .padding(horizontal = 9.dp, vertical = 3.dp)
                     ) {
-                        Text(ps.account!!, fontSize = 10.sp, color = MiniMaxColor, maxLines = 1)
+                        Text(ps.account!!, fontSize = 10.sp, color = provider.color, maxLines = 1)
                     }
                 }
             }
-            IconButton(onClick = { viewModel.refresh() }, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = { viewModel.refresh(provider.id) }, modifier = Modifier.size(30.dp)) {
                 Icon(Icons.Filled.Refresh, "刷新", Modifier.size(16.dp), tint = MutedColor)
             }
-            IconButton(onClick = { viewModel.logout() }, modifier = Modifier.size(30.dp)) {
+            IconButton(onClick = { viewModel.logout(provider.id) }, modifier = Modifier.size(30.dp)) {
                 Icon(Icons.Filled.Logout, "解绑", Modifier.size(15.dp), tint = MutedColor)
             }
         }
@@ -168,7 +320,7 @@ private fun LoggedArea(ps: ProviderState, viewModel: ExtraQuotaViewModel) {
             Spacer(Modifier.height(8.dp))
             bars.forEachIndexed { idx, bar ->
                 if (idx > 0) Spacer(Modifier.height(12.dp))
-                BarRow(bar, MiniMaxColor)
+                BarRow(bar, provider.color)
             }
         }
 

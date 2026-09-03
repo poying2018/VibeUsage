@@ -11,7 +11,10 @@ import ai.vibecafe.usage.stats.ToolDetail
 import ai.vibecafe.usage.ui.anim.AnimatedCounter
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
 import ai.vibecafe.usage.ui.ag.AgPanelScreen
+import ai.vibecafe.usage.ui.ag.ExtraProvider
 import ai.vibecafe.usage.ui.ag.ProviderPage
+import ai.vibecafe.usage.ui.ag.QuotaOption
+import ai.vibecafe.usage.ui.ag.QuotaSwitcher
 import ai.vibecafe.usage.ui.ag.AgPanelViewModel
 import ai.vibecafe.usage.ui.charts.DonutChart
 import ai.vibecafe.usage.ui.charts.DonutSlice
@@ -134,8 +137,10 @@ private val RangeValues = listOf(
 /** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
 private val MetricLabels = listOf("金额", "Tokens")
 
-/** 额度页平台切换标签：同为稳定引用 */
-private val QuotaTabLabels = listOf("反重力", "MiniMax")
+/** 额度页供应商下拉选项：反重力 + 凭据型平台（同为稳定引用） */
+private val QuotaOptions: List<QuotaOption> =
+    listOf(QuotaOption("反重力", Color(0xFF9B6CFF))) +
+        ExtraProvider.entries.map { QuotaOption(it.title, it.color) }
 
 private val APP_VERSION = "v" + BuildConfig.VERSION_NAME
 
@@ -172,7 +177,7 @@ fun DashboardScreen(
     var bgPath by rememberSaveable { mutableStateOf(BackgroundStore.get(context)) }
     var showSettings by rememberSaveable { mutableStateOf(false) }  // 设置独立页（底部导航 Tab 3）
     var showAgPanel by rememberSaveable { mutableStateOf(false) }  // 反重力额度面板切换
-    var quotaTab by rememberSaveable { mutableStateOf(0) }  // 额度页平台切换：0 反重力 / 1 MiniMax（旧版本存档可能越界，使用处钳制）
+    var quotaTab by rememberSaveable { mutableStateOf(0) }  // 额度页平台切换：0 反重力 / 1+ ExtraProvider（旧存档可能越界，使用处钳制）
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
     val agPanelViewModel: AgPanelViewModel = viewModel()  // 与 AgPanelScreen 共享同一实例
@@ -287,22 +292,23 @@ fun DashboardScreen(
                 )
             } else if (showAgPanel) {
                 Column {
-                    // 平台切换器：每个工具独占一个页面（与概览页时间选择器同款液态玻璃控件；
-                    // 列本身已有 18dp 水平内边距，这里不再叠加）
-                    LiquidGlassSegmentedControl(
-                        items = QuotaTabLabels,
-                        selectedIndex = quotaTab.coerceAtMost(QuotaTabLabels.lastIndex),
+                    // 平台切换器：液态玻璃下拉。菜单只能用页面 backdrop——
+                    // scrimBackdrop 含 contentBackdrop 捕获层，而本切换器就在捕获子树内，
+                    // 自己画自己会让 RenderNode prepare 无限递归（RenderThread 栈溢出闪退）
+                    QuotaSwitcher(
+                        options = QuotaOptions,
+                        selectedIndex = quotaTab.coerceAtMost(QuotaOptions.lastIndex),
                         onSelect = { idx ->
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             quotaTab = idx
                         },
-                        backdrop = backdrop,
-                        height = 44.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    when (quotaTab.coerceAtMost(QuotaTabLabels.lastIndex)) {
-                        1 -> ProviderPage(backdrop = backdrop)
-                        else -> AgPanelScreen(backdrop = backdrop)
+                        buttonBackdrop = backdrop,
+                        menuBackdrop = backdrop
+                    ) {
+                        when (val tab = quotaTab.coerceAtMost(QuotaOptions.lastIndex)) {
+                            0 -> AgPanelScreen(backdrop = backdrop)
+                            else -> ProviderPage(ExtraProvider.entries[tab - 1], backdrop = backdrop)
+                        }
                     }
                 }
             } else {
