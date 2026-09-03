@@ -5,10 +5,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import ai.vibecafe.usage.data.ds.DsApiClient
 import ai.vibecafe.usage.data.ds.DsPanelState
+import com.google.gson.Gson
+import com.google.gson.JsonObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 /**
  * DS+ Milky 风格面板 ViewModel。
@@ -21,17 +24,40 @@ class DsPanelViewModel(application: Application) : AndroidViewModel(application)
 
     private val prefs = application.getSharedPreferences("ds_panel", Application.MODE_PRIVATE)
 
+    private val gson = Gson()
+
     init {
         val savedKey = prefs.getString("api_key", null)
         if (!savedKey.isNullOrBlank()) {
-            _state.value = _state.value.copy(isLoggedIn = true, apiKey = savedKey)
+            _state.value = _state.value.copy(isLoggedIn = true, apiKey = sanitizeKey(savedKey))
             loadBalance()
         }
     }
 
+    /**
+     * DeepSeek Key 只含可见 ASCII。从网页/聊天工具复制时经常混入零宽空格、
+     * 不换行空格、换行等不可见字符，肉眼看不出来但会被服务器判为无效 Key，
+     * 这里统一过滤，只保留 0x21–0x7E。
+     */
+    private fun sanitizeKey(raw: String): String = raw.filter { it in '!'..'~' }
+
+    /** 透出服务器返回的错误说明（含它实际收到的 Key 末 4 位），便于自查。 */
+    private fun serverMessage(e: HttpException): String? = try {
+        val body = e.response()?.errorBody()?.string()
+        val err = gson.fromJson(body, JsonObject::class.java)?.getAsJsonObject("error")
+        err?.get("message")?.takeIf { it.isJsonPrimitive }?.asString
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun errorText(e: Exception): String = when (e) {
+        is HttpException -> "查询失败（HTTP ${e.code()}）：" + (serverMessage(e) ?: "服务器未返回具体原因")
+        else -> "查询失败：${e.localizedMessage ?: "未知错误"}"
+    }
+
     /** 用 DeepSeek API Key 登录（实际是验证 Key 并查询余额）。 */
     fun login(apiKey: String) {
-        val key = apiKey.trim()
+        val key = sanitizeKey(apiKey)
         if (key.isBlank()) {
             _state.value = _state.value.copy(error = "请输入 API Key")
             return
@@ -71,7 +97,7 @@ class DsPanelViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isLoading = false,
-                    error = "查询失败：${e.localizedMessage ?: "未知错误"}（API Key 可能无效）"
+                    error = errorText(e)
                 )
             }
         }
@@ -120,7 +146,7 @@ class DsPanelViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isLoading = false,
-                    error = "查询失败：${e.localizedMessage ?: "未知错误"}"
+                    error = errorText(e)
                 )
             }
         }
