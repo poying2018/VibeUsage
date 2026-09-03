@@ -1,4 +1,4 @@
-﻿package ai.vibecafe.usage.ui
+package ai.vibecafe.usage.ui
 
 import ai.vibecafe.usage.BuildConfig
 import ai.vibecafe.usage.R

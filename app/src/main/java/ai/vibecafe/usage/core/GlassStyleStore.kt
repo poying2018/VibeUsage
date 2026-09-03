@@ -6,10 +6,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 /**
- * 液态玻璃全局样式（LockScreen 配方）。
+ * 液态玻璃全局样式（catalog 完整配方：磨砂基底 + lens 折射 + 高光投影）。
  *
- * 配方来自 kyant catalog 的 LockScreen 演示：
- * drawPlainBackdrop + colorControls(亮度/对比度/饱和度) + blur + 半透明白叠加。
+ * 磨砂基底来自 kyant catalog 的 LockScreen 演示；自 v2.12 玻璃面补齐
+ * lens/Highlight/Shadow 后，默认值改为「增强」方向：亮度归零、对比度 1.0
+ * （不再压平背景）、白叠加降到 0.15，让背景色透过玻璃保持鲜亮。
  * 所有玻璃面（glassCard / glassRow / glassTile）统一从这里取参，
  * 设置页的「液态玻璃」卡片修改后全局实时生效。
  *
@@ -17,12 +18,12 @@ import androidx.compose.runtime.setValue
  */
 object GlassStyleStore {
 
-    /** LockScreen 配方参数。 */
+    /** 磨砂基底参数。 */
     data class GlassStyle(
-        val brightness: Float = -0.10f,   // 亮度 -0.5..0.5
-        val contrast: Float = 0.75f,      // 对比度 0.5..1.5
-        val saturation: Float = 1.5f,     // 饱和度 0..2
-        val whiteOverlay: Float = 0.25f,  // 白色叠加 0..0.5（backdrop 上的磨砂白）
+        val brightness: Float = 0f,       // 亮度 -0.5..0.5
+        val contrast: Float = 1f,         // 对比度 0.5..1.5（1 = 不改变背景对比度）
+        val saturation: Float = 1.5f,     // 饱和度 0..2（= vibrancy）
+        val whiteOverlay: Float = 0.15f,  // 白色叠加 0..0.5（backdrop 上的磨砂白）
         val blurCardDp: Float = 8f        // 卡片模糊 0..32dp；行/磁贴按比例缩小
     ) {
         val blurRowDp: Float get() = (blurCardDp * 0.7f).coerceAtLeast(4f)

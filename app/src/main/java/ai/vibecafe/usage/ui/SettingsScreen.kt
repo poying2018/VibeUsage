@@ -53,6 +53,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 
 /**
  * 独立设置页（底部导航第 3 个 Tab）。
@@ -104,11 +106,15 @@ fun SettingsScreen(
 
         // —— 外观 ——
         SectionLabel("外观")
+        // 卡片把纯玻璃表面导出为 backdrop；卡内玻璃芯片取样「页面 + 卡片表面」组合层，
+        // 折射/模糊到真实盖住的内容（exportedBackdrop 不含内容层，无自引用递归风险）
+        val lookCardSurface = rememberLayerBackdrop()
+        val chipBackdrop = rememberCombinedBackdrop(backdrop, lookCardSurface)
         Column(
             Modifier
                 .fillMaxWidth()
                 .fadeSlideIn(40)
-                .glassCard(backdrop, cornerRadius = 26.dp)
+                .glassCard(backdrop, cornerRadius = 26.dp, exportedBackdrop = lookCardSurface)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -127,7 +133,7 @@ fun SettingsScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeMode.entries.forEach { mode ->
                     ThemeChip(
-                        backdrop = backdrop,
+                        backdrop = chipBackdrop,
                         mode = mode,
                         selected = mode == themeMode,
                         onClick = { onThemeModeChange(mode) },
@@ -164,13 +170,16 @@ fun SettingsScreen(
             }
         }
 
-        // —— 液态玻璃（LockScreen 配方，全局实时生效）——
+        // —— 液态玻璃（catalog 完整配方，全局实时生效）——
         SectionLabel("液态玻璃")
+        // 滑杆/滑块是卡内嵌套玻璃：取样「页面 + 卡片表面」组合层（同外观卡）
+        val styleCardSurface = rememberLayerBackdrop()
+        val sliderBackdrop = rememberCombinedBackdrop(backdrop, styleCardSurface)
         Column(
             Modifier
                 .fillMaxWidth()
                 .fadeSlideIn(120)
-                .glassCard(backdrop, cornerRadius = 26.dp)
+                .glassCard(backdrop, cornerRadius = 26.dp, exportedBackdrop = styleCardSurface)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -180,7 +189,7 @@ fun SettingsScreen(
                 Column {
                     Text("液态玻璃", style = GlassText.Body)
                     Text(
-                        "LockScreen 配方 · 全部玻璃面板实时生效",
+                        "折射 + 磨砂配方 · 全部玻璃面板实时生效",
                         style = GlassText.Meta,
                         color = p.InkMid
                     )
@@ -189,7 +198,7 @@ fun SettingsScreen(
             val style = GlassStyleStore.style
             val context = LocalContext.current
             GlassStyleSliderRow(
-                backdrop = backdrop,
+                backdrop = sliderBackdrop,
                 label = "亮度",
                 valueText = String.format("%.2f", style.brightness),
                 value = style.brightness,
@@ -197,7 +206,7 @@ fun SettingsScreen(
                 onChange = { GlassStyleStore.set(context, style.copy(brightness = it)) }
             )
             GlassStyleSliderRow(
-                backdrop = backdrop,
+                backdrop = sliderBackdrop,
                 label = "对比度",
                 valueText = String.format("%.2f", style.contrast),
                 value = style.contrast,
@@ -205,7 +214,7 @@ fun SettingsScreen(
                 onChange = { GlassStyleStore.set(context, style.copy(contrast = it)) }
             )
             GlassStyleSliderRow(
-                backdrop = backdrop,
+                backdrop = sliderBackdrop,
                 label = "饱和度",
                 valueText = String.format("%.2f", style.saturation),
                 value = style.saturation,
@@ -213,7 +222,7 @@ fun SettingsScreen(
                 onChange = { GlassStyleStore.set(context, style.copy(saturation = it)) }
             )
             GlassStyleSliderRow(
-                backdrop = backdrop,
+                backdrop = sliderBackdrop,
                 label = "模糊",
                 valueText = "${style.blurCardDp.toInt()}dp",
                 value = style.blurCardDp,
@@ -221,7 +230,7 @@ fun SettingsScreen(
                 onChange = { GlassStyleStore.set(context, style.copy(blurCardDp = it)) }
             )
             GlassStyleSliderRow(
-                backdrop = backdrop,
+                backdrop = sliderBackdrop,
                 label = "白色叠加",
                 valueText = "${(style.whiteOverlay * 100).toInt()}%",
                 value = style.whiteOverlay,
@@ -232,7 +241,7 @@ fun SettingsScreen(
                 backdrop = backdrop,
                 icon = Icons.Filled.RestartAlt,
                 title = "恢复默认",
-                subtitle = "还原 LockScreen 初始参数",
+                subtitle = "还原默认玻璃参数",
                 showChevron = false,
                 onClick = { GlassStyleStore.set(context, GlassStyleStore.Default) }
             )
