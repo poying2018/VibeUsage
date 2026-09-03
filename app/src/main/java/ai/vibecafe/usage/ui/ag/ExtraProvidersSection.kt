@@ -121,12 +121,12 @@ fun QuotaSwitcher(
         }
 
         if (menuVisible) {
-            // 轻遮罩：点击任意处收起；透明度随长出进度淡入淡出
+            // 透明点击捕获层：点面板外任意处收起。不加暗幕——半透明遮罩只覆盖内容区，
+            // 与未覆盖区域（留白/下半屏）明暗不一致，会让整屏出现矩形"颜色分层"（参考组件同样无暗幕）
             Box(
                 Modifier
                     .matchParentSize()
-                    .graphicsLayer { alpha = (reveal.value * 2.5f).coerceIn(0f, 1f) }
-                    .background(Color.Black.copy(alpha = 0.14f))
+                    .background(Color.Transparent)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
