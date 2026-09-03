@@ -10,8 +10,9 @@ import ai.vibecafe.usage.stats.TimeRange
 import ai.vibecafe.usage.stats.ToolDetail
 import ai.vibecafe.usage.ui.anim.AnimatedCounter
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
-import ai.vibecafe.usage.ui.ds.DsPanelScreen
-import ai.vibecafe.usage.ui.ds.DsPanelViewModel
+import ai.vibecafe.usage.ui.ag.AgPanelScreen
+import ai.vibecafe.usage.ui.ag.ExtraProvidersSection
+import ai.vibecafe.usage.ui.ag.AgPanelViewModel
 import ai.vibecafe.usage.ui.charts.DonutChart
 import ai.vibecafe.usage.ui.charts.DonutSlice
 import ai.vibecafe.usage.ui.charts.TrendChart
@@ -70,9 +71,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -167,10 +168,10 @@ fun DashboardScreen(
 
     var bgPath by rememberSaveable { mutableStateOf(BackgroundStore.get(context)) }
     var showSettings by rememberSaveable { mutableStateOf(false) }  // 设置独立页（底部导航 Tab 3）
-    var showDsPanel by rememberSaveable { mutableStateOf(false) }  // DS+ Milky 面板切换
+    var showAgPanel by rememberSaveable { mutableStateOf(false) }  // 反重力额度面板切换
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
-    val dsPanelViewModel: DsPanelViewModel = viewModel()  // 与 DsPanelScreen 共享同一实例
+    val agPanelViewModel: AgPanelViewModel = viewModel()  // 与 AgPanelScreen 共享同一实例
     val wide = isWideScreen()
     val pullState = rememberPullToRefreshState()
 
@@ -213,7 +214,7 @@ fun DashboardScreen(
             state = pullState,
             isRefreshing = state.isRefreshing,
             onRefresh = {
-                if (showDsPanel) dsPanelViewModel.loadBalance()
+                if (showAgPanel) agPanelViewModel.refresh()
                 else onRefresh()
             },
             modifier = Modifier.fillMaxSize(),
@@ -239,7 +240,7 @@ fun DashboardScreen(
                     // 底部留出「底部导航栏 64+14 +（概览页：时间选择条 58+10）+ 呼吸」的空间：
                     // 内容可滚动到悬浮玻璃下方被实时模糊，滚到底时最后一行仍不会被遮挡
                     bottom = insets.calculateBottomPadding() +
-                            (if (!showDsPanel && !showSettings) 176.dp else 106.dp),
+                            (if (!showAgPanel && !showSettings) 176.dp else 106.dp),
                     start = 18.dp,
                     end = 18.dp
                 ),
@@ -247,7 +248,7 @@ fun DashboardScreen(
         ) {
             Header(
                 onRefresh = {
-                    if (showDsPanel) dsPanelViewModel.loadBalance()
+                    if (showAgPanel) agPanelViewModel.refresh()
                     else onRefresh()
                 },
                 backdrop = backdrop,
@@ -280,8 +281,12 @@ fun DashboardScreen(
                     onInstallUpdate = onInstallUpdate,
                     appVersion = APP_VERSION
                 )
-            } else if (showDsPanel) {
-                DsPanelScreen(backdrop = backdrop)
+            } else if (showAgPanel) {
+                Column {
+                    AgPanelScreen(backdrop = backdrop)
+                    Spacer(Modifier.height(6.dp))
+                    ExtraProvidersSection(backdrop = backdrop)
+                }
             } else {
                 // ---- 总消耗卡片 ----
             if (wide) {
@@ -415,7 +420,7 @@ fun DashboardScreen(
                     }
                 }
             }
-        } // 结束 if (showDsPanel) 的 else 分支
+        } // 结束 if (showAgPanel) 的 else 分支
         }
         } // PullToRefreshBox 结束
         } // 内容导出 Box 结束
@@ -423,7 +428,7 @@ fun DashboardScreen(
         // ---- 底部悬浮时间选择器（DS+ 面板时不显示；不贴边，留出呼吸空间）----
         // 采样纯页面背景（与金额/Tokens 切换器同源），玻璃通透、折射彩色光斑，
         // Q 弹滑动效果与切换器观感一致；不再磨砂模糊滚动内容
-        if (!showDsPanel && !showSettings) {
+        if (!showAgPanel && !showSettings) {
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
@@ -444,9 +449,9 @@ fun DashboardScreen(
             }
         }
 
-        // ---- 底部液态玻璃导航栏（酷安同款 LiquidBottomTabs）：概览 / DeepSeek / 设置 ----
+        // ---- 底部液态玻璃导航栏（酷安同款 LiquidBottomTabs）：概览 / 额度 / 设置 ----
         // 三层结构：胶囊玻璃壳(64dp, blur8+lens24) -> 隐藏的 Accent 色内容层(供滑块折射) ->
-        // 纯折射滑块(56dp, 按压折射拉满+色散)。选中索引由既有状态派生：设置展开=2 / DS面板=1 / 概览=0，
+        // 纯折射滑块(56dp, 按压折射拉满+色散)。选中索引由既有状态派生：设置展开=2 / 额度面板=1 / 概览=0，
         // 与表头按钮、设置菜单状态完全互通。
         // 跟随应用内主题（InkHi：亮色≈近黑 / 暗色≈近白）
         val tabContentColor = LocalGlassPalette.current.InkHi
@@ -454,16 +459,16 @@ fun DashboardScreen(
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             when (idx) {
                 0 -> {
-                    showDsPanel = false
+                    showAgPanel = false
                     showSettings = false
                 }
                 1 -> {
-                    showDsPanel = true
+                    showAgPanel = true
                     showSettings = false
                 }
                 else -> {
                     showSettings = true
-                    showDsPanel = false
+                    showAgPanel = false
                 }
             }
         }
@@ -478,7 +483,7 @@ fun DashboardScreen(
                 selectedTabIndex = {
                     when {
                         showSettings -> 2
-                        showDsPanel -> 1
+                        showAgPanel -> 1
                         else -> 0
                     }
                 },
@@ -497,12 +502,12 @@ fun DashboardScreen(
                 }
                 LiquidBottomTab({ onSelectTab(1) }) {
                     Icon(
-                        Icons.AutoMirrored.Filled.Chat,
+                        Icons.Filled.PieChart,
                         null,
                         Modifier.size(22.dp),
                         tint = tabContentColor
                     )
-                    Text("DeepSeek", style = TextStyle(tabContentColor, 11.sp))
+                    Text("额度", style = TextStyle(tabContentColor, 11.sp))
                 }
                 LiquidBottomTab({ onSelectTab(2) }) {
                     Icon(
@@ -637,7 +642,7 @@ private fun Header(
                 onClick = onRefresh,
                 spinning = refreshing
             )
-            // 设置 / DeepSeek 入口已统一移至底部液态玻璃导航栏，避免重复入口
+            // 设置 / 额度入口已统一移至底部液态玻璃导航栏，避免重复入口
         }
     }
 }
