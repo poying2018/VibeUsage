@@ -22,9 +22,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ai.vibecafe.usage.data.ag.AgQuotaApi
 import ai.vibecafe.usage.data.ag.AgQuotaApi.QuotaBucket
+import ai.vibecafe.usage.data.quota.AgGoogleOAuth
 import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.glassCard
 import com.kyant.backdrop.Backdrop
+import kotlinx.coroutines.launch
 
 /** 反重力主题色（蓝紫渐变）。 */
 private val AgBlue = Color(0xFF4A7DFF)
@@ -55,7 +57,8 @@ fun AgPanelScreen(
                 isLoading = state.isLoading,
                 error = state.error,
                 onLogin = { viewModel.login(it) },
-                onClearError = { viewModel.clearError() }
+                onClearError = { viewModel.clearError() },
+                onOAuthError = { viewModel.setOAuthError(it) }
             )
         } else {
             AgLoggedInContent(state, backdrop, onRefresh = { viewModel.refresh() }, onLogout = { viewModel.logout() })
@@ -71,9 +74,14 @@ private fun AgLoginCard(
     isLoading: Boolean,
     error: String?,
     onLogin: (String) -> Unit,
-    onClearError: () -> Unit
+    onClearError: () -> Unit,
+    onOAuthError: (String) -> Unit
 ) {
     var input by remember { mutableStateOf("") }
+    var oauthBusy by remember { mutableStateOf(false) }
+    var showManual by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Box(
         modifier = Modifier
@@ -123,44 +131,30 @@ private fun AgLoginCard(
                 modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
             )
 
-            // 账号 JSON / refresh_token 输入
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it; onClearError() },
-                label = { Text("账号 JSON 或 refresh_token") },
-                placeholder = { Text("{\"refresh_token\": \"1//...\"}") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AgBlue,
-                    unfocusedBorderColor = Color(0xFF3A3A4E),
-                    cursorColor = AgBlue,
-                    focusedLabelColor = AgBlue,
-                    unfocusedLabelColor = AgMuted,
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
-                ),
-                shape = RoundedCornerShape(14.dp)
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            // 错误提示
-            if (error != null) {
-                Text(
-                    error,
-                    color = AgRed,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-            }
-
-            // 查询按钮：液态玻璃胶囊 + 蓝紫渐变表面
+            // 一键授权：浏览器 Google 登录，loopback 捕获授权码，凭据自动保存
             LiquidButton(
-                onClick = { onLogin(input) },
+                onClick = {
+                    if (oauthBusy || isLoading) return@LiquidButton
+                    oauthBusy = true
+                    onClearError()
+                    scope.launch {
+                        try {
+                            val l = AgGoogleOAuth.login(context)
+                            onLogin(
+                                org.json.JSONObject().apply {
+                                    put("refresh_token", l.refreshToken)
+                                    l.email?.let { put("email", it) }
+                                }.toString()
+                            )
+                        } catch (e: Exception) {
+                            onOAuthError("授权失败：${e.message?.take(140) ?: "未知错误"}")
+                        } finally {
+                            oauthBusy = false
+                        }
+                    }
+                },
                 backdrop = backdrop,
-                enabled = input.isNotBlank() && !isLoading,
+                enabled = !oauthBusy && !isLoading,
                 surfaceBrush = Brush.horizontalGradient(
                     listOf(AgBlue, AgPurple),
                     startX = 0f,
@@ -168,12 +162,14 @@ private fun AgLoginCard(
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                if (isLoading) {
+                if (oauthBusy) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
                         color = Color.White,
                         strokeWidth = 2.dp
                     )
+                    Spacer(Modifier.width(8.dp))
+                    Text("等待浏览器授权…", fontSize = 15.sp, color = Color.White)
                 } else {
                     Icon(
                         imageVector = Icons.Filled.RocketLaunch,
@@ -182,18 +178,78 @@ private fun AgLoginCard(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("查询额度", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                    Text("Google 一键授权", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Color.White)
                 }
             }
 
-            // 提示
-            Text(
-                "粘贴 Antigravity.Tools 导出的账号 JSON（.antigravity_tools\\accounts\\*.json），或直接粘贴 refresh_token",
-                color = Color(0xFF5A5A6E),
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 12.dp)
-            )
+            // 错误提示
+            if (error != null) {
+                Text(
+                    error,
+                    color = AgRed,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
+
+            // 手动粘贴（降级方式）
+            TextButton(onClick = { showManual = !showManual }) {
+                Text(
+                    if (showManual) "收起手动输入" else "手动粘贴账号 JSON / refresh_token",
+                    color = AgMuted,
+                    fontSize = 12.sp
+                )
+            }
+
+            if (showManual) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it; onClearError() },
+                    label = { Text("账号 JSON 或 refresh_token") },
+                    placeholder = { Text("{\"refresh_token\": \"1//...\"}") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AgBlue,
+                        unfocusedBorderColor = Color(0xFF3A3A4E),
+                        cursorColor = AgBlue,
+                        focusedLabelColor = AgBlue,
+                        unfocusedLabelColor = AgMuted,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(14.dp)
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                LiquidButton(
+                    onClick = { onLogin(input) },
+                    backdrop = backdrop,
+                    enabled = input.isNotBlank() && !isLoading,
+                    surfaceColor = AgBlue,
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("查询额度", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                    }
+                }
+
+                Text(
+                    "粘贴 Antigravity.Tools 导出的账号 JSON（.antigravity_tools\\accounts\\*.json），或直接粘贴 refresh_token",
+                    color = Color(0xFF5A5A6E),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
         }
     }
 }

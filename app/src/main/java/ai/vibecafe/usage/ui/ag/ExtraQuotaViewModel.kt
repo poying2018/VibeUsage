@@ -184,6 +184,10 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
 
     fun clearError(provider: String) = update(provider) { it.copy(error = null) }
 
+    /** 一键授权失败时由 UI 层上报。 */
+    fun setProviderError(provider: String, msg: String) =
+        update(provider) { it.copy(error = msg, isLoading = false) }
+
     // ─── 内部 ───
 
     /** 缓存的 access_token（1 小时内复用），否则回退原始 token。 */

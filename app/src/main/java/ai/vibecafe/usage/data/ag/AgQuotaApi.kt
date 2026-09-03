@@ -39,6 +39,9 @@ object AgQuotaApi {
 
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
+    private const val BROWSER_UA =
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36"
+
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -51,7 +54,7 @@ object AgQuotaApi {
 
     // ─── 数据模型 ───
 
-    data class TokenResult(val accessToken: String, val expiresInSec: Long)
+    data class TokenResult(val accessToken: String, val expiresInSec: Long, val refreshToken: String? = null)
 
     data class AssistInfo(val projectId: String?, val tier: String?)
 
@@ -73,6 +76,7 @@ object AgQuotaApi {
     private data class TokenResponse(
         @SerializedName("access_token") val accessToken: String? = null,
         @SerializedName("expires_in") val expiresIn: Long = 3600,
+        @SerializedName("refresh_token") val refreshToken: String? = null,
         @SerializedName("error") val error: String? = null,
         @SerializedName("error_description") val errorDescription: String? = null,
     )
@@ -98,6 +102,87 @@ object AgQuotaApi {
             @SerializedName("resetTime") val resetTime: String? = null,
             @SerializedName("displayName") val displayName: String? = null,
         )
+    }
+
+    // ─── 一键授权（Google OAuth PKCE loopback，与 Antigravity.Tools 桌面版同流程）───
+
+    private const val AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+    const val REDIRECT_URI = "http://localhost:51121/callback"
+    private const val SCOPE =
+        "openid https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email"
+
+    /** 构造 Google 授权页地址（浏览器打开，回调打到本地 51121）。 */
+    fun buildAuthorizeUrl(challenge: String, state: String): String =
+        AUTHORIZE_URL +
+            "?client_id=${java.net.URLEncoder.encode(CLIENT_ID, "UTF-8")}" +
+            "&redirect_uri=${java.net.URLEncoder.encode(REDIRECT_URI, "UTF-8")}" +
+            "&response_type=code" +
+            "&scope=${java.net.URLEncoder.encode(SCOPE, "UTF-8")}" +
+            "&access_type=offline&prompt=consent" +
+            "&code_challenge=$challenge&code_challenge_method=S256" +
+            "&state=${java.net.URLEncoder.encode(state, "UTF-8")}"
+
+    /** 授权码兑换令牌：经内置中转（secret 由服务端补），失败回退直连。 */
+    fun exchangeCode(code: String, verifier: String): TokenResult {
+        try {
+            val form = FormBody.Builder()
+                .add("grant_type", "authorization_code")
+                .add("code", code)
+                .add("code_verifier", verifier)
+                .add("redirect_uri", REDIRECT_URI)
+                .build()
+            val resp = post("$BUILTIN_PROXY/token", form, bearer = null, browserUa = true)
+            return parseToken(resp)
+        } catch (e: AgException) {
+            throw e
+        } catch (_: Exception) {
+            // 中转不可用 → 直连（需能访问 Google）
+        }
+        val form = FormBody.Builder()
+            .add("grant_type", "authorization_code")
+            .add("code", code)
+            .add("code_verifier", verifier)
+            .add("redirect_uri", REDIRECT_URI)
+            .add("client_id", CLIENT_ID)
+            .add("client_secret", CLIENT_SECRET)
+            .build()
+        val resp = post(TOKEN_URL, form, bearer = null, browserUa = true)
+        return parseToken(resp)
+    }
+
+    private fun parseToken(resp: String): TokenResult {
+        val parsed = gson.fromJson(resp, TokenResponse::class.java)
+            ?: throw AgException(0, "响应解析失败")
+        if (parsed.accessToken == null) {
+            throw AgException(401, parsed.errorDescription ?: parsed.error ?: "授权兑换失败")
+        }
+        return TokenResult(parsed.accessToken, parsed.expiresIn, parsed.refreshToken)
+    }
+
+    /** 拉取账号邮箱（非关键信息，失败返回 null）。 */
+    fun fetchEmail(accessToken: String): String? {
+        val target = "https://www.googleapis.com/oauth2/v2/userinfo"
+        val urls = listOf(
+            "$BUILTIN_PROXY/proxy?url=" + java.net.URLEncoder.encode(target, "UTF-8"),
+            target,
+        )
+        for (u in urls) {
+            try {
+                val builder = Request.Builder().url(u).get()
+                    .header("Authorization", "Bearer $accessToken")
+                    .header("User-Agent", BROWSER_UA)
+                client.newCall(builder.build()).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val text = resp.body?.string().orEmpty()
+                    val obj = gson.fromJson(text, com.google.gson.JsonObject::class.java) ?: return@use
+                    val email = obj.get("email")?.asString ?: return@use
+                    return email.ifEmpty { null }
+                }
+            } catch (_: Exception) {
+                // 换线路重试
+            }
+        }
+        return null
     }
 
     // ─── 高层操作 ───

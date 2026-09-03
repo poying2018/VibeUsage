@@ -114,6 +114,11 @@ class AgPanelViewModel(application: Application) : AndroidViewModel(application)
         _state.value = _state.value.copy(error = null)
     }
 
+    /** 一键授权失败时由 UI 层上报。 */
+    fun setOAuthError(msg: String) {
+        _state.value = _state.value.copy(error = msg)
+    }
+
     fun logout() {
         prefs.edit().clear().apply()
         _state.value = AgPanelState()

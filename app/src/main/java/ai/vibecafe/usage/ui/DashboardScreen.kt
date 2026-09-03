@@ -11,7 +11,8 @@ import ai.vibecafe.usage.stats.ToolDetail
 import ai.vibecafe.usage.ui.anim.AnimatedCounter
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
 import ai.vibecafe.usage.ui.ag.AgPanelScreen
-import ai.vibecafe.usage.ui.ag.ExtraProvidersSection
+import ai.vibecafe.usage.ui.ag.ExtraProvider
+import ai.vibecafe.usage.ui.ag.ProviderPage
 import ai.vibecafe.usage.ui.ag.AgPanelViewModel
 import ai.vibecafe.usage.ui.charts.DonutChart
 import ai.vibecafe.usage.ui.charts.DonutSlice
@@ -134,6 +135,9 @@ private val RangeValues = listOf(
 /** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
 private val MetricLabels = listOf("金额", "Tokens")
 
+/** 额度页平台切换标签：同为稳定引用 */
+private val QuotaTabLabels = listOf("反重力", "Codex", "Claude", "MiniMax")
+
 private val APP_VERSION = "v" + BuildConfig.VERSION_NAME
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -169,6 +173,7 @@ fun DashboardScreen(
     var bgPath by rememberSaveable { mutableStateOf(BackgroundStore.get(context)) }
     var showSettings by rememberSaveable { mutableStateOf(false) }  // 设置独立页（底部导航 Tab 3）
     var showAgPanel by rememberSaveable { mutableStateOf(false) }  // 反重力额度面板切换
+    var quotaTab by rememberSaveable { mutableStateOf(0) }  // 额度页平台切换：0 反重力 / 1 Codex / 2 Claude / 3 MiniMax
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
     val agPanelViewModel: AgPanelViewModel = viewModel()  // 与 AgPanelScreen 共享同一实例
@@ -283,9 +288,25 @@ fun DashboardScreen(
                 )
             } else if (showAgPanel) {
                 Column {
-                    AgPanelScreen(backdrop = backdrop)
-                    Spacer(Modifier.height(6.dp))
-                    ExtraProvidersSection(backdrop = backdrop)
+                    // 平台切换器：每个工具独占一个页面（与概览页时间选择器同款液态玻璃控件；
+                    // 列本身已有 18dp 水平内边距，这里不再叠加）
+                    LiquidGlassSegmentedControl(
+                        items = QuotaTabLabels,
+                        selectedIndex = quotaTab,
+                        onSelect = { idx ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            quotaTab = idx
+                        },
+                        backdrop = backdrop,
+                        height = 44.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    when (quotaTab) {
+                        1 -> ProviderPage(ExtraProvider.CODEX, backdrop = backdrop)
+                        2 -> ProviderPage(ExtraProvider.CLAUDE, backdrop = backdrop)
+                        3 -> ProviderPage(ExtraProvider.MINIMAX, backdrop = backdrop)
+                        else -> AgPanelScreen(backdrop = backdrop)
+                    }
                 }
             } else {
                 // ---- 总消耗卡片 ----

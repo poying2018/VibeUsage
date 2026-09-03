@@ -16,8 +16,8 @@ import java.util.concurrent.TimeUnit
  * openai/codex 官方 CLI、CCSeva、onWatch / minimax-usage-checker）。
  *
  * chatgpt.com 与 api.anthropic.com 在大陆无法直连，默认先走内置 Cloudflare Worker
- * 中转（需 worker 白名单包含对应域名），失败自动回退直连；MiniMax 为国内可达域名，
- * 直连优先。
+ * 中转（需 worker 白名单包含对应域名），失败自动回退直连；MiniMax 为国内服务，
+ * 始终直连、不经中转（国内域名优先，失败回退国际域名）。
  */
 object ExtraQuotaApi {
 
@@ -154,7 +154,9 @@ object ExtraQuotaApi {
 
     object Claude {
         private const val USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-        private const val TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+
+        // 新版 Claude 登录/刷新统一走 platform.claude.com（claude.com/cai/oauth/authorize 流程）
+        private const val TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
         private const val CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
         data class Auth(val accessToken: String, val refreshToken: String?)
@@ -235,23 +237,25 @@ object ExtraQuotaApi {
 
     object MiniMax {
         private val URLS = listOf(
-            "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
             "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+            "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
         )
 
         /**
          * 查询额度。响应 model_remains[] 中 current_interval_usage_count /
          * current_weekly_usage_count 实为「剩余次数」（官方字段命名 bug，见 MiniMax-M2#99）。
-         * 国际域名直连优先，失败回退国内域名与中转。
+         * 国内服务始终直连不走中转：先试国内域名，单个域名失败（含业务错误）继续试下一个。
          */
         fun fetchUsage(apiKey: String): Usage {
             var lastErr: Exception? = null
+            var businessErr: QuotaException? = null
             for (url in URLS) {
                 try {
                     val resp = QuotaHttp.get(
                         url,
                         bearer = apiKey,
                         proxyFirst = false,
+                        directOnly = true,
                         ua = "MiniMax-Usage-Checker"
                     )
                     val obj = gson.fromJson(resp, JsonObject::class.java) ?: continue
@@ -304,12 +308,13 @@ object ExtraQuotaApi {
                     }
                     return Usage(null, groups)
                 } catch (e: QuotaException) {
-                    throw e  // 业务错误（如 key 无效）不换端点重试
+                    if (businessErr == null) businessErr = e
+                    lastErr = e
                 } catch (e: Exception) {
                     lastErr = e
                 }
             }
-            throw lastErr ?: QuotaException(0, "MiniMax 查询失败")
+            throw businessErr ?: lastErr ?: QuotaException(0, "MiniMax 查询失败")
         }
     }
 
@@ -364,15 +369,16 @@ internal object QuotaHttp {
 
     /**
      * [proxyFirst] = true：先走 Worker 中转（大陆可达），失败回退直连（有 VPN 时）；
-     * false 则直连优先、中转兜底。
+     * false 则直连优先、中转兜底；[directOnly] = true 时完全直连（国内服务，不经中转）。
      */
     fun get(
         url: String,
         bearer: String?,
         proxyFirst: Boolean,
         ua: String,
-        extraHeaders: Map<String, String> = emptyMap()
-    ): String = execute(url, bearer, proxyFirst, ua, extraHeaders) { u, b ->
+        extraHeaders: Map<String, String> = emptyMap(),
+        directOnly: Boolean = false
+    ): String = execute(url, bearer, proxyFirst, ua, extraHeaders, directOnly) { u, b ->
         Request.Builder().url(u).get().apply { b?.let { header("Authorization", "Bearer $it") } }.build()
     }
 
@@ -381,8 +387,9 @@ internal object QuotaHttp {
         body: okhttp3.RequestBody,
         bearer: String?,
         proxyFirst: Boolean,
-        ua: String
-    ): String = execute(url, bearer, proxyFirst, ua, emptyMap()) { u, b ->
+        ua: String,
+        directOnly: Boolean = false
+    ): String = execute(url, bearer, proxyFirst, ua, emptyMap(), directOnly) { u, b ->
         Request.Builder().url(u).post(body).apply { b?.let { header("Authorization", "Bearer $it") } }.build()
     }
 
@@ -392,10 +399,15 @@ internal object QuotaHttp {
         proxyFirst: Boolean,
         ua: String,
         extraHeaders: Map<String, String>,
+        directOnly: Boolean,
         build: (String, String?) -> Request
     ): String {
         var lastErr: Exception? = null
-        val urls = if (proxyFirst) listOf(proxied(target), target) else listOf(target, proxied(target))
+        val urls = when {
+            directOnly -> listOf(target)
+            proxyFirst -> listOf(proxied(target), target)
+            else -> listOf(target, proxied(target))
+        }
         for ((index, u) in urls.distinct().withIndex()) {
             try {
                 val req = build(u, bearer).newBuilder()

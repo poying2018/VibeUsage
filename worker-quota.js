@@ -18,9 +18,10 @@ const ALLOWED_HOSTS = new Set([
   // ── Codex（ChatGPT 计划额度 + OAuth 刷新）──
   "chatgpt.com",
   "auth.openai.com",
-  // ── Claude Code（OAuth 额度 + 令牌刷新）──
+  // ── Claude Code（OAuth 额度 + 令牌刷新/兑换）──
   "api.anthropic.com",
   "console.anthropic.com",
+  "platform.claude.com",
   // ── MiniMax（Token Plan 额度，国内域名故障时的兜底线路）──
   "api.minimax.io",
   "api.minimaxi.com",
@@ -48,12 +49,11 @@ export default {
     }
     const url = new URL(request.url);
 
-    // ---- Google OAuth refresh：服务端补 client_secret ----
+    // ---- Google OAuth：服务端补 client_secret，透传 refresh_token / authorization_code 两种流程 ----
     if (url.pathname === "/token") {
       const bodyText = await request.text();
-      const form = new URLSearchParams();
-      form.set("refresh_token", new URLSearchParams(bodyText).get("refresh_token") || "");
-      form.set("grant_type", "refresh_token");
+      const form = new URLSearchParams(bodyText);
+      if (!form.get("grant_type")) form.set("grant_type", "refresh_token");
       form.set("client_id", "1071006060591" + "-tmhssin2h21lcre235vtolojh4g403ep" + ".apps.googleusercontent.com"); // Antigravity.Tools 公开内置凭据，拆分避开 push protection 误报
       form.set("client_secret", "GOCSPX-" + "K58FWR486LdLJ1mLB8sXC4z6qDAf");
       const resp = await fetch("https://oauth2.googleapis.com/token", {
