@@ -1,10 +1,8 @@
 package ai.vibecafe.usage.ui.ag
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,7 +25,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -47,11 +47,12 @@ data class QuotaOption(val label: String, val color: Color)
 /**
  * 额度页供应商切换器（液态玻璃下拉，参考 tongzhewang 液态玻璃下拉组件的动效）：
  * - 折叠态：玻璃胶囊（色点 + 平台名），展开时原胶囊淡出放大消失
- * - 展开：菜单从按钮位置液滴式长出（scale 0.25→1、白色高光闪落定），
- *   选项行错峰上浮淡入；选中行右侧白色对勾
+ * - 展开：菜单从胶囊的**实际矩形**形变长出（测量两者尺寸做非均匀缩放，起点与胶囊严丝合缝，
+ *   弹簧过冲轻微回弹）；选项行错峰上浮淡入；选中行右侧白色对勾
+ * - 收起：同一几何的逆形变——菜单物理吸回胶囊（弹簧，非 tween），与胶囊淡入同步交接
  * - 动画进度一律在 draw 相位读取（graphicsLayer 内），动画期间零重组；
  *   禁用逐帧 Modifier.blur（RenderEffect 在 MuMu 转译层每帧重建会卡死）
- * - 点行选择并收起；点遮罩收起（收起遵循参考：直接消失）
+ * - 点行选择并收起；点遮罩/页面空白处收起（全屏收起由调用方挂载，见 expanded/onExpandedChange）
  * [menuBackdrop] 应传入叠加了内容层的合成 backdrop，菜单才能模糊到其背后的滚动内容。
  */
 @Composable
@@ -61,19 +62,23 @@ fun QuotaSwitcher(
     onSelect: (Int) -> Unit,
     buttonBackdrop: Backdrop,
     menuBackdrop: Backdrop,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     content: @Composable () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
     var menuVisible by remember { mutableStateOf(false) }
     val current = options[selectedIndex.coerceIn(0, options.lastIndex)]
     val palette = LocalGlassPalette.current
+    // 形变锚点：胶囊与菜单的实际尺寸（菜单左上角与胶囊左上角同源，缩放原点取 (0,0) 即可对位）
+    var chipSize by remember { mutableStateOf(IntSize.Zero) }
+    var menuSize by remember { mutableStateOf(IntSize.Zero) }
     // 原胶囊淡出放大（liquid 态 label 消失），弹簧回弹
     val labelAlpha by animateFloatAsState(
         targetValue = if (expanded) 0f else 1f,
         animationSpec = spring(dampingRatio = 0.8f, stiffness = 320f),
         label = "quotaLabel"
     )
-    // 菜单长出进度：0 起点（液滴）→ 1 落定，弹簧带轻微过冲
+    // 形变进度：0 = 折叠成胶囊矩形 → 1 = 完全展开，弹簧带轻微过冲
     val reveal = remember { Animatable(0f) }
     LaunchedEffect(expanded) {
         if (expanded) {
@@ -81,8 +86,8 @@ fun QuotaSwitcher(
             reveal.snapTo(0f)
             reveal.animateTo(1f, spring(dampingRatio = 0.72f, stiffness = 420f))
         } else if (menuVisible) {
-            // 收起：快速回缩后再移除，不生硬瞬灭
-            reveal.animateTo(0f, tween(150, easing = FastOutSlowInEasing))
+            // 收起：物理弹簧吸回胶囊（比展开更硬的弹簧 → 利落但仍有惯性挤压），落位后再移除
+            reveal.animateTo(0f, spring(dampingRatio = 0.82f, stiffness = 640f))
             menuVisible = false
         }
     }
@@ -90,12 +95,13 @@ fun QuotaSwitcher(
     Box(Modifier.fillMaxWidth()) {
         Column {
             LiquidButton(
-                onClick = { expanded = !expanded },
+                onClick = { onExpandedChange(!expanded) },
                 backdrop = buttonBackdrop,
                 modifier = Modifier
+                    .onSizeChanged { chipSize = it }
                     .graphicsLayer {
                         alpha = labelAlpha
-                        val s = 1f + 0.08f * (1f - labelAlpha)
+                        val s = 1f + 0.05f * (1f - labelAlpha)
                         scaleX = s
                         scaleY = s
                     }
@@ -132,21 +138,24 @@ fun QuotaSwitcher(
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
-                    ) { expanded = false }
+                    ) { onExpandedChange(false) }
             )
 
             Box(
                 Modifier
+                    .onSizeChanged { menuSize = it }
                     .graphicsLayer {
                         // draw 相位读进度：动画期间零重组（重组相位读会导致整棵子树每帧重组）
                         val p = reveal.value
-                        val s = 0.25f + 0.75f * p
-                        scaleX = s
-                        scaleY = s
-                        translationX = -28.dp.toPx() * (1f - p)
-                        translationY = -14.dp.toPx() * (1f - p)
-                        transformOrigin = TransformOrigin(0.1f, 0.4f)
-                        alpha = (p * 3f).coerceAtMost(1f)
+                        // 非均匀缩放：p=0 时菜单矩形恰好压在胶囊上（宽高比对位），展开即"从胶囊长出"
+                        val sx0 = (chipSize.width.coerceAtLeast(1).toFloat() / menuSize.width.coerceAtLeast(1))
+                            .coerceIn(0.2f, 0.9f)
+                        val sy0 = (chipSize.height.coerceAtLeast(1).toFloat() / menuSize.height.coerceAtLeast(1))
+                            .coerceIn(0.06f, 0.5f)
+                        scaleX = sx0 + (1f - sx0) * p
+                        scaleY = sy0 + (1f - sy0) * p
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        alpha = (p * 4f).coerceAtMost(1f)
                     }
             ) {
                 Column(
@@ -170,7 +179,7 @@ fun QuotaSwitcher(
                                     indication = null
                                 ) {
                                     onSelect(i)
-                                    expanded = false
+                                    onExpandedChange(false)
                                 }
                                 // 参考动效：行错峰上浮淡入；弹簧过冲让行浮过头 1~2dp 再落回（液态感）
                                 .graphicsLayer {
@@ -460,7 +469,7 @@ private fun LoggedArea(
             Spacer(Modifier.height(8.dp))
             bars.forEachIndexed { idx, bar ->
                 if (idx > 0) Spacer(Modifier.height(12.dp))
-                BarRow(bar, provider.color)
+                BarRow(bar)
             }
         }
 
@@ -501,14 +510,10 @@ private fun SectionHeader(text: String, color: Color, icon: ImageVector) {
 }
 
 @Composable
-private fun BarRow(bar: Bar, color: Color) {
+private fun BarRow(bar: Bar) {
     val palette = LocalGlassPalette.current
     val percent = bar.percentRemaining.coerceIn(0, 100)
-    val barColor = when {
-        percent >= 50 -> color
-        percent >= 20 -> Color(0xFFFFB020)
-        else -> palette.Down
-    }
+    val barColor = quotaGaugeColor(percent)
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -539,21 +544,8 @@ private fun BarRow(bar: Bar, color: Color) {
             )
         }
         Spacer(Modifier.height(6.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(50))
-                .background(palette.InkHi.copy(alpha = 0.10f))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(percent / 100f)
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(barColor)
-            )
-        }
+        // 进度条：按余量渐变（100% 绿 → 0% 红）
+        QuotaBarFill(percent, 8.dp, palette.InkHi.copy(alpha = 0.10f))
         if (bar.reset != null) {
             Text(
                 bar.reset,

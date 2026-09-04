@@ -32,7 +32,6 @@ import kotlinx.coroutines.launch
 /** 反重力主题色（蓝紫渐变）。 */
 private val AgBlue = Color(0xFF4A7DFF)
 private val AgPurple = Color(0xFF9B6CFF)
-private val AgAmber = Color(0xFFFFB020)
 
 /**
  * 反重力（Google Antigravity）额度面板 —— 液态玻璃 + 5h/每周配额桶。
@@ -451,11 +450,7 @@ private fun BucketsCard(
 private fun BucketRow(bucket: QuotaBucket) {
     val palette = LocalGlassPalette.current
     val percent = bucket.percentRemaining
-    val barColor = when {
-        percent >= 50 -> AgBlue
-        percent >= 20 -> AgAmber
-        else -> palette.Down
-    }
+    val barColor = quotaGaugeColor(percent)
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -477,22 +472,8 @@ private fun BucketRow(bucket: QuotaBucket) {
             )
         }
         Spacer(Modifier.height(7.dp))
-        // 进度条：圆角轨道 + 剩余填充
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(RoundedCornerShape(50))
-                .background(palette.InkHi.copy(alpha = 0.10f))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(percent.coerceIn(0, 100) / 100f)
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(50))
-                    .background(barColor)
-            )
-        }
+        // 进度条：圆角轨道 + 按余量渐变的填充（100% 绿 → 0% 红）
+        QuotaBarFill(percent, 10.dp, palette.InkHi.copy(alpha = 0.10f))
         val resetText = if (!bucket.isWeekly) bucket.resetTimeIso?.let { ai.vibecafe.usage.data.quota.ExtraQuotaApi.formatReset(it) } else null
         if (resetText != null) {
             Text(

@@ -46,6 +46,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -107,6 +108,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -178,6 +180,7 @@ fun DashboardScreen(
     var showSettings by rememberSaveable { mutableStateOf(false) }  // 设置独立页（底部导航 Tab 3）
     var showAgPanel by rememberSaveable { mutableStateOf(false) }  // 反重力额度面板切换
     var quotaTab by rememberSaveable { mutableStateOf(0) }  // 额度页平台切换：0 反重力 / 1+ ExtraProvider（旧存档可能越界，使用处钳制）
+    var switcherExpanded by remember { mutableStateOf(false) }  // 平台下拉展开态（提升到页面级：空白处点击收起用）
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
     val agPanelViewModel: AgPanelViewModel = viewModel()  // 与 AgPanelScreen 共享同一实例
@@ -244,6 +247,13 @@ fun DashboardScreen(
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
+                // 下拉展开时：点页面任意空白处（卡片、背景等未消费点击的区域）自动收起；
+                // 菜单行/按钮等自身可点的控件会先消费点击，不会误触
+                .pointerInput(Unit) {
+                    detectTapGestures {
+                        if (switcherExpanded) switcherExpanded = false
+                    }
+                }
                 .padding(
                     top = insets.calculateTopPadding() + 18.dp,
                     // 底部留出「底部导航栏 64+14 +（概览页：时间选择条 58+10）+ 呼吸」的空间：
@@ -303,7 +313,9 @@ fun DashboardScreen(
                             quotaTab = idx
                         },
                         buttonBackdrop = backdrop,
-                        menuBackdrop = backdrop
+                        menuBackdrop = backdrop,
+                        expanded = switcherExpanded,
+                        onExpandedChange = { switcherExpanded = it }
                     ) {
                         when (val tab = quotaTab.coerceAtMost(QuotaOptions.lastIndex)) {
                             0 -> AgPanelScreen(backdrop = backdrop)
