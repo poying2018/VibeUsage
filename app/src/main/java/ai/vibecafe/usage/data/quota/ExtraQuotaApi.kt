@@ -961,8 +961,20 @@ object ExtraQuotaApi {
                         ),
                         JsonObject::class.java
                     ) ?: continue
-                    unwrapError(load)
+                    // 中转可能把 403 等 Google 错误以 200 透传：非 401 记为该端点失败，继续试下一端点
+                    val loadErr = errorOf(load)
+                    if (loadErr != null) {
+                        if (loadErr.first == 401) throw QuotaException(401, "Google 授权已失效，请重新一键授权")
+                        lastErr = QuotaException(loadErr.first, friendlyLicense(loadErr.second))
+                        continue
+                    }
                     jstr(load, "cloudaicompanionProject")?.let { return it }
+                    if (load.optObject("currentTier") != null) return null // 已有层但无项目，无法静默补
+                    // 个人免费层已被 Google 整体迁入反重力（UNSUPPORTED_CLIENT），仅剩标准层且需自带 GCP 项目
+                    val freeDeprecated = load.optArray("ineligibleTiers")?.any { el ->
+                        (el as? JsonObject)?.let { jstr(it, "reasonCode") } == "UNSUPPORTED_CLIENT"
+                    } == true
+                    if (freeDeprecated) throw QuotaException(0, FREE_TIER_MIGRATED)
                     val tier = load.optArray("allowedTiers")
                         ?.mapNotNull { it as? JsonObject }
                         ?.firstOrNull { it.get("isDefault")?.asBoolean == true }
@@ -1008,15 +1020,30 @@ object ExtraQuotaApi {
 
         /** 中转线路可能把 Google 错误 JSON 以 200 透传：解析前统一拆包成异常。 */
         private fun unwrapError(obj: JsonObject) {
-            val err = obj.optObject("error") ?: return
-            val code = jnum(err, "code")?.toInt() ?: 0
-            throw QuotaException(code, friendlyLicense(jstr(err, "message") ?: "HTTP $code"))
+            val err = errorOf(obj) ?: return
+            throw QuotaException(err.first, friendlyLicense(err.second))
         }
 
-        private fun friendlyLicense(msg: String?): String =
-            if (msg != null && ("license" in msg.lowercase() || "SUBSCRIPTION" in msg))
-                "该 Google 账号未开通 Gemini Code Assist 授权（免费层也需在 Code Assist 页面激活；反重力/Google AI Pro 订阅不含此配额）"
-            else (msg ?: "查询失败").take(160)
+        /** 返回 200 包裹的 Google 错误（code, message），无错误返回 null。 */
+        private fun errorOf(obj: JsonObject): Pair<Int, String>? =
+            obj.optObject("error")?.let { err ->
+                (jnum(err, "code")?.toInt() ?: 0) to (jstr(err, "message") ?: "请求被拒绝")
+            }
+
+        private const val FREE_TIER_MIGRATED =
+            "Google 已停用 Gemini Code Assist 个人免费层（提示迁移至反重力/Antigravity），本端点查不到该账号配额；免费额度请看「反重力」面板（同一 Google 账号），标准/企业层账号需关联 GCP 项目"
+
+        private fun friendlyLicense(msg: String?): String {
+            val m = msg ?: return "查询失败"
+            val lower = m.lowercase()
+            return when {
+                "license" in lower || "subscription" in lower ->
+                    "该 Google 账号未开通 Gemini Code Assist 授权（免费层已并入反重力，标准/企业层需关联 GCP 项目）"
+                "permission" in lower ->
+                    "Google 拒绝访问 Code Assist 端点（该账号未开通此授权；个人免费层已并入反重力，额度看「反重力」面板）"
+                else -> m.take(160)
+            }
+        }
 
         /** 首选官方形态 buckets[]{modelId,remainingFraction,resetTime}；兼容 groups[].buckets[] 与平铺映射。 */
         internal fun parse(resp: String): Usage {

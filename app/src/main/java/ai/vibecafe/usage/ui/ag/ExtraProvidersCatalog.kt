@@ -100,7 +100,7 @@ enum class ExtraProvider(
     GEMINICLI(
         "geminicli", "Gemini CLI", Color(0xFF4285F4), Icons.Filled.Bolt,
         listOf("Google Refresh Token（高级）"),
-        "点「一键授权」走 Gemini CLI 官方通道（免费层可用）；查询 Gemini Code Assist 各模型配额，手动粘贴 Token 仅限高级用户",
+        "查询 Gemini Code Assist 各模型配额（标准/企业层）；注意：Google 已将个人免费层并入反重力，免费额度请看「反重力」面板",
         OAuthKind.GEMINI_CLI_OAUTH
     );
 
