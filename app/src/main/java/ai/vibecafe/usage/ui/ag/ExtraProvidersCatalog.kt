@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Paid
 import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -102,6 +103,11 @@ enum class ExtraProvider(
         listOf("Google Refresh Token（高级）"),
         "查询 Gemini Code Assist 各模型配额（标准/企业层）；注意：Google 已将个人免费层并入反重力，免费额度请看「反重力」面板",
         OAuthKind.GEMINI_CLI_OAUTH
+    ),
+    DOUBAO(
+        "doubao", "豆包", Color(0xFF4E6EF2), Icons.Filled.SmartToy,
+        listOf("sessionid Cookie"),
+        "豆包网页版登录后 F12 → 应用/存储 → Cookie → doubao.com，复制 sessionid 的值粘贴（查订阅套餐额度，非火山方舟）；国内直连"
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */
@@ -120,6 +126,7 @@ enum class ExtraProvider(
         GITHUB -> ExtraQuotaApi.GitHubCopilot.fetchUsage(creds[0])
         OPENROUTER -> ExtraQuotaApi.OpenRouter.fetchUsage(creds[0])
         GEMINICLI -> ExtraQuotaApi.GeminiCli.fetchUsage(creds[0])
+        DOUBAO -> ExtraQuotaApi.Doubao.fetchUsage(creds[0])
     }
 
     companion object {

@@ -398,6 +398,7 @@ private val ExtraProvider.credPlaceholders: List<String>
         ExtraProvider.GITHUB -> listOf("ghp_… / ghu_…")
         ExtraProvider.OPENROUTER -> listOf("sk-or-v1-…")
         ExtraProvider.GEMINICLI -> listOf("1//0g…（Google Refresh Token）")
+        ExtraProvider.DOUBAO -> listOf("粘贴 sessionid 的值或整条 Cookie")
     }
 
 // ─── 已接入：状态行 + 分组明细 ───
