@@ -164,8 +164,11 @@ fun QuotaSwitcher(
                         // 供应商已增至 11 个，超屏高时面板内滚动
                         .widthIn(min = 230.dp, max = 320.dp)
                         .heightIn(max = 430.dp)
-                        .verticalScroll(rememberScrollState())
+                        // 玻璃壳必须套在滚动容器**外侧**：drawBackdrop 的圆角裁切层包住滚动视口，
+                        // 行内容才只会在壳内位移；反过来（滚动在外）整块玻璃会随内容平移，
+                        // 被滚动视口的直角边界裁切 → 滚动时上/下角变直角
                         .glassCard(menuBackdrop, cornerRadius = 20.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(vertical = 8.dp)
                 ) {
                     options.forEachIndexed { i, opt ->
