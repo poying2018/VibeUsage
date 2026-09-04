@@ -50,7 +50,9 @@ enum class ExtraProvider(
     /** 接入提示（去哪里获取凭据）。 */
     val hint: String,
     /** 非空 = 页面顶部展示「一键授权登录」按钮。 */
-    val oauth: OAuthKind? = null
+    val oauth: OAuthKind? = null,
+    /** 单条凭据的最短长度（防误粘贴）；账号密码型供应商可放宽。 */
+    val minCredLen: Int = 16
 ) {
     MINIMAX(
         "minimax", "MiniMax", Color(0xFFF0483E), Icons.Filled.BubbleChart,
@@ -112,8 +114,9 @@ enum class ExtraProvider(
     ),
     AGNES(
         "agnes", "Agnes", Color(0xFFE0559F), Icons.Filled.Waves,
-        listOf("API Key"),
-        "console.agnes-ai.cn → API Keys 创建后立即复制，粘贴 sk- 开头的密钥（免费不限量平台，查今日/本月消耗；国内直连）"
+        listOf("邮箱 / 用户名", "登录密码"),
+        "platform.agnes-ai.cn 登录账号即可（无需 API Key）：查今日/本月 token 消耗与套餐可用模型；国内直连",
+        minCredLen = 4
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */
@@ -133,7 +136,7 @@ enum class ExtraProvider(
         OPENROUTER -> ExtraQuotaApi.OpenRouter.fetchUsage(creds[0])
         GEMINICLI -> ExtraQuotaApi.GeminiCli.fetchUsage(creds[0])
         DOUBAO -> ExtraQuotaApi.Doubao.fetchUsage(creds[0])
-        AGNES -> ExtraQuotaApi.Agnes.fetchUsage(creds[0])
+        AGNES -> ExtraQuotaApi.Agnes.fetchUsage(creds[0], creds[1])
     }
 
     companion object {

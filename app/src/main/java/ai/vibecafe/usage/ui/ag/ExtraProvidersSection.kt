@@ -411,11 +411,12 @@ private val ExtraProvider.credPlaceholders: List<String>
         ExtraProvider.OPENROUTER -> listOf("sk-or-v1-…")
         ExtraProvider.GEMINICLI -> listOf("1//0g…（Google Refresh Token）")
         ExtraProvider.DOUBAO -> listOf("粘贴 sessionid 的值或整条 Cookie")
-        ExtraProvider.AGNES -> listOf("粘贴 sk- 开头的 API Key")
+        ExtraProvider.AGNES -> listOf("登录邮箱或用户名", "登录密码")
     }
 
 // ─── 已接入：状态行 + 分组明细 ───
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun LoggedArea(
     provider: ExtraProvider,
@@ -474,6 +475,43 @@ private fun LoggedArea(
             bars.forEachIndexed { idx, bar ->
                 if (idx > 0) Spacer(Modifier.height(12.dp))
                 BarRow(bar)
+            }
+        }
+
+        if (ps.models.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "可用模型",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = palette.InkMid
+            )
+            Spacer(Modifier.height(7.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                ps.models.take(20).forEach { model ->
+                    Text(
+                        model,
+                        fontSize = 10.sp,
+                        color = palette.InkHi,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(palette.InkHi.copy(alpha = 0.08f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+                if (ps.models.size > 20) {
+                    Text(
+                        "+${ps.models.size - 20} 个",
+                        fontSize = 10.sp,
+                        color = palette.InkMid,
+                        modifier = Modifier.padding(vertical = 3.dp)
+                    )
+                }
             }
         }
 

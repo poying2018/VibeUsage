@@ -26,6 +26,8 @@ data class ProviderState(
     /** GitHub 设备码授权流程中展示给用户手动输入的 user_code。 */
     val oauthCode: String? = null,
     val groups: Map<String, List<ExtraQuotaApi.Bar>> = emptyMap(),
+    /** 当前账号/套餐实际可用的模型列表（动态接口拿不到则留空，UI 隐藏模型区）。 */
+    val models: List<String> = emptyList(),
     val error: String? = null
 )
 
@@ -46,9 +48,11 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         // 清理 v2.10.2 及之前残留的 Codex/Claude 凭据（两平台已移除）
+        // 清理 v2.16.0 的 Agnes 单 Key 凭据（v2.17 起改为账号密码登录，Key 已废弃）
         prefs.edit()
             .remove("codex_auth_raw").remove("codex_access").remove("codex_access_exp")
             .remove("claude_creds_raw").remove("claude_access").remove("claude_access_exp")
+            .remove("agnes_key")
             .apply()
         ExtraProvider.entries.forEach { p ->
             if (p.credPrefsKeys.all { prefs.getString(it, null) != null }) {
@@ -63,8 +67,8 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
     fun login(id: String, creds: List<String>) {
         val provider = ExtraProvider.byId(id) ?: return
         val cleaned = creds.map { it.filter { c -> c in '!'..'~' } }
-        if (cleaned.any { it.length < 16 }) {
-            update(id) { it.copy(error = "凭据格式不对（长度不足，请粘贴完整密钥）") }
+        if (cleaned.any { it.length < provider.minCredLen }) {
+            update(id) { it.copy(error = "凭据格式不对（长度不足，请检查输入）") }
             return
         }
         prefs.edit().apply {
@@ -164,6 +168,7 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                     isLoading = false,
                     account = usage.account,
                     groups = usage.groups,
+                    models = usage.models,
                     error = if (usage.groups.isEmpty()) "计划未返回额度数据" else null
                 )
             }

@@ -37,10 +37,35 @@ object ExtraQuotaApi {
         val reset: String? = null,
     )
 
-    /** 按时间窗口分组的额度快照（组名有序）。 */
-    data class Usage(val account: String?, val groups: Map<String, List<Bar>>)
+    /**
+     * 按时间窗口分组的额度快照（组名有序）。models = 当前账号/套餐实际可用的模型列表
+     * （来自账号维度的动态接口，随账号实时变化；拿不到则留空，UI 隐藏模型区）。
+     */
+    data class Usage(val account: String?, val groups: Map<String, List<Bar>>, val models: List<String> = emptyList())
 
     class QuotaException(val code: Int, message: String) : Exception(message)
+
+    /**
+     * 通用「OpenAI 风格」/models 拉取（data[].id）。任何失败都返回空表 ——
+     * 模型区整体隐藏，绝不影响额度展示。
+     */
+    internal fun fetchModelIds(
+        url: String,
+        bearer: String,
+        proxyFirst: Boolean,
+        ua: String = "VibeUsage/2.16",
+        directOnly: Boolean = false
+    ): List<String> = try {
+        val obj = gson.fromJson(
+            QuotaHttp.get(url, bearer = bearer, proxyFirst = proxyFirst, ua = ua, directOnly = directOnly),
+            JsonObject::class.java
+        )
+        (obj.optArray("data") ?: JsonArray())
+            .mapNotNull { (it as? JsonObject)?.get("id")?.takeIf { v -> v.isJsonPrimitive }?.asString }
+            .distinct().sorted()
+    } catch (_: Exception) {
+        emptyList()
+    }
 
     // ─── MiniMax（Token Plan / Coding Plan 请求次数额度）───
 
@@ -77,10 +102,12 @@ object ExtraQuotaApi {
                         )
                     }
                     val groups = linkedMapOf<String, MutableList<Bar>>()
+                    val models = linkedSetOf<String>()
                     val remains = obj.optArray("model_remains") ?: continue
                     for (el in remains) {
                         val m = el as? JsonObject ?: continue
                         val name = m.get("model_name")?.asString ?: continue
+                        models += name
                         val total5h = m.get("current_interval_total_count")?.asInt
                         val remain5h = m.get("current_interval_usage_count")?.asInt
                         if (total5h != null && total5h > 0 && remain5h != null) {
@@ -115,7 +142,7 @@ object ExtraQuotaApi {
                             )
                         }
                     }
-                    return Usage(null, groups)
+                    return Usage(null, groups, models.toList().sorted())
                 } catch (e: QuotaException) {
                     if (businessErr == null) businessErr = e
                     lastErr = e
@@ -151,7 +178,12 @@ object ExtraQuotaApi {
                         url, bearer = apiKey,
                         proxyFirst = index > 0, directOnly = index == 0, ua = "VibeUsage/2.11"
                     )
-                    return parseUsage(resp)
+                    return parseUsage(resp).copy(
+                        models = fetchModelIds(
+                            "https://open.bigmodel.cn/api/paas/v4/models", apiKey,
+                            proxyFirst = false, directOnly = true, ua = "VibeUsage/2.11"
+                        )
+                    )
                 } catch (e: QuotaException) {
                     if (businessErr == null) businessErr = e
                     lastErr = e
@@ -232,7 +264,9 @@ object ExtraQuotaApi {
                     val resp = QuotaHttp.get(
                         url, bearer = apiKey, proxyFirst = false, directOnly = true, ua = "KimiCLI/1.6"
                     )
-                    return parse(resp)
+                    return parse(resp).copy(
+                        models = fetchModelIds("https://api.moonshot.cn/v1/models", apiKey, proxyFirst = false, directOnly = true, ua = "KimiCLI/1.6")
+                    )
                 } catch (e: QuotaException) {
                     if (e.code != 404) throw e
                     lastErr = e
@@ -325,7 +359,10 @@ object ExtraQuotaApi {
             }
             if (groups.isEmpty()) throw QuotaException(0, "未返回余额数据")
             val available = obj.get("is_available")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
-            return Usage(if (available) null else "已停用", groups)
+            return Usage(
+                if (available) null else "已停用", groups,
+                fetchModelIds("https://api.deepseek.com/models", apiKey, proxyFirst = false, directOnly = true, ua = "VibeUsage/2.14")
+            )
         }
     }
 
@@ -358,7 +395,10 @@ object ExtraQuotaApi {
             window("5_hour", "5 小时窗口")
             window("7_day", "每周窗口")
             window("30_day", "每月窗口")
-            return Usage(null, groups)
+            return Usage(
+                null, groups,
+                fetchModelIds("https://cloud.infini-ai.com/maas/v1/models", apiKey, proxyFirst = false, directOnly = true)
+            )
         }
     }
 
@@ -450,7 +490,10 @@ object ExtraQuotaApi {
                 resetKeys = listOf("perWeekQuotaNextRefreshTime")
             )?.let { groups.getOrPut("每周窗口") { mutableListOf() } += it }
             if (groups.isEmpty()) throw QuotaException(0, "套餐未返回额度窗口")
-            return Usage(null, groups)
+            return Usage(
+                null, groups,
+                fetchModelIds("https://dashscope.aliyuncs.com/compatible-mode/v1/models", apiKey, proxyFirst = false, directOnly = true)
+            )
         }
 
         private fun parseWindow(
@@ -735,7 +778,44 @@ object ExtraQuotaApi {
                 bearer = token, proxyFirst = false, ua = "VibeUsage/2.14",
                 extraHeaders = mapOf("Accept" to "application/vnd.github+json")
             )
-            return parse(resp)
+            return parse(resp).copy(models = copilotModels(token))
+        }
+
+        /**
+         * 账号可用模型：ghu token 换 copilot token（官方只认「已批准的客户端」，必须带编辑器头，
+         * 否则 403 approved clients），再 GET api.githubcopilot.com/models（IDE 模型选择器同源，
+         * 即账号/套餐维度，返回的已是该账号可调用集合，不做二次过滤）。
+         * api.github.com 大陆直连不可达，走 QuotaHttp 直连→中转双路；失败返回空表。
+         */
+        private fun copilotModels(token: String): List<String> = try {
+            val tk = gson.fromJson(
+                QuotaHttp.get(
+                    "https://api.github.com/copilot_internal/v2/token",
+                    bearer = token, proxyFirst = false, ua = "GitHubCopilotChat/0.24.0",
+                    extraHeaders = mapOf(
+                        "Accept" to "application/vnd.github+json",
+                        "Editor-Version" to "vscode/1.95.0",
+                        "Editor-Plugin-Version" to "copilot-chat/0.24.0"
+                    )
+                ), JsonObject::class.java
+            )
+            val ct = jstr(tk, "token") ?: return emptyList()
+            val models = gson.fromJson(
+                QuotaHttp.get(
+                    "https://api.githubcopilot.com/models",
+                    bearer = ct, proxyFirst = false, ua = "GitHubCopilotChat/0.24.0",
+                    extraHeaders = mapOf(
+                        "Accept" to "application/json",
+                        "Editor-Version" to "vscode/1.95.0",
+                        "Editor-Plugin-Version" to "copilot-chat/0.24.0"
+                    )
+                ), JsonObject::class.java
+            )
+            (models.optArray("data") ?: JsonArray())
+                .mapNotNull { (it as? JsonObject)?.get("id")?.takeIf { v -> v.isJsonPrimitive }?.asString }
+                .distinct().sorted()
+        } catch (_: Exception) {
+            emptyList()
         }
 
         internal fun parse(resp: String): Usage {
@@ -824,7 +904,10 @@ object ExtraQuotaApi {
             val resp = QuotaHttp.get(
                 "$API/key", bearer = apiKey, proxyFirst = true, ua = "VibeUsage/2.14"
             )
-            return parse(resp)
+            // 标准 Key 可调用整个目录，目录即账号可用范围；域名需中转兜底
+            return parse(resp).copy(
+                models = fetchModelIds("$API/models", apiKey, proxyFirst = true, ua = "VibeUsage/2.14")
+            )
         }
 
         internal fun parse(resp: String): Usage {
@@ -1050,12 +1133,14 @@ object ExtraQuotaApi {
             val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
             unwrapError(obj)
             val groups = linkedMapOf<String, MutableList<Bar>>()
+            val models = linkedSetOf<String>()
             val buckets = obj.optArray("buckets")
             if (buckets != null) {
                 val bars = mutableListOf<Bar>()
                 for (el in buckets) {
                     val o = el as? JsonObject ?: continue
                     val model = jstr(o, "modelId") ?: continue
+                    models += model.replace(Regex("-\\d{3}$"), "")
                     val frac = jnum(o, "remainingFraction") ?: continue
                     bars += Bar(
                         label = model.replace(Regex("-\\d{3}$"), ""),
@@ -1105,7 +1190,7 @@ object ExtraQuotaApi {
                 }
             }
             if (groups.isEmpty()) throw QuotaException(0, "响应中没有额度数据")
-            return Usage(null, groups)
+            return Usage(null, groups, models.toList().sorted())
         }
     }
 
@@ -1204,71 +1289,130 @@ object ExtraQuotaApi {
         }
     }
 
-    // ─── Agnes AI（免费全模态 API 平台；one-api 系网关的标准计费端点）───
+    // ─── Agnes AI（免费全模态 API 平台；token 用量在平台后端，账号登录换 JWT）───
 
     object Agnes {
-        private const val BASE = "https://api.agnes-ai.cn"
+        private const val BASE = "https://platform-backend.agnes-ai.cn"
+        private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126"
 
         /**
-         * sk- Key 即查，国内直连：
-         * - GET /v1/dashboard/billing/subscription → hard_limit_usd（免费档为 1e8 占位 = 不限量）
-         * - GET /v1/dashboard/billing/usage?start=&end= → total_usage（单位：美分）；
-         *   实测不带范围恒为 0，必须传日期，end 取「明天」覆盖今天全天
+         * 网关(api.agnes-ai.cn)的 /v1 计费端点只有金额（美分）且其 /api/ 各路径被它自己的
+         * Cloudflare WAF 挡死，token 数只能走平台后端：账号密码 POST /api/auth/token_by_username
+         * 换 JWT（每次现登，免管过期），再 GET /api/usage/series?range=custom&start_date=&end_date=
+         * 取逐日 text_tokens / request_count（时区 Asia/Shanghai）。
          */
-        fun fetchUsage(apiKey: String): Usage {
-            fun get(path: String): JsonObject = try {
-                gson.fromJson(
-                    QuotaHttp.get(
-                        BASE + path, bearer = apiKey,
-                        proxyFirst = false, directOnly = true, ua = "VibeUsage/2.15"
-                    ),
-                    JsonObject::class.java
-                ) ?: throw QuotaException(0, "响应为空")
+        fun fetchUsage(username: String, password: String): Usage {
+            val loginBody = JsonObject().apply {
+                addProperty("username", username)
+                addProperty("password", password)
+            }.toString().toRequestBody(JSON_TYPE)
+            val jwt = try {
+                jstr(
+                    envelope(
+                        QuotaHttp.post(
+                            "$BASE/api/auth/token_by_username", loginBody,
+                            bearer = null, proxyFirst = false, directOnly = true, ua = UA
+                        )
+                    ), "access_token"
+                )
             } catch (e: QuotaException) {
-                throw if (e.code == 401)
-                    QuotaException(401, "Agnes Key 无效或已删除，请到 console.agnes-ai.cn → API Keys 检查")
-                else e
+                throw if (e.code == 401) QuotaException(401, "Agnes 登录失败，请检查邮箱/用户名和密码") else e
             } catch (e: Exception) {
-                throw QuotaException(0, e.message ?: "Agnes 查询失败")
-            }
-
-            val sub = get("/v1/dashboard/billing/subscription")
-            val limitUsd = jnum(sub, "hard_limit_usd") ?: jnum(sub, "system_hard_limit_usd")
-            val unlimited = limitUsd == null || limitUsd >= 1e7
+                throw QuotaException(0, e.message ?: "Agnes 登录失败")
+            } ?: throw QuotaException(0, "Agnes 登录响应中没有 token")
 
             val fmt = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
             val today = java.time.LocalDate.now()
-            fun usedUsd(from: java.time.LocalDate): Double = try {
-                val o = get("/v1/dashboard/billing/usage?start=${from.format(fmt)}&end=${today.plusDays(1).format(fmt)}")
-                (jnum(o, "total_usage") ?: 0.0) / 100.0
-            } catch (e: QuotaException) {
-                // 单窗口失败不拖垮整体（401 已在上面统一拦截，到这里只剩网络/服务端抖动）
-                if (e.code == 401) throw e else 0.0
+            fun window(from: java.time.LocalDate): Pair<Double, Double> {
+                val data = call("/api/usage/series?range=custom&start_date=${from.format(fmt)}&end_date=${today.format(fmt)}", jwt)
+                var tokens = 0.0
+                var reqs = 0.0
+                for (el in data.optArray("items") ?: JsonArray()) {
+                    val o = el as? JsonObject ?: continue
+                    tokens += jnum(o, "text_tokens") ?: 0.0
+                    reqs += jnum(o, "request_count") ?: 0.0
+                }
+                return tokens to reqs
             }
+            val (dayTokens, dayReqs) = window(today)
+            val (monTokens, monReqs) = window(today.withDayOfMonth(1))
 
-            fun usd(v: Double): String = when {
-                v >= 100 -> String.format(java.util.Locale.US, "$%.0f", v)
-                v >= 1 -> String.format(java.util.Locale.US, "$%.2f", v)
-                else -> String.format(java.util.Locale.US, "$%.4f", v)
-            }
-            fun bar(used: Double, emptyText: String): Bar {
-                val pct = if (unlimited) 100
-                else ((limitUsd!! - used).coerceAtLeast(0.0) * 100.0 / limitUsd).toInt().coerceIn(0, 100)
-                return Bar(
-                    label = if (used > 0) "已用 ${usd(used)}" else emptyText,
-                    percentRemaining = pct,
-                    usedPercent = if (unlimited) null else (100 - pct).coerceIn(0, 100),
-                    counts = if (unlimited) "免费档 · 不限量"
-                    else "剩 ${usd((limitUsd!! - used).coerceAtLeast(0.0))}/${usd(limitUsd)}"
+            fun bar(tokens: Double, reqs: Double, emptyText: String) = Bar(
+                label = if (tokens > 0) "已用 ${compact(tokens)} tokens" else emptyText,
+                percentRemaining = 100,
+                counts = if (reqs > 0) "${compact(reqs)} 次请求 · 免费不限量" else "免费档 · 不限量"
+            )
+            return Usage(
+                "免费档",
+                linkedMapOf(
+                    "今日消耗" to listOf(bar(dayTokens, dayReqs, "今日无消耗")),
+                    "本月消耗" to listOf(bar(monTokens, monReqs, "本月无消耗"))
+                ),
+                models = agnesModels(jwt)
+            )
+        }
+
+        /**
+         * 当前账号实际可用的模型：用 JWT 找到名下第一个 API Token 并换出完整密钥，
+         * 再问网关 /v1/models（该列表按 Key 权限过滤，免费档只会返回它真实可用的模型）。
+         * 任一步失败不影响额度显示（返回空列表 → 面板不渲染模型区）。
+         */
+        private fun agnesModels(jwt: String): List<String> = try {
+            val tokens = call("/api/token", jwt).optArray("items") ?: JsonArray()
+            val first = (tokens.firstOrNull { (it as? JsonObject)?.get("status")?.asInt == 1 } ?: tokens.firstOrNull()) as? JsonObject
+                ?: return emptyList()
+            val id = jnum(first, "id")?.toInt() ?: return emptyList()
+            // 揭示完整密钥是无文档路由，只认 POST（GET 405）；空 body 即可
+            val key = jstr(callPost("/api/token/$id/key", jwt), "key") ?: return emptyList()
+            val skKey = if (key.startsWith("sk-")) key else "sk-$key"
+            val models = gson.fromJson(
+                QuotaHttp.get(
+                    "https://api.agnes-ai.cn/v1/models", bearer = skKey,
+                    proxyFirst = false, directOnly = true, ua = UA
+                ),
+                JsonObject::class.java
+            )
+            (models.optArray("data") ?: JsonArray())
+                .mapNotNull { (it as? JsonObject)?.get("id")?.takeIf { v -> v.isJsonPrimitive }?.asString }
+                .filter { !it.startsWith("agnes-2.0") }  // 已弃用代次不上榜
+                .sorted()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        /** 平台后端统一封套 {code, message, data}：code=200 → data；登录失效 → 401 语义；其余原样抛。 */
+        private fun envelope(resp: String): JsonObject {
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "Agnes 响应为空")
+            val code = jnum(obj, "code")?.toInt() ?: 200
+            if (code != 200) {
+                throw QuotaException(
+                    if (code == 401) 401 else code,
+                    "Agnes：${jstr(obj, "message") ?: "错误 $code"}"
                 )
             }
-            return Usage(
-                if (unlimited) "免费档" else null,
-                linkedMapOf(
-                    "今日消耗" to listOf(bar(usedUsd(today), "今日无消耗")),
-                    "本月消耗" to listOf(bar(usedUsd(today.withDayOfMonth(1)), "本月无消耗"))
+            return obj.optObject("data") ?: JsonObject()
+        }
+
+        private fun call(path: String, bearer: String): JsonObject = try {
+            envelope(
+                QuotaHttp.get(BASE + path, bearer = bearer, proxyFirst = false, directOnly = true, ua = UA)
+            )
+        } catch (e: QuotaException) {
+            throw if (e.code == 401) QuotaException(401, "Agnes 登录已失效，请重新接入") else e
+        } catch (e: Exception) {
+            throw QuotaException(0, e.message ?: "Agnes 查询失败")
+        }
+
+        /** call 的 POST 版（揭示密钥等写路由用），空 body。 */
+        private fun callPost(path: String, bearer: String): JsonObject = try {
+            envelope(
+                QuotaHttp.post(
+                    BASE + path, ByteArray(0).toRequestBody(null),
+                    bearer = bearer, proxyFirst = false, directOnly = true, ua = UA
                 )
             )
+        } catch (e: QuotaException) {
+            throw if (e.code == 401) QuotaException(401, "Agnes 登录已失效，请重新接入") else e
         }
     }
 
