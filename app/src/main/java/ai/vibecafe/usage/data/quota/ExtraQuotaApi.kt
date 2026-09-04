@@ -1295,7 +1295,9 @@ object ExtraQuotaApi {
         }
     }
 
-    // ─── Agnes AI（免费全模态 API 平台；token 用量在平台后端，账号登录换 JWT）───
+    // ─── Agnes AI（免费全模态 API 平台；token 用量在平台后端，账号登录换 JWT。
+    //      路由=中转优先：其 Cloudflare WAF 封 CF Worker 出口（1010），中转必 403 → 自动回退直连，
+    //      平时仅有一次额外跳的延迟；worker-quota.js 白名单已含 agnes 两域名）───
 
     object Agnes {
         private const val BASE = "https://platform-backend.agnes-ai.cn"
@@ -1317,7 +1319,7 @@ object ExtraQuotaApi {
                     envelope(
                         QuotaHttp.post(
                             "$BASE/api/auth/token_by_username", loginBody,
-                            bearer = null, proxyFirst = false, directOnly = true, ua = UA
+                            bearer = null, proxyFirst = true, ua = UA
                         )
                     ), "access_token"
                 )
@@ -1384,7 +1386,7 @@ object ExtraQuotaApi {
             val models = gson.fromJson(
                 QuotaHttp.get(
                     "https://api.agnes-ai.cn/v1/models", bearer = skKey,
-                    proxyFirst = false, directOnly = true, ua = UA
+                    proxyFirst = true, ua = UA
                 ),
                 JsonObject::class.java
             )
@@ -1411,7 +1413,7 @@ object ExtraQuotaApi {
 
         private fun call(path: String, bearer: String): JsonObject = try {
             envelope(
-                QuotaHttp.get(BASE + path, bearer = bearer, proxyFirst = false, directOnly = true, ua = UA)
+                QuotaHttp.get(BASE + path, bearer = bearer, proxyFirst = true, ua = UA)
             )
         } catch (e: QuotaException) {
             throw if (e.code == 401) QuotaException(401, "Agnes 登录已失效，请重新接入") else e
@@ -1424,7 +1426,7 @@ object ExtraQuotaApi {
             envelope(
                 QuotaHttp.post(
                     BASE + path, ByteArray(0).toRequestBody(null),
-                    bearer = bearer, proxyFirst = false, directOnly = true, ua = UA
+                    bearer = bearer, proxyFirst = true, ua = UA
                 )
             )
         } catch (e: QuotaException) {

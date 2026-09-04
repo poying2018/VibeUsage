@@ -115,7 +115,7 @@ enum class ExtraProvider(
     AGNES(
         "agnes", "Agnes", Color(0xFFE0559F), Icons.Filled.Waves,
         listOf("邮箱 / 用户名", "登录密码"),
-        "platform.agnes-ai.cn 登录账号即可（无需 API Key）：查今日/本月 token 消耗与套餐可用模型；国内直连",
+        "platform.agnes-ai.cn 登录账号即可（无需 API Key）：查今日/本月 token 消耗与套餐可用模型；中转优先，被拦自动直连",
         minCredLen = 4
     );
 

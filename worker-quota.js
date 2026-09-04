@@ -25,6 +25,9 @@ const ALLOWED_HOSTS = new Set([
   // ── MiniMax（Token Plan 额度，国内域名故障时的兜底线路）──
   "api.minimax.io",
   "api.minimaxi.com",
+  // ── Agnes AI（平台后端 token 用量 + 网关模型列表，中转优先线路）──
+  "platform-backend.agnes-ai.cn",
+  "api.agnes-ai.cn",
 ]);
 
 const ALLOWED = (u) => {
