@@ -1204,6 +1204,74 @@ object ExtraQuotaApi {
         }
     }
 
+    // ─── Agnes AI（免费全模态 API 平台；one-api 系网关的标准计费端点）───
+
+    object Agnes {
+        private const val BASE = "https://api.agnes-ai.cn"
+
+        /**
+         * sk- Key 即查，国内直连：
+         * - GET /v1/dashboard/billing/subscription → hard_limit_usd（免费档为 1e8 占位 = 不限量）
+         * - GET /v1/dashboard/billing/usage?start=&end= → total_usage（单位：美分）；
+         *   实测不带范围恒为 0，必须传日期，end 取「明天」覆盖今天全天
+         */
+        fun fetchUsage(apiKey: String): Usage {
+            fun get(path: String): JsonObject = try {
+                gson.fromJson(
+                    QuotaHttp.get(
+                        BASE + path, bearer = apiKey,
+                        proxyFirst = false, directOnly = true, ua = "VibeUsage/2.15"
+                    ),
+                    JsonObject::class.java
+                ) ?: throw QuotaException(0, "响应为空")
+            } catch (e: QuotaException) {
+                throw if (e.code == 401)
+                    QuotaException(401, "Agnes Key 无效或已删除，请到 console.agnes-ai.cn → API Keys 检查")
+                else e
+            } catch (e: Exception) {
+                throw QuotaException(0, e.message ?: "Agnes 查询失败")
+            }
+
+            val sub = get("/v1/dashboard/billing/subscription")
+            val limitUsd = jnum(sub, "hard_limit_usd") ?: jnum(sub, "system_hard_limit_usd")
+            val unlimited = limitUsd == null || limitUsd >= 1e7
+
+            val fmt = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
+            val today = java.time.LocalDate.now()
+            fun usedUsd(from: java.time.LocalDate): Double = try {
+                val o = get("/v1/dashboard/billing/usage?start=${from.format(fmt)}&end=${today.plusDays(1).format(fmt)}")
+                (jnum(o, "total_usage") ?: 0.0) / 100.0
+            } catch (e: QuotaException) {
+                // 单窗口失败不拖垮整体（401 已在上面统一拦截，到这里只剩网络/服务端抖动）
+                if (e.code == 401) throw e else 0.0
+            }
+
+            fun usd(v: Double): String = when {
+                v >= 100 -> String.format(java.util.Locale.US, "$%.0f", v)
+                v >= 1 -> String.format(java.util.Locale.US, "$%.2f", v)
+                else -> String.format(java.util.Locale.US, "$%.4f", v)
+            }
+            fun bar(used: Double, emptyText: String): Bar {
+                val pct = if (unlimited) 100
+                else ((limitUsd!! - used).coerceAtLeast(0.0) * 100.0 / limitUsd).toInt().coerceIn(0, 100)
+                return Bar(
+                    label = if (used > 0) "已用 ${usd(used)}" else emptyText,
+                    percentRemaining = pct,
+                    usedPercent = if (unlimited) null else (100 - pct).coerceIn(0, 100),
+                    counts = if (unlimited) "免费档 · 不限量"
+                    else "剩 ${usd((limitUsd!! - used).coerceAtLeast(0.0))}/${usd(limitUsd)}"
+                )
+            }
+            return Usage(
+                if (unlimited) "免费档" else null,
+                linkedMapOf(
+                    "今日消耗" to listOf(bar(usedUsd(today), "今日无消耗")),
+                    "本月消耗" to listOf(bar(usedUsd(today.withDayOfMonth(1)), "本月无消耗"))
+                )
+            )
+        }
+    }
+
     // ─── 共用格式化 ───
 
     internal fun formatCountdown(ms: Long): String {
