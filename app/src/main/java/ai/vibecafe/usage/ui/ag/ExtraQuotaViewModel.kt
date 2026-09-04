@@ -28,6 +28,8 @@ data class ProviderState(
     val groups: Map<String, List<ExtraQuotaApi.Bar>> = emptyMap(),
     /** 当前账号/套餐实际可用的模型列表（动态接口拿不到则留空，UI 隐藏模型区）。 */
     val models: List<String> = emptyList(),
+    /** 模型区标题覆盖（null 用默认「可用模型」），供按定价分档的供应商注明口径。 */
+    val modelsLabel: String? = null,
     val error: String? = null
 )
 
@@ -169,6 +171,7 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                     account = usage.account,
                     groups = usage.groups,
                     models = usage.models,
+                    modelsLabel = usage.modelsLabel,
                     error = if (usage.groups.isEmpty()) "计划未返回额度数据" else null
                 )
             }

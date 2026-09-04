@@ -38,10 +38,16 @@ object ExtraQuotaApi {
     )
 
     /**
-     * 按时间窗口分组的额度快照（组名有序）。models = 当前账号/套餐实际可用的模型列表
+     * 按时间窗口分组的额度快照（组名有序）。models = 当前账号实际可用的模型列表
      * （来自账号维度的动态接口，随账号实时变化；拿不到则留空，UI 隐藏模型区）。
+     * modelsLabel 覆盖模型区标题（默认「可用模型」），供按定价分档的供应商注明口径。
      */
-    data class Usage(val account: String?, val groups: Map<String, List<Bar>>, val models: List<String> = emptyList())
+    data class Usage(
+        val account: String?,
+        val groups: Map<String, List<Bar>>,
+        val models: List<String> = emptyList(),
+        val modelsLabel: String? = null
+    )
 
     class QuotaException(val code: Int, message: String) : Exception(message)
 
@@ -1348,13 +1354,23 @@ object ExtraQuotaApi {
                     "今日消耗" to listOf(bar(dayTokens, dayReqs, "今日无消耗")),
                     "本月消耗" to listOf(bar(monTokens, monReqs, "本月无消耗"))
                 ),
-                models = agnesModels(jwt)
+                models = agnesModels(jwt),
+                modelsLabel = "免费模型（¥0）"
             )
         }
 
         /**
-         * 当前账号实际可用的模型：用 JWT 找到名下第一个 API Token 并换出完整密钥，
-         * 再问网关 /v1/models（该列表按 Key 权限过滤，免费档只会返回它真实可用的模型）。
+         * 官方文档（agnes-ai.cn/doc/<id>）RMB Pricing 卡「Current Price」为 ¥0 的模型，
+         * 即免费档真正 0 元可用的全部：flash 文本（原价 ¥0.2/¥1 已划线）、image-2.1-flash
+         * （全分辨率档现价 ¥0）、video-v2.0（¥0/秒）。pro/pro-alpha/pro-beta 官方明示付费
+         * （输入 ¥3/输出 ¥6），image-2.5-flash、video-2.5、video-2.5-flash 连定价页都没有
+         * ——计费与未定价模型一律不算免费档支持。agnes-2.0-flash 虽同为 ¥0 但已弃用，不在集合内。
+         */
+        private val FREE_MODELS = setOf("agnes-2.5-flash", "agnes-image-2.1-flash", "agnes-video-v2.0")
+
+        /**
+         * 免费档模型列表：用 JWT 找到名下第一个 API Token 并换出完整密钥，问网关 /v1/models
+         * 拿该 Key 真实可调用的模型，再与官方 0 元定价取交集（网关全列表含计费模型，不做分档依据）。
          * 任一步失败不影响额度显示（返回空列表 → 面板不渲染模型区）。
          */
         private fun agnesModels(jwt: String): List<String> = try {
@@ -1374,7 +1390,7 @@ object ExtraQuotaApi {
             )
             (models.optArray("data") ?: JsonArray())
                 .mapNotNull { (it as? JsonObject)?.get("id")?.takeIf { v -> v.isJsonPrimitive }?.asString }
-                .filter { !it.startsWith("agnes-2.0") }  // 已弃用代次不上榜
+                .filter { it in FREE_MODELS }  // 按官方定价分档：0 元才算免费档可用
                 .sorted()
         } catch (_: Exception) {
             emptyList()

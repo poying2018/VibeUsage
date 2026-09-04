@@ -481,7 +481,7 @@ private fun LoggedArea(
         if (ps.models.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             Text(
-                "可用模型",
+                ps.modelsLabel ?: "可用模型",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 color = palette.InkMid
