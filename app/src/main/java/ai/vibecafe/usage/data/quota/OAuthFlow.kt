@@ -185,6 +185,29 @@ private fun checkCallback(cb: OAuthFlow.LoopbackServer.Callback, expectedState: 
     if (cb.state != expectedState) throw QuotaException(0, "state 校验失败，已拒绝回调")
 }
 
+// ─── Gemini CLI 一键授权（gemini-cli 官方开源 client：loopback 无 PKCE，state 防 CSRF）───
+
+object GeminiCliOAuth {
+
+    private const val PORT = 51125
+    private const val PATH = "/oauth2callback"
+
+    /** 打开 Google 授权页（Gemini CLI 身份）并等待回调授权码。 */
+    suspend fun awaitCode(context: Context): String = coroutineScope {
+        val state = OAuthFlow.newState()
+        val server = withContext(Dispatchers.IO) { OAuthFlow.LoopbackServer(PORT, PATH) }
+        try {
+            val pending = async { server.await() }
+            OAuthFlow.openBrowser(context, ExtraQuotaApi.GeminiCli.buildAuthorizeUrl(state))
+            val cb = pending.await()
+            checkCallback(cb, state)
+            cb.code ?: throw QuotaException(0, "未收到授权码，请重试")
+        } finally {
+            server.stop()
+        }
+    }
+}
+
 // ─── OpenRouter 一键授权（官方 OAuth PKCE：/auth 授权页 → localhost 回调 → /auth/keys 换 Key）───
 
 object OpenRouterOAuth {

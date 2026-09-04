@@ -27,6 +27,9 @@ enum class OAuthKind {
     /** Google OAuth（与反重力同通道，存 refresh_token）。 */
     GOOGLE,
 
+    /** Gemini CLI 官方开源 client 的 Google OAuth（Code Assist 免费/付费层，存 refresh_token）。 */
+    GEMINI_CLI_OAUTH,
+
     /** GitHub 设备码授权（浏览器输入 user_code，存 access_token）。 */
     GITHUB_DEVICE,
 
@@ -97,8 +100,8 @@ enum class ExtraProvider(
     GEMINICLI(
         "geminicli", "Gemini CLI", Color(0xFF4285F4), Icons.Filled.Bolt,
         listOf("Google Refresh Token（高级）"),
-        "与反重力同一 Google 授权通道，点「一键授权」即可；查询 Gemini Code Assist 各模型配额，手动粘贴 Token 仅限高级用户",
-        OAuthKind.GOOGLE
+        "点「一键授权」走 Gemini CLI 官方通道（免费层可用）；查询 Gemini Code Assist 各模型配额，手动粘贴 Token 仅限高级用户",
+        OAuthKind.GEMINI_CLI_OAUTH
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */

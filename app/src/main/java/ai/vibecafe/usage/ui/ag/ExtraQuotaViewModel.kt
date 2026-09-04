@@ -87,6 +87,13 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                     OAuthKind.GOOGLE -> listOf(
                         withContext(Dispatchers.IO) { AgGoogleOAuth.login(getApplication()).refreshToken }
                     )
+                    OAuthKind.GEMINI_CLI_OAUTH -> listOf(
+                        withContext(Dispatchers.IO) {
+                            ExtraQuotaApi.GeminiCli.exchangeCode(
+                                ai.vibecafe.usage.data.quota.GeminiCliOAuth.awaitCode(getApplication())
+                            )
+                        }
+                    )
                     OAuthKind.OPENROUTER -> {
                         val auth = withContext(Dispatchers.IO) { OpenRouterOAuth.awaitCode(getApplication()) }
                         listOf(

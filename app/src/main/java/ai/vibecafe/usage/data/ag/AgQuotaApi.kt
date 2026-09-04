@@ -28,10 +28,10 @@ object AgQuotaApi {
     private const val TOKEN_URL = "https://oauth2.googleapis.com/token"
 
     /** 内置中转（worker.js）：/token 自动补 secret，/proxy?url= 转发任意请求 */
-    private const val BUILTIN_PROXY = "https://proxy.20050912.xyz"
+    internal const val BUILTIN_PROXY = "https://proxy.20050912.xyz"
 
     /** 配额端点回退顺序：sandbox → daily → prod（与桌面版 quota.rs 一致） */
-    private val ENDPOINTS = listOf(
+    internal val ENDPOINTS = listOf(
         "https://daily-cloudcode-pa.sandbox.googleapis.com",
         "https://daily-cloudcode-pa.googleapis.com",
         "https://cloudcode-pa.googleapis.com",
@@ -185,13 +185,38 @@ object AgQuotaApi {
     }
 
     /** API 端点多线路尝试：中转 /proxy 通用转发 → 直连（大陆网络下直连 Google 通常不通）。 */
-    private fun postViaAny(target: String, body: okhttp3.RequestBody, bearer: String): String {
+    internal fun postViaAny(target: String, body: okhttp3.RequestBody, bearer: String): String {
         val proxied = "$BUILTIN_PROXY/proxy?url=" + java.net.URLEncoder.encode(target, "UTF-8")
         var serverError: AgException? = null
         var netErr: Exception? = null
         for (url in listOf(proxied, target)) {
             try {
                 return post(url, body, bearer = bearer)
+            } catch (e: AgException) {
+                if (e.code == 401) throw e
+                if (serverError == null) serverError = e
+            } catch (e: Exception) {
+                if (netErr == null) netErr = e
+            }
+        }
+        throw serverError ?: netErr ?: AgException(0, "请求失败")
+    }
+
+    /** GET 多线路（中转 → 直连），供 onboardUser LRO 操作轮询使用。 */
+    internal fun getViaAny(target: String, bearer: String): String {
+        val proxied = "$BUILTIN_PROXY/proxy?url=" + java.net.URLEncoder.encode(target, "UTF-8")
+        var serverError: AgException? = null
+        var netErr: Exception? = null
+        for (url in listOf(proxied, target)) {
+            try {
+                val builder = Request.Builder().url(url).get()
+                    .header("Authorization", "Bearer $bearer")
+                    .header("User-Agent", BROWSER_UA)
+                client.newCall(builder.build()).execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) throw AgException(resp.code, text.take(200).ifEmpty { "HTTP ${resp.code}" })
+                    return text
+                }
             } catch (e: AgException) {
                 if (e.code == 401) throw e
                 if (serverError == null) serverError = e

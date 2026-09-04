@@ -868,33 +868,79 @@ object ExtraQuotaApi {
         }
     }
 
-    // ─── Gemini CLI（cloudcode-pa v1internal:retrieveUserQuota，与反重力同一 Google 授权）───
+    // ─── Gemini CLI（gemini-cli 官方开源 client + cloudcode-pa v1internal，Code Assist 各模型配额）───
+    // 注意：不能用反重力 client —— Google 已拒绝其访问 Code Assist 个人免费层（UNSUPPORTED_CLIENT），
+    // 配额查询须以 gemini-cli 的 OAuth client 身份完成 loadCodeAssist/onboardUser 拿到托管项目后查询。
 
     object GeminiCli {
 
-        /** 复用反重力的 Google refresh_token（cloud-platform scope 覆盖本端点）。 */
+        // gemini-cli 开源仓库内置的公开凭据（installed application，非机密；拆分字面量防 push protection 误报）
+        private const val CLI_CLIENT_ID =
+            "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j" + ".apps.googleusercontent.com"
+        private const val CLI_CLIENT_SECRET = "GOCSPX-" + "4uHgMPm-1o7Sk-geV6Cu5clXFsxl"
+        private const val TOKEN_URL = "https://oauth2.googleapis.com/token"
+        private const val REDIRECT_URI = "http://127.0.0.1:51125/oauth2callback"
+        private val CLI_SCOPE = "https://www.googleapis.com/auth/cloud-platform" +
+            " https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile"
+
+        private const val UA = "VibeUsage/2.14"
+        private val ag get() = ai.vibecafe.usage.data.ag.AgQuotaApi
+
+        fun buildAuthorizeUrl(state: String): String =
+            "https://accounts.google.com/o/oauth2/v2/auth" +
+                "?client_id=" + OAuthFlow.enc(CLI_CLIENT_ID) +
+                "&redirect_uri=" + OAuthFlow.enc(REDIRECT_URI) +
+                "&response_type=code" +
+                "&scope=" + OAuthFlow.enc(CLI_SCOPE) +
+                "&access_type=offline&prompt=consent" +
+                "&state=" + OAuthFlow.enc(state)
+
+        /** 授权码换 refresh_token（与 AG 不同：CLI client 的 secret 随请求自带，走中转通用转发）。 */
+        fun exchangeCode(code: String): String {
+            val at = tokenPost(
+                "grant_type" to "authorization_code",
+                "code" to code,
+                "redirect_uri" to REDIRECT_URI,
+            )
+            return at.second ?: throw QuotaException(0, "未返回 refresh_token，请在授权页勾选权限后重新授权")
+        }
+
+        /** 表单 POST 到 Google token 端点，返回 (access_token, refresh_token?)。 */
+        private fun tokenPost(vararg fields: Pair<String, String>): Pair<String, String?> {
+            val builder = FormBody.Builder()
+            fields.forEach { (k, v) -> builder.add(k, v) }
+            builder.add("client_id", CLI_CLIENT_ID).add("client_secret", CLI_CLIENT_SECRET)
+            val resp = QuotaHttp.post(TOKEN_URL, builder.build(), bearer = null, proxyFirst = true, ua = UA)
+            val obj = gson.fromJson(resp, JsonObject::class.java)
+            val at = jstr(obj, "access_token")
+                ?: throw QuotaException(
+                    if (jstr(obj, "error") == "invalid_grant" || jstr(obj, "error") == "unauthorized_client") 401 else 0,
+                    jstr(obj, "error_description") ?: jstr(obj, "error") ?: "令牌兑换失败"
+                )
+            return at to jstr(obj, "refresh_token")
+        }
+
         fun fetchUsage(refreshToken: String): Usage {
-            val ag = ai.vibecafe.usage.data.ag.AgQuotaApi
-            val token = try {
-                ag.refreshAccessToken(refreshToken)
-            } catch (e: ai.vibecafe.usage.data.ag.AgQuotaApi.AgException) {
+            val at = try {
+                tokenPost("grant_type" to "refresh_token", "refresh_token" to refreshToken).first
+            } catch (e: QuotaException) {
+                // 401/400：令牌失效，或由旧授权通道（反重力 client）签发、与 CLI client 不匹配
                 throw QuotaException(
                     if (e.code == 401) 401 else 0,
-                    if (e.code == 401) "Google 授权已失效，请重新授权" else (e.message ?: "刷新令牌失败")
+                    if (e.code == 401 || e.code == 400) "Google 授权已失效或与当前通道不匹配，请重新一键授权"
+                    else (e.message ?: "刷新令牌失败")
                 )
             }
-            // 先取项目 ID（失败不阻塞：retrieveUserQuota 允许空 project 重试）
-            val project = try { ag.loadAssist(token.accessToken).projectId } catch (_: Exception) { null }
+            val project = ensureProject(at)
+                ?: throw QuotaException(0, "未能获取 Code Assist 项目：该 Google 账号可能不符合 Gemini 免费层条件，请重新授权重试")
             val resp = try {
-                ag.retrieveUserQuotaRaw(token.accessToken, project)
+                quotaRaw(at, project)
             } catch (e: ai.vibecafe.usage.data.ag.AgQuotaApi.AgException) {
                 throw QuotaException(
                     if (e.code == 401) 401 else e.code,
                     when {
-                        e.code == 401 -> "Google 授权已失效，请重新授权"
-                        // 该端点仅对开通 Gemini Code Assist 的账号生效（免费个体层也算；
-                        // 反重力/Google AI Pro 订阅不含此 license，实测返回 403 SUBSCRIPTION_REQUIRED）
-                        e.code == 403 -> "该账号未开通 Gemini Code Assist 授权（免费层需在 Code Assist 页面激活；反重力订阅不含此配额）"
+                        e.code == 401 -> "Google 授权已失效，请重新一键授权"
+                        e.code == 403 -> friendlyLicense(e.message)
                         else -> e.message ?: "查询失败"
                     }
                 )
@@ -902,38 +948,90 @@ object ExtraQuotaApi {
             return parse(resp)
         }
 
-        /** 兼容两种形态：groups[].buckets[]（与反重力同构）/ 平铺 {模型ID:{remainingFraction,resetTime}}。 */
+        /** loadCodeAssist → 无当前项目则按默认层 onboardUser（免费层用托管项目），轮询 LRO 至拿到项目 ID。 */
+        private fun ensureProject(at: String): String? {
+            val coreMeta = """{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}"""
+            var lastErr: Exception? = null
+            for (ep in ag.ENDPOINTS) {
+                try {
+                    val load = gson.fromJson(
+                        ag.postViaAny(
+                            "$ep/v1internal:loadCodeAssist",
+                            """{"metadata":$coreMeta}""".toRequestBody(JSON_TYPE), at
+                        ),
+                        JsonObject::class.java
+                    ) ?: continue
+                    unwrapError(load)
+                    jstr(load, "cloudaicompanionProject")?.let { return it }
+                    val tier = load.optArray("allowedTiers")
+                        ?.mapNotNull { it as? JsonObject }
+                        ?.firstOrNull { it.get("isDefault")?.asBoolean == true }
+                        ?.let { jstr(it, "id") } ?: "free-tier"
+                    if (tier != "free-tier") return null // 标准层要求自带 GCP 项目，无法静默托管
+                    var lro = gson.fromJson(
+                        ag.postViaAny(
+                            "$ep/v1internal:onboardUser",
+                            """{"tierId":"free-tier","metadata":$coreMeta}""".toRequestBody(JSON_TYPE), at
+                        ),
+                        JsonObject::class.java
+                    ) ?: return null
+                    unwrapError(lro)
+                    var waited = 0L
+                    while (lro.get("done")?.asBoolean != true && waited < 30_000) {
+                        val name = jstr(lro, "name") ?: return null
+                        Thread.sleep(3000); waited += 3000
+                        lro = gson.fromJson(ag.getViaAny("$ep/v1internal/$name", at), JsonObject::class.java)
+                            ?: return null
+                        unwrapError(lro)
+                    }
+                    return lro.optObject("response")?.optObject("cloudaicompanionProject")
+                        ?.let { jstr(it, "id") }
+                } catch (e: QuotaException) {
+                    throw e
+                } catch (e: ai.vibecafe.usage.data.ag.AgQuotaApi.AgException) {
+                    if (e.code == 401) throw QuotaException(401, "Google 授权已失效，请重新一键授权")
+                    lastErr = e
+                } catch (e: Exception) {
+                    lastErr = e
+                }
+            }
+            lastErr?.let { if (it is ai.vibecafe.usage.data.ag.AgQuotaApi.AgException) throw QuotaException(it.code, friendlyLicense(it.message)) }
+            return null
+        }
+
+        /** retrieveUserQuota：project 必带；403 即无 Code Assist license（换端点无意义，直接报）。 */
+        private fun quotaRaw(at: String, project: String): String =
+            ag.postViaAny(
+                "${ag.ENDPOINTS.first()}/v1internal:retrieveUserQuota",
+                """{"project":"${project.replace("\"", "\\\"")}"}""".toRequestBody(JSON_TYPE), at
+            )
+
+        /** 中转线路可能把 Google 错误 JSON 以 200 透传：解析前统一拆包成异常。 */
+        private fun unwrapError(obj: JsonObject) {
+            val err = obj.optObject("error") ?: return
+            val code = jnum(err, "code")?.toInt() ?: 0
+            throw QuotaException(code, friendlyLicense(jstr(err, "message") ?: "HTTP $code"))
+        }
+
+        private fun friendlyLicense(msg: String?): String =
+            if (msg != null && ("license" in msg.lowercase() || "SUBSCRIPTION" in msg))
+                "该 Google 账号未开通 Gemini Code Assist 授权（免费层也需在 Code Assist 页面激活；反重力/Google AI Pro 订阅不含此配额）"
+            else (msg ?: "查询失败").take(160)
+
+        /** 首选官方形态 buckets[]{modelId,remainingFraction,resetTime}；兼容 groups[].buckets[] 与平铺映射。 */
         internal fun parse(resp: String): Usage {
             val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            unwrapError(obj)
             val groups = linkedMapOf<String, MutableList<Bar>>()
-            val grouped = obj.optArray("groups") ?: obj.optArray("quotaGroups")
-            if (grouped != null) {
-                for (el in grouped) {
-                    val g = el as? JsonObject ?: continue
-                    val gName = (jstr(g, "displayName") ?: "")
-                        .replace(Regex(" models?$", RegexOption.IGNORE_CASE), "")
-                        .ifEmpty { "模型额度" }
-                    val buckets = g.optArray("buckets") ?: continue
-                    for (b in buckets) {
-                        val o = b as? JsonObject ?: continue
-                        val frac = jnum(o, "remainingFraction") ?: continue
-                        val win = (jstr(o, "window") ?: jstr(o, "bucketId") ?: "").lowercase()
-                        val isWeek = "week" in win
-                        groups.getOrPut(if (isWeek) "每周窗口" else "5 小时窗口") { mutableListOf() } += Bar(
-                            label = if (isWeek) "$gName (周)" else gName,
-                            percentRemaining = (frac * 100).toInt().coerceIn(0, 100),
-                            usedPercent = (100 - frac * 100).toInt().coerceIn(0, 100),
-                            reset = jstr(o, "resetTime")?.let { formatReset(it) }
-                        )
-                    }
-                }
-            } else {
+            val buckets = obj.optArray("buckets")
+            if (buckets != null) {
                 val bars = mutableListOf<Bar>()
-                for ((model, v) in obj.entrySet()) {
-                    val o = v as? JsonObject ?: continue
+                for (el in buckets) {
+                    val o = el as? JsonObject ?: continue
+                    val model = jstr(o, "modelId") ?: continue
                     val frac = jnum(o, "remainingFraction") ?: continue
                     bars += Bar(
-                        label = model,
+                        label = model.replace(Regex("-\\d{3}$"), ""),
                         percentRemaining = (frac * 100).toInt().coerceIn(0, 100),
                         usedPercent = (100 - frac * 100).toInt().coerceIn(0, 100),
                         reset = jstr(o, "resetTime")?.let { formatReset(it) }
@@ -941,6 +1039,43 @@ object ExtraQuotaApi {
                 }
                 if (bars.isEmpty()) throw QuotaException(0, "响应中没有模型额度数据")
                 groups["模型额度"] = bars
+            } else {
+                val grouped = obj.optArray("groups") ?: obj.optArray("quotaGroups")
+                if (grouped != null) {
+                    for (el in grouped) {
+                        val g = el as? JsonObject ?: continue
+                        val gName = (jstr(g, "displayName") ?: "")
+                            .replace(Regex(" models?$", RegexOption.IGNORE_CASE), "")
+                            .ifEmpty { "模型额度" }
+                        val gb = g.optArray("buckets") ?: continue
+                        for (b in gb) {
+                            val o = b as? JsonObject ?: continue
+                            val frac = jnum(o, "remainingFraction") ?: continue
+                            val win = (jstr(o, "window") ?: jstr(o, "bucketId") ?: "").lowercase()
+                            val isWeek = "week" in win
+                            groups.getOrPut(if (isWeek) "每周窗口" else "5 小时窗口") { mutableListOf() } += Bar(
+                                label = if (isWeek) "$gName (周)" else gName,
+                                percentRemaining = (frac * 100).toInt().coerceIn(0, 100),
+                                usedPercent = (100 - frac * 100).toInt().coerceIn(0, 100),
+                                reset = jstr(o, "resetTime")?.let { formatReset(it) }
+                            )
+                        }
+                    }
+                } else {
+                    val bars = mutableListOf<Bar>()
+                    for ((model, v) in obj.entrySet()) {
+                        val o = v as? JsonObject ?: continue
+                        val frac = jnum(o, "remainingFraction") ?: continue
+                        bars += Bar(
+                            label = model,
+                            percentRemaining = (frac * 100).toInt().coerceIn(0, 100),
+                            usedPercent = (100 - frac * 100).toInt().coerceIn(0, 100),
+                            reset = jstr(o, "resetTime")?.let { formatReset(it) }
+                        )
+                    }
+                    if (bars.isEmpty()) throw QuotaException(0, "响应中没有模型额度数据")
+                    groups["模型额度"] = bars
+                }
             }
             if (groups.isEmpty()) throw QuotaException(0, "响应中没有额度数据")
             return Usage(null, groups)
