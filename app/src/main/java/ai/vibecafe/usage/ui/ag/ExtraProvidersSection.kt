@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -37,6 +38,7 @@ import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import com.kyant.backdrop.Backdrop
+import kotlinx.coroutines.delay
 import java.util.Locale
 
 /** 额度页供应商下拉选项。 */
@@ -279,18 +281,53 @@ private fun LoginArea(
                     Text("一键授权登录", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
                 }
             }
-            // GitHub 设备码：浏览器打开 github.com/login/device 后需手动输入此码
+            // GitHub 设备码：浏览器打开 github.com/login/device 后需手动输入此码，点击即可复制
             ps.oauthCode?.let { code ->
+                val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                var copied by remember(code) { mutableStateOf(false) }
+                LaunchedEffect(copied) {
+                    if (copied) {
+                        delay(2000)
+                        copied = false
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
-                Text("在浏览器登录 GitHub 并输入授权码：", fontSize = 11.sp, color = palette.InkMid)
+                Text("授权码已自动复制，浏览器打开后直接粘贴；点击授权码可再次复制：", fontSize = 11.sp, color = palette.InkMid)
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    code,
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Black,
-                    color = palette.InkHi,
-                    letterSpacing = 2.5.sp
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        code,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Black,
+                        color = palette.InkHi,
+                        letterSpacing = 2.5.sp,
+                        modifier = Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(code))
+                            copied = true
+                        }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(code))
+                            copied = true
+                        },
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                            contentDescription = "复制授权码",
+                            Modifier.size(15.dp),
+                            tint = if (copied) palette.Accent else palette.InkMid
+                        )
+                    }
+                    if (copied) {
+                        Text("已复制，去浏览器粘贴", fontSize = 11.sp, color = palette.Accent)
+                    }
+                }
             }
             Spacer(Modifier.height(12.dp))
             Text("或手动粘贴凭据", fontSize = 11.sp, color = palette.InkMid)

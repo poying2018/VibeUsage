@@ -1,6 +1,7 @@
 package ai.vibecafe.usage.ui.ag
 
 import android.app.Application
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import ai.vibecafe.usage.data.quota.AgGoogleOAuth
@@ -98,14 +99,27 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                         val dc = withContext(Dispatchers.IO) { ExtraQuotaApi.GitHubCopilot.startDeviceCode() }
                         update(id) { it.copy(oauthCode = dc.userCode) }
                         withContext(Dispatchers.Main) {
+                            // 跳浏览器前先把授权码写进剪贴板，用户落地 github.com/login/device 直接粘贴
+                            val cm = getApplication<Application>().getSystemService(Application.CLIPBOARD_SERVICE)
+                                as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("GitHub 授权码", dc.userCode))
+                            android.widget.Toast.makeText(
+                                getApplication(), "授权码 ${dc.userCode} 已复制，去浏览器粘贴", Toast.LENGTH_LONG
+                            ).show()
                             OAuthFlow.openBrowser(getApplication(), dc.verifyUrl)
                         }
                         val deadline = System.currentTimeMillis() + dc.expiresSec.coerceAtMost(840) * 1000
                         var token: String? = null
                         while (token == null && System.currentTimeMillis() < deadline) {
                             delay(dc.intervalSec.coerceAtLeast(5) * 1000)
-                            token = withContext(Dispatchers.IO) {
-                                ExtraQuotaApi.GitHubCopilot.pollToken(dc.deviceCode)
+                            try {
+                                token = withContext(Dispatchers.IO) {
+                                    ExtraQuotaApi.GitHubCopilot.pollToken(dc.deviceCode)
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                // 代理/网络抖动：本轮轮询跳过，继续等待用户在浏览器完成授权
                             }
                         }
                         listOf(
