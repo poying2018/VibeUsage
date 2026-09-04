@@ -184,3 +184,34 @@ private fun checkCallback(cb: OAuthFlow.LoopbackServer.Callback, expectedState: 
     if (cb.code == null) throw QuotaException(0, "未收到授权码，请重试")
     if (cb.state != expectedState) throw QuotaException(0, "state 校验失败，已拒绝回调")
 }
+
+// ─── OpenRouter 一键授权（官方 OAuth PKCE：/auth 授权页 → localhost 回调 → /auth/keys 换 Key）───
+
+object OpenRouterOAuth {
+
+    private const val PORT = 51123
+    private const val PATH = "/callback"
+
+    data class AuthCode(val code: String, val verifier: String)
+
+    /** 打开 OpenRouter 授权页并等待回调授权码（回调不回传 state，跳过该校验；兑换时需回传 verifier）。 */
+    suspend fun awaitCode(context: Context): AuthCode = coroutineScope {
+        val verifier = OAuthFlow.newVerifier()
+        val server = withContext(Dispatchers.IO) { OAuthFlow.LoopbackServer(PORT, PATH) }
+        try {
+            val pending = async { server.await() }
+            OAuthFlow.openBrowser(
+                context,
+                "https://openrouter.ai/auth?callback_url=" +
+                    OAuthFlow.enc("http://localhost:$PORT$PATH") +
+                    "&code_challenge=" + OAuthFlow.challenge(verifier) +
+                    "&code_challenge_method=S256"
+            )
+            val cb = pending.await()
+            if (cb.error != null) throw QuotaException(0, "授权取消：${cb.error}")
+            AuthCode(cb.code ?: throw QuotaException(0, "未收到授权码，请重试"), verifier)
+        } finally {
+            server.stop()
+        }
+    }
+}

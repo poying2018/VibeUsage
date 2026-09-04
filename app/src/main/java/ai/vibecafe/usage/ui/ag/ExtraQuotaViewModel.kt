@@ -3,8 +3,14 @@ package ai.vibecafe.usage.ui.ag
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import ai.vibecafe.usage.data.quota.AgGoogleOAuth
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi
+import ai.vibecafe.usage.data.quota.OAuthFlow
+import ai.vibecafe.usage.data.quota.OpenRouterOAuth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,13 +22,16 @@ data class ProviderState(
     val loggedIn: Boolean = false,
     val isLoading: Boolean = false,
     val account: String? = null,
+    /** GitHub 设备码授权流程中展示给用户手动输入的 user_code。 */
+    val oauthCode: String? = null,
     val groups: Map<String, List<ExtraQuotaApi.Bar>> = emptyMap(),
     val error: String? = null
 )
 
 /**
- * 「额度」页凭据型供应商（MiniMax / GLM / Kimi / DeepSeek / 无问芯穹 / 百炼 / 方舟）的额度 ViewModel。
- * 凭据粘贴一次即持久化到 quota_extra prefs（火山方舟为 AK/SK 双字段）。
+ * 「额度」页凭据型供应商的额度 ViewModel。
+ * 凭据粘贴一次即持久化到 quota_extra prefs；支持一键授权的供应商（GitHub/OpenRouter/Gemini CLI）
+ * 由 [loginOAuth] 完成 OAuth 后写入同样的存储键，刷新/解绑逻辑与粘贴型完全一致。
  */
 class ExtraQuotaViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -30,6 +39,9 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
     val state: StateFlow<Map<String, ProviderState>> = _state.asStateFlow()
 
     private val prefs = application.getSharedPreferences("quota_extra", Application.MODE_PRIVATE)
+
+    /** 进行中的一键授权任务：重复发起时取消旧流程（GitHub 轮询 / loopback 等待）。 */
+    private val oauthJobs = mutableMapOf<String, Job>()
 
     init {
         // 清理 v2.10.2 及之前残留的 Codex/Claude 凭据（两平台已移除）
@@ -61,6 +73,61 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
         refresh(id)
     }
 
+    // ─── 登录（一键授权）───
+
+    fun loginOAuth(id: String) {
+        val provider = ExtraProvider.byId(id) ?: return
+        val kind = provider.oauth ?: return
+        oauthJobs[id]?.cancel()
+        oauthJobs[id] = viewModelScope.launch {
+            update(id) { it.copy(isLoading = true, error = null, oauthCode = null) }
+            try {
+                val creds: List<String> = when (kind) {
+                    OAuthKind.GOOGLE -> listOf(
+                        withContext(Dispatchers.IO) { AgGoogleOAuth.login(getApplication()).refreshToken }
+                    )
+                    OAuthKind.OPENROUTER -> {
+                        val auth = withContext(Dispatchers.IO) { OpenRouterOAuth.awaitCode(getApplication()) }
+                        listOf(
+                            withContext(Dispatchers.IO) {
+                                ExtraQuotaApi.OpenRouter.exchangeOAuthCode(auth.code, auth.verifier)
+                            }
+                        )
+                    }
+                    OAuthKind.GITHUB_DEVICE -> {
+                        val dc = withContext(Dispatchers.IO) { ExtraQuotaApi.GitHubCopilot.startDeviceCode() }
+                        update(id) { it.copy(oauthCode = dc.userCode) }
+                        withContext(Dispatchers.Main) {
+                            OAuthFlow.openBrowser(getApplication(), dc.verifyUrl)
+                        }
+                        val deadline = System.currentTimeMillis() + dc.expiresSec.coerceAtMost(840) * 1000
+                        var token: String? = null
+                        while (token == null && System.currentTimeMillis() < deadline) {
+                            delay(dc.intervalSec.coerceAtLeast(5) * 1000)
+                            token = withContext(Dispatchers.IO) {
+                                ExtraQuotaApi.GitHubCopilot.pollToken(dc.deviceCode)
+                            }
+                        }
+                        listOf(
+                            token ?: throw ExtraQuotaApi.QuotaException(0, "设备码已过期，请重新发起授权")
+                        )
+                    }
+                }
+                prefs.edit().apply {
+                    provider.credPrefsKeys.forEachIndexed { i, k -> putString(k, creds[i]) }
+                }.apply()
+                oauthJobs.remove(id)
+                update(id) { ProviderState(loggedIn = true, isLoading = true) }
+                refresh(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                oauthJobs.remove(id)
+                update(id) { it.copy(isLoading = false, oauthCode = null, error = "授权失败：${e.message ?: "未知错误"}") }
+            }
+        }
+    }
+
     // ─── 刷新 ───
 
     fun refresh(id: String) = viewModelScope.launch {
@@ -79,6 +146,8 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                     error = if (usage.groups.isEmpty()) "计划未返回额度数据" else null
                 )
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             update(id) { it.copy(isLoading = false, error = "查询失败：${e.message ?: "未知错误"}") }
         }
@@ -88,6 +157,7 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
 
     fun logout(id: String) {
         val provider = ExtraProvider.byId(id) ?: return
+        oauthJobs.remove(id)?.cancel()
         prefs.edit().apply {
             provider.credPrefsKeys.forEach { remove(it) }
         }.apply()

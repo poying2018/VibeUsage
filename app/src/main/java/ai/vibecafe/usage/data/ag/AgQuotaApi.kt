@@ -272,6 +272,33 @@ object AgQuotaApi {
         throw lastErr ?: AgException(0, "loadCodeAssist 失败")
     }
 
+    /**
+     * Gemini CLI 额度端点（v1internal:retrieveUserQuota，与反重力同 host 同令牌）。
+     * 带 project 被 403 时去 project 重试（与 fetchQuotaSummary 同策略）；返回原始 JSON 供上层解析。
+     */
+    fun retrieveUserQuotaRaw(accessToken: String, projectId: String?): String {
+        val bodies = listOfNotNull(
+            projectId?.let { """{"project":"${it.replace("\"", "\\\"")}"}""" },
+            "{}"
+        )
+        var lastErr: Exception? = null
+        for (ep in ENDPOINTS) {
+            for (raw in bodies) {
+                try {
+                    return postViaAny("$ep/v1internal:retrieveUserQuota", raw.toRequestBody(JSON_TYPE), accessToken)
+                } catch (e: AgException) {
+                    if (e.code == 401) throw e
+                    lastErr = e
+                    if (e.code != 403) break
+                } catch (e: Exception) {
+                    lastErr = e
+                    break
+                }
+            }
+        }
+        throw lastErr ?: AgException(0, "retrieveUserQuota 失败")
+    }
+
     /** 拉取配额摘要；带 project 被 403 时去 project 重试（与桌面版一致） */
     fun fetchQuotaSummary(accessToken: String, projectId: String?): QuotaSummary {
         var lastErr: Exception? = null

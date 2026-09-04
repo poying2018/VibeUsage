@@ -7,9 +7,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BubbleChart
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Paid
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.ui.Modifier
@@ -18,6 +21,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi
+
+/** 支持一键授权的登录方式（凭据粘贴始终作为后备）。 */
+enum class OAuthKind {
+    /** Google OAuth（与反重力同通道，存 refresh_token）。 */
+    GOOGLE,
+
+    /** GitHub 设备码授权（浏览器输入 user_code，存 access_token）。 */
+    GITHUB_DEVICE,
+
+    /** OpenRouter 官方 OAuth（localhost 回调换 Key，存 sk-or Key）。 */
+    OPENROUTER
+}
 
 /** 「额度」页下拉可切换的凭据型供应商（反重力为独立面板，不在此列）。 */
 enum class ExtraProvider(
@@ -28,7 +43,9 @@ enum class ExtraProvider(
     /** 凭据输入框标签；1 个 = 单 API Key，2 个 = AK/SK 双凭据。 */
     val credLabels: List<String>,
     /** 接入提示（去哪里获取凭据）。 */
-    val hint: String
+    val hint: String,
+    /** 非空 = 页面顶部展示「一键授权登录」按钮。 */
+    val oauth: OAuthKind? = null
 ) {
     MINIMAX(
         "minimax", "MiniMax", Color(0xFFF0483E), Icons.Filled.BubbleChart,
@@ -64,6 +81,24 @@ enum class ExtraProvider(
         "ark", "火山方舟", Color(0xFF5AB0FF), Icons.Filled.RocketLaunch,
         listOf("AccessKey ID", "Secret AccessKey"),
         "火山引擎控制台 → API 访问密钥，粘贴 AK 与 SK（需已开通方舟 Coding Plan）"
+    ),
+    GITHUB(
+        "github", "GitHub Copilot", Color(0xFFA371F7), Icons.Filled.Code,
+        listOf("Personal Access Token (classic)"),
+        "推荐一键授权（GitHub 设备码，无需手动建 Token）；手动：GitHub Settings → Developer settings → PAT (classic) 勾选 copilot 权限",
+        OAuthKind.GITHUB_DEVICE
+    ),
+    OPENROUTER(
+        "openrouter", "OpenRouter", Color(0xFF00A67E), Icons.Filled.Hub,
+        listOf("API Key"),
+        "推荐一键授权（自动创建名为 VibeUsage 的 Key）；手动：openrouter.ai/keys 复制 sk-or- 开头的 Key",
+        OAuthKind.OPENROUTER
+    ),
+    GEMINICLI(
+        "geminicli", "Gemini CLI", Color(0xFF4285F4), Icons.Filled.Bolt,
+        listOf("Google Refresh Token（高级）"),
+        "与反重力同一 Google 授权通道，点「一键授权」即可；查询 Gemini Code Assist 各模型配额，手动粘贴 Token 仅限高级用户",
+        OAuthKind.GOOGLE
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */
@@ -79,6 +114,9 @@ enum class ExtraProvider(
         INFINI -> ExtraQuotaApi.Infini.fetchUsage(creds[0])
         BAILIAN -> ExtraQuotaApi.Bailian.fetchUsage(creds[0])
         ARK -> ExtraQuotaApi.Ark.fetchUsage(creds[0], creds[1])
+        GITHUB -> ExtraQuotaApi.GitHubCopilot.fetchUsage(creds[0])
+        OPENROUTER -> ExtraQuotaApi.OpenRouter.fetchUsage(creds[0])
+        GEMINICLI -> ExtraQuotaApi.GeminiCli.fetchUsage(creds[0])
     }
 
     companion object {

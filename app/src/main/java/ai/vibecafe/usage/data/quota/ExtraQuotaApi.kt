@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -667,6 +668,283 @@ object ExtraQuotaApi {
         private fun sha256Hex(data: ByteArray): String =
             java.security.MessageDigest.getInstance("SHA-256").digest(data)
                 .joinToString("") { String.format("%02x", it) }
+    }
+
+    // ─── GitHub Copilot（copilot_internal/user + 设备码授权）───
+
+    object GitHubCopilot {
+
+        /** VS Code Copilot 扩展的公开 client_id（GitHub App 设备码流程，非机密）。 */
+        private const val CLIENT_ID = "Iv1.b507a08c87ecfe98"
+
+        data class DeviceCode(
+            val deviceCode: String,
+            val userCode: String,
+            val verifyUrl: String,
+            val intervalSec: Long,
+            val expiresSec: Long
+        )
+
+        /** 发起设备码授权：用户在浏览器打开 verification_uri 输入 user_code。 */
+        fun startDeviceCode(): DeviceCode {
+            val form = FormBody.Builder().add("client_id", CLIENT_ID).build()
+            val resp = QuotaHttp.post(
+                "https://github.com/login/device/code", form,
+                bearer = null, proxyFirst = false, ua = "VibeUsage/2.14",
+                extraHeaders = mapOf("Accept" to "application/json")
+            )
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            return DeviceCode(
+                deviceCode = jstr(obj, "device_code")
+                    ?: throw QuotaException(0, jstr(obj, "error_description") ?: "未返回 device_code"),
+                userCode = jstr(obj, "user_code") ?: "",
+                verifyUrl = jstr(obj, "verification_uri") ?: "https://github.com/login/device",
+                intervalSec = jnum(obj, "interval")?.toLong() ?: 5L,
+                expiresSec = jnum(obj, "expires_in")?.toLong() ?: 899L
+            )
+        }
+
+        /**
+         * 轮询一次授权结果：用户完成后返回 access_token；
+         * 尚未确认（authorization_pending / slow_down）返回 null，其余错误抛出。
+         */
+        fun pollToken(deviceCode: String): String? {
+            val form = FormBody.Builder()
+                .add("client_id", CLIENT_ID)
+                .add("device_code", deviceCode)
+                .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+                .build()
+            val resp = QuotaHttp.post(
+                "https://github.com/login/oauth/access_token", form,
+                bearer = null, proxyFirst = false, ua = "VibeUsage/2.14",
+                extraHeaders = mapOf("Accept" to "application/json")
+            )
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            jstr(obj, "access_token")?.let { return it }
+            return when (val err = jstr(obj, "error")) {
+                "authorization_pending", "slow_down" -> null
+                null -> throw QuotaException(0, "授权响应缺少 access_token")
+                else -> throw QuotaException(0, jstr(obj, "error_description") ?: err)
+            }
+        }
+
+        /** GET /copilot_internal/user：quota_snapshots（chat / completions / premium_interactions）。 */
+        fun fetchUsage(token: String): Usage {
+            val resp = QuotaHttp.get(
+                "https://api.github.com/copilot_internal/user",
+                bearer = token, proxyFirst = false, ua = "VibeUsage/2.14",
+                extraHeaders = mapOf("Accept" to "application/vnd.github+json")
+            )
+            return parse(resp)
+        }
+
+        internal fun parse(resp: String): Usage {
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            val plan = jstr(obj, "copilot_plan") ?: jstr(obj, "access_type_sku")
+            val snapshots = obj.optObject("quota_snapshots")
+                ?: throw QuotaException(0, "响应缺少 quota_snapshots（确认 Token 已开通 Copilot 权限）")
+            val resetDate = listOf("quota_reset_date_utc", "quota_reset_date")
+                .firstNotNullOfOrNull { jstr(obj, it) }?.let { r ->
+                    try {
+                        val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(r.take(10))
+                        d?.let { SimpleDateFormat("MM-dd", Locale.getDefault()).format(it) + " 重置" }
+                    } catch (_: Exception) { null }
+                }
+            val groups = linkedMapOf<String, MutableList<Bar>>()
+            fun snap(key: String, label: String) {
+                val s = snapshots.optObject(key) ?: return
+                val unlimited = s.get("unlimited")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+                val entitlement = jnum(s, "entitlement") ?: 0.0
+                val remaining = jnum(s, "remaining")
+                val percent = jnum(s, "percent_remaining")
+                val pctRemain = when {
+                    unlimited -> 100
+                    percent != null && percent >= 0 -> percent
+                    remaining != null && entitlement > 0 -> remaining * 100.0 / entitlement
+                    else -> 100.0
+                }.toInt().coerceIn(0, 100)
+                groups.getOrPut("订阅额度") { mutableListOf() } += Bar(
+                    label = label,
+                    percentRemaining = pctRemain,
+                    usedPercent = (100 - pctRemain).coerceIn(0, 100),
+                    counts = when {
+                        unlimited -> "无限制"
+                        remaining != null && entitlement > 0 -> "剩 ${compact(remaining)}/${compact(entitlement)}"
+                        else -> null
+                    },
+                    reset = resetDate
+                )
+            }
+            snap("chat", "聊天对话")
+            snap("completions", "代码补全")
+            snap("premium_interactions", "高级请求")
+            if (groups.isEmpty()) throw QuotaException(0, "套餐未返回额度快照")
+            return Usage(
+                when (plan) {
+                    "free" -> "Free"
+                    "individual", "professional" -> "Pro"
+                    "pro_plus" -> "Pro+"
+                    "business" -> "Business"
+                    "enterprise" -> "Enterprise"
+                    null -> null
+                    else -> plan.replaceFirstChar { it.uppercase() }
+                },
+                groups
+            )
+        }
+    }
+
+    // ─── OpenRouter（官方 /api/v1/key：Key 限额与用量）───
+
+    object OpenRouter {
+
+        private const val API = "https://openrouter.ai/api/v1"
+        private const val UA = "VibeUsage/2.14"
+
+        /** OAuth 授权码换 Key（POST /auth/keys，官方 PKCE 流程）：返回 sk-or-v1-...。 */
+        fun exchangeOAuthCode(code: String, verifier: String): String {
+            val body = gson.toJson(
+                JsonObject().apply {
+                    addProperty("code", code)
+                    addProperty("code_verifier", verifier)
+                    addProperty("code_challenge_method", "S256")
+                }
+            ).toRequestBody(JSON_TYPE)
+            val resp = QuotaHttp.post(
+                "$API/auth/keys", body,
+                bearer = null, proxyFirst = true, ua = UA
+            )
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            return jstr(obj, "key") ?: jstr(obj.optObject("data"), "key")
+                ?: throw QuotaException(0, "授权成功但未返回 Key，请重试")
+        }
+
+        /** GET /api/v1/key：data.usage（已花费 USD）/ limit（限额，null = 无限额）/ is_free_tier。 */
+        fun fetchUsage(apiKey: String): Usage {
+            val resp = QuotaHttp.get(
+                "$API/key", bearer = apiKey, proxyFirst = true, ua = "VibeUsage/2.14"
+            )
+            return parse(resp)
+        }
+
+        internal fun parse(resp: String): Usage {
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            val data = obj.optObject("data") ?: throw QuotaException(0, "响应缺少 data")
+            val label = jstr(data, "label")
+            val freeTier = data.get("is_free_tier")?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+            val usage = jnum(data, "usage") ?: 0.0
+            val limit = jnum(data, "limit")
+            val groups = linkedMapOf<String, MutableList<Bar>>()
+            groups["Key 额度"] = mutableListOf(
+                if (limit != null && limit > 0) {
+                    val pctUsed = (usage / limit * 100.0).coerceIn(0.0, 100.0)
+                    Bar(
+                        label = label ?: "Default Key",
+                        percentRemaining = (100 - pctUsed).toInt().coerceIn(0, 100),
+                        usedPercent = pctUsed.toInt().coerceIn(0, 100),
+                        counts = String.format(Locale.US, "已用 $%.2f / 限额 $%.2f", usage, limit)
+                    )
+                } else {
+                    Bar(
+                        label = label ?: "Default Key",
+                        percentRemaining = 100,
+                        counts = String.format(
+                            Locale.US, "已用 $%.2f · 无限额%s", usage,
+                            if (freeTier) "（免费层）" else ""
+                        )
+                    )
+                }
+            )
+            jnum(data, "usage_daily")?.let { daily ->
+                groups["今日用量"] = mutableListOf(
+                    Bar(
+                        label = "今日消耗",
+                        percentRemaining = 100,
+                        counts = String.format(Locale.US, "$%.2f", daily)
+                    )
+                )
+            }
+            return Usage(if (freeTier) "Free 层" else null, groups)
+        }
+    }
+
+    // ─── Gemini CLI（cloudcode-pa v1internal:retrieveUserQuota，与反重力同一 Google 授权）───
+
+    object GeminiCli {
+
+        /** 复用反重力的 Google refresh_token（cloud-platform scope 覆盖本端点）。 */
+        fun fetchUsage(refreshToken: String): Usage {
+            val ag = ai.vibecafe.usage.data.ag.AgQuotaApi
+            val token = try {
+                ag.refreshAccessToken(refreshToken)
+            } catch (e: ai.vibecafe.usage.data.ag.AgQuotaApi.AgException) {
+                throw QuotaException(
+                    if (e.code == 401) 401 else 0,
+                    if (e.code == 401) "Google 授权已失效，请重新授权" else (e.message ?: "刷新令牌失败")
+                )
+            }
+            // 先取项目 ID（失败不阻塞：retrieveUserQuota 允许空 project 重试）
+            val project = try { ag.loadAssist(token.accessToken).projectId } catch (_: Exception) { null }
+            val resp = try {
+                ag.retrieveUserQuotaRaw(token.accessToken, project)
+            } catch (e: ai.vibecafe.usage.data.ag.AgQuotaApi.AgException) {
+                throw QuotaException(
+                    if (e.code == 401) 401 else e.code,
+                    when {
+                        e.code == 401 -> "Google 授权已失效，请重新授权"
+                        // 该端点仅对开通 Gemini Code Assist 的账号生效（免费个体层也算；
+                        // 反重力/Google AI Pro 订阅不含此 license，实测返回 403 SUBSCRIPTION_REQUIRED）
+                        e.code == 403 -> "该账号未开通 Gemini Code Assist 授权（免费层需在 Code Assist 页面激活；反重力订阅不含此配额）"
+                        else -> e.message ?: "查询失败"
+                    }
+                )
+            }
+            return parse(resp)
+        }
+
+        /** 兼容两种形态：groups[].buckets[]（与反重力同构）/ 平铺 {模型ID:{remainingFraction,resetTime}}。 */
+        internal fun parse(resp: String): Usage {
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            val groups = linkedMapOf<String, MutableList<Bar>>()
+            val grouped = obj.optArray("groups") ?: obj.optArray("quotaGroups")
+            if (grouped != null) {
+                for (el in grouped) {
+                    val g = el as? JsonObject ?: continue
+                    val gName = (jstr(g, "displayName") ?: "")
+                        .replace(Regex(" models?$", RegexOption.IGNORE_CASE), "")
+                        .ifEmpty { "模型额度" }
+                    val buckets = g.optArray("buckets") ?: continue
+                    for (b in buckets) {
+                        val o = b as? JsonObject ?: continue
+                        val frac = jnum(o, "remainingFraction") ?: continue
+                        val win = (jstr(o, "window") ?: jstr(o, "bucketId") ?: "").lowercase()
+                        val isWeek = "week" in win
+                        groups.getOrPut(if (isWeek) "每周窗口" else "5 小时窗口") { mutableListOf() } += Bar(
+                            label = if (isWeek) "$gName (周)" else gName,
+                            percentRemaining = (frac * 100).toInt().coerceIn(0, 100),
+                            usedPercent = (100 - frac * 100).toInt().coerceIn(0, 100),
+                            reset = jstr(o, "resetTime")?.let { formatReset(it) }
+                        )
+                    }
+                }
+            } else {
+                val bars = mutableListOf<Bar>()
+                for ((model, v) in obj.entrySet()) {
+                    val o = v as? JsonObject ?: continue
+                    val frac = jnum(o, "remainingFraction") ?: continue
+                    bars += Bar(
+                        label = model,
+                        percentRemaining = (frac * 100).toInt().coerceIn(0, 100),
+                        usedPercent = (100 - frac * 100).toInt().coerceIn(0, 100),
+                        reset = jstr(o, "resetTime")?.let { formatReset(it) }
+                    )
+                }
+                if (bars.isEmpty()) throw QuotaException(0, "响应中没有模型额度数据")
+                groups["模型额度"] = bars
+            }
+            if (groups.isEmpty()) throw QuotaException(0, "响应中没有额度数据")
+            return Usage(null, groups)
+        }
     }
 
     // ─── 共用格式化 ───

@@ -9,8 +9,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Logout
@@ -147,8 +149,11 @@ fun QuotaSwitcher(
             ) {
                 Column(
                     Modifier
-                        // 贴内容宽度的窄面板（不再横向撑满），整体左对齐在按钮下方
+                        // 贴内容宽度的窄面板（不再横向撑满），整体左对齐在按钮下方；
+                        // 供应商已增至 11 个，超屏高时面板内滚动
                         .widthIn(min = 230.dp, max = 320.dp)
+                        .heightIn(max = 430.dp)
+                        .verticalScroll(rememberScrollState())
                         .glassCard(menuBackdrop, cornerRadius = 20.dp)
                         .padding(vertical = 8.dp)
                 ) {
@@ -242,7 +247,7 @@ fun ProviderPage(
     }
 }
 
-// ─── 未接入：粘贴凭据（1 个 API Key，或方舟 AK/SK 双字段）───
+// ─── 未接入：一键授权（支持 OAuth 的供应商）+ 粘贴凭据后备 ───
 
 @Composable
 private fun LoginArea(
@@ -255,6 +260,42 @@ private fun LoginArea(
     val palette = LocalGlassPalette.current
 
     Column {
+        if (provider.oauth != null) {
+            LiquidButton(
+                onClick = { viewModel.loginOAuth(provider.id) },
+                backdrop = backdrop,
+                enabled = !ps.isLoading,
+                surfaceColor = provider.color,
+                modifier = Modifier.fillMaxWidth().height(42.dp)
+            ) {
+                if (ps.isLoading) {
+                    CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (ps.oauthCode != null) "等待浏览器授权…" else "正在发起授权…",
+                        fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White
+                    )
+                } else {
+                    Text("一键授权登录", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                }
+            }
+            // GitHub 设备码：浏览器打开 github.com/login/device 后需手动输入此码
+            ps.oauthCode?.let { code ->
+                Spacer(Modifier.height(10.dp))
+                Text("在浏览器登录 GitHub 并输入授权码：", fontSize = 11.sp, color = palette.InkMid)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    code,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.Black,
+                    color = palette.InkHi,
+                    letterSpacing = 2.5.sp
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("或手动粘贴凭据", fontSize = 11.sp, color = palette.InkMid)
+            Spacer(Modifier.height(8.dp))
+        }
         provider.credLabels.forEachIndexed { i, label ->
             if (i > 0) Spacer(Modifier.height(10.dp))
             OutlinedTextField(
@@ -288,7 +329,7 @@ private fun LoginArea(
             surfaceColor = provider.color,
             modifier = Modifier.fillMaxWidth().height(42.dp)
         ) {
-            if (ps.isLoading) {
+            if (ps.isLoading && provider.oauth == null) {
                 CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
                 Text("查询中…", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
@@ -317,6 +358,9 @@ private val ExtraProvider.credPlaceholders: List<String>
         ExtraProvider.INFINI -> listOf("sk-cp-...")
         ExtraProvider.BAILIAN -> listOf("sk-...（DashScope 业务 Key）")
         ExtraProvider.ARK -> listOf("AKTPL...（AccessKey ID）", "Secret AccessKey")
+        ExtraProvider.GITHUB -> listOf("ghp_… / ghu_…")
+        ExtraProvider.OPENROUTER -> listOf("sk-or-v1-…")
+        ExtraProvider.GEMINICLI -> listOf("1//0g…（Google Refresh Token）")
     }
 
 // ─── 已接入：状态行 + 分组明细 ───
