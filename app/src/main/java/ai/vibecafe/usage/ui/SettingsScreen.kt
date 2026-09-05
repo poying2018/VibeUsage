@@ -2,6 +2,8 @@ package ai.vibecafe.usage.ui
 
 import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.core.ThemeMode
+import ai.vibecafe.usage.data.CredentialBackup
+import ai.vibecafe.usage.ui.ag.ExtraQuotaViewModel
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
 import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.LiquidSlider
@@ -9,6 +11,8 @@ import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.glass.glassTile
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +33,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
@@ -52,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import android.widget.Toast
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -360,6 +368,72 @@ fun SettingsScreen(
                 title = "分享用量卡",
                 subtitle = "生成并分享当前用量卡片",
                 onClick = onShareCard
+            )
+        }
+
+        // —— 凭据备份 ——
+        SectionLabel("凭据备份")
+        val backupContext = LocalContext.current
+        val extraVm: ExtraQuotaViewModel = viewModel()
+        val exportLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/json")
+        ) { uri ->
+            if (uri != null) runCatching {
+                val text = CredentialBackup.export(backupContext)
+                    ?: throw IllegalStateException("还没有已接入的凭据")
+                backupContext.contentResolver.openOutputStream(uri)?.use {
+                    it.write(text.toByteArray())
+                } ?: throw IllegalStateException("写不进所选位置")
+            }.onSuccess {
+                Toast.makeText(backupContext, "已导出凭据备份（明文，注意保管）", Toast.LENGTH_LONG).show()
+            }.onFailure {
+                Toast.makeText(backupContext, "导出失败：${it.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+        val importLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) runCatching {
+                val text = backupContext.contentResolver.openInputStream(uri)?.use {
+                    it.readBytes().decodeToString()
+                } ?: throw IllegalStateException("读不到所选文件")
+                val restored = CredentialBackup.import(backupContext, text)
+                extraVm.onCredsImported()
+                restored
+            }.onSuccess {
+                Toast.makeText(backupContext, "已恢复 $it 项凭据，正在刷新额度", Toast.LENGTH_LONG).show()
+            }.onFailure {
+                Toast.makeText(backupContext, "导入失败：${it.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fadeSlideIn(180)
+                .glassCard(backdrop, cornerRadius = 26.dp)
+        ) {
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.FileDownload,
+                title = "导出接入凭据",
+                subtitle = "扩展供应商 + 反重力凭据存为 JSON（明文，勿外传）",
+                showChevron = false,
+                onClick = {
+                    val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
+                        .format(java.util.Date())
+                    exportLauncher.launch("vibeusage-backup-$stamp.json")
+                }
+            )
+            CardDivider()
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.FileUpload,
+                title = "导入接入凭据",
+                subtitle = "从备份 JSON 恢复，完成后自动刷新各面板",
+                showChevron = false,
+                onClick = {
+                    importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+                }
             )
         }
 

@@ -179,6 +179,19 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
 
     // ─── 解绑 ───
 
+    /** 导入凭据备份后调用：按 prefs 现状重建各供应商状态并全部刷新。 */
+    fun onCredsImported() {
+        _state.value = _state.value.toMutableMap().apply {
+            ExtraProvider.entries.forEach { p ->
+                val loggedIn = p.credPrefsKeys.all { prefs.getString(it, null) != null }
+                put(p.id, if (loggedIn) ProviderState(loggedIn = true) else ProviderState())
+            }
+        }
+        ExtraProvider.entries.forEach { p ->
+            if (_state.value[p.id]?.loggedIn == true) refresh(p.id)
+        }
+    }
+
     fun logout(id: String) {
         val provider = ExtraProvider.byId(id) ?: return
         oauthJobs.remove(id)?.cancel()

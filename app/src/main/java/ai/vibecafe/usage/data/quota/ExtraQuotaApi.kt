@@ -1107,12 +1107,29 @@ object ExtraQuotaApi {
                 percentRemaining = 100,
                 counts = if (reqs > 0) "${compact(reqs)} 次请求 · 免费不限量" else "免费档 · 不限量"
             )
+            // 赠费余额：available_bonus_minor 字段名带 minor 但实为元单位（实测随调用扣减），
+            // 非 ¥0 模型调用就从这里按量扣；拿不到不阻塞面板
+            val bonus = try {
+                jnum(call("/api/user/balance", jwt), "available_bonus_minor")
+            } catch (_: Exception) {
+                null
+            }
+            val groups = linkedMapOf(
+                "今日消耗" to listOf(bar(dayTokens, dayReqs, "今日无消耗")),
+                "本月消耗" to listOf(bar(monTokens, monReqs, "本月无消耗"))
+            )
+            bonus?.let {
+                groups["赠费余额"] = listOf(
+                    Bar(
+                        label = "¥${String.format(Locale.US, "%.2f", it)} 可用",
+                        percentRemaining = 100,
+                        counts = "非 ¥0 模型调用按量从赠费扣除"
+                    )
+                )
+            }
             return Usage(
                 "免费档",
-                linkedMapOf(
-                    "今日消耗" to listOf(bar(dayTokens, dayReqs, "今日无消耗")),
-                    "本月消耗" to listOf(bar(monTokens, monReqs, "本月无消耗"))
-                ),
+                groups,
                 models = agnesModels(jwt),
                 modelsLabel = "免费模型（¥0）"
             )
@@ -1324,18 +1341,23 @@ internal object QuotaHttp {
         build: (String, String?) -> Request
     ): String {
         var lastErr: Exception? = null
+        val host = try { java.net.URI(target).host ?: "" } catch (_: Exception) { "" }
+        // 中转熔断：某主机经中转连续失败（如 Agnes WAF 封 CF 出口，任何 UA 都 403 1010）
+        // 达到阈值后，TTL 内不再尝试该主机的中转线路，全部直连，省掉每次刷新的空跳。
+        val useRelay = !relayTripped(host)
         val urls = when {
             directOnly -> listOf(target)
-            proxyFirst -> listOf(proxied(target), target)
-            else -> listOf(target, proxied(target))
+            proxyFirst -> if (useRelay) listOf(proxied(target), target) else listOf(target)
+            else -> if (useRelay) listOf(target, proxied(target)) else listOf(target)
         }
         for ((index, u) in urls.distinct().withIndex()) {
+            val viaRelay = u.startsWith(BUILTIN_PROXY)
             try {
                 val req = build(u, bearer).newBuilder()
                 // 中转会覆盖 UA 并丢弃业务头：带 X-Proxy-UA / X-Quota-Pass-* 供扩展版 worker 透传
                 req.header("User-Agent", ua)
                 req.header("X-Proxy-UA", ua)
-                if (u.contains("/proxy?")) {
+                if (viaRelay) {
                     extraHeaders.forEach { (k, v) -> req.header("X-Quota-Pass-$k", v) }
                 } else {
                     extraHeaders.forEach { (k, v) -> req.header(k, v) }
@@ -1345,18 +1367,47 @@ internal object QuotaHttp {
                     if (!resp.isSuccessful) {
                         throw ExtraQuotaApi.QuotaException(resp.code, httpErrorBody(text, resp.code))
                     }
+                    if (viaRelay) noteRelayResult(host, true)
                     return text
                 }
             } catch (e: ExtraQuotaApi.QuotaException) {
+                if (viaRelay && e.code != 401) noteRelayResult(host, false)
                 // 鉴权类错误（401）在直连/中转下语义一致，直接抛；
                 // 403 可能只是某条线路被拦（如 Cloudflare 质询页），要给备用线路机会，试完所有线路再抛
                 if (e.code == 401 || index == urls.distinct().lastIndex) throw e
                 lastErr = e
             } catch (e: Exception) {
+                if (viaRelay) noteRelayResult(host, false)
                 lastErr = e
             }
         }
         throw lastErr ?: ExtraQuotaApi.QuotaException(0, "请求失败")
+    }
+
+    // ─── 中转熔断状态（进程内，不持久化：重启后最多再吃 3 次空跳）───
+
+    private const val RELAY_TRIP_THRESHOLD = 3
+    private const val RELAY_TRIP_TTL_MS = 10 * 60 * 1000L
+    private val relayFailures = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val relayBlockedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun relayTripped(host: String): Boolean =
+        (relayBlockedUntil[host] ?: 0L) > System.currentTimeMillis()
+
+    /** 中转成功清零；失败累计，达到阈值拉闸 TTL（401 不算——那说明中转已把请求送达目标）。 */
+    private fun noteRelayResult(host: String, ok: Boolean) {
+        if (host.isEmpty()) return
+        if (ok) {
+            relayFailures.remove(host)
+            relayBlockedUntil.remove(host)
+            return
+        }
+        val n = (relayFailures[host] ?: 0) + 1
+        relayFailures[host] = n
+        if (n >= RELAY_TRIP_THRESHOLD) {
+            relayBlockedUntil[host] = System.currentTimeMillis() + RELAY_TRIP_TTL_MS
+            relayFailures.remove(host)
+        }
     }
 
     private fun proxied(target: String): String =
