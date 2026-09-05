@@ -29,9 +29,6 @@ enum class OAuthKind {
     /** Google OAuth（与反重力同通道，存 refresh_token）。 */
     GOOGLE,
 
-    /** Gemini CLI 官方开源 client 的 Google OAuth（Code Assist 免费/付费层，存 refresh_token）。 */
-    GEMINI_CLI_OAUTH,
-
     /** GitHub 设备码授权（浏览器输入 user_code，存 access_token）。 */
     GITHUB_DEVICE,
 
@@ -101,12 +98,6 @@ enum class ExtraProvider(
         "推荐一键授权（自动创建名为 VibeUsage 的 Key）；手动：openrouter.ai/keys 复制 sk-or- 开头的 Key",
         OAuthKind.OPENROUTER
     ),
-    GEMINICLI(
-        "geminicli", "Gemini CLI", Color(0xFF4285F4), Icons.Filled.Bolt,
-        listOf("Google Refresh Token（高级）"),
-        "查询 Gemini Code Assist 各模型配额（标准/企业层）；注意：Google 已将个人免费层并入反重力，免费额度请看「反重力」面板",
-        OAuthKind.GEMINI_CLI_OAUTH
-    ),
     DOUBAO(
         "doubao", "豆包", Color(0xFF4E6EF2), Icons.Filled.SmartToy,
         listOf("sessionid Cookie"),
@@ -134,7 +125,6 @@ enum class ExtraProvider(
         ARK -> ExtraQuotaApi.Ark.fetchUsage(creds[0], creds[1])
         GITHUB -> ExtraQuotaApi.GitHubCopilot.fetchUsage(creds[0])
         OPENROUTER -> ExtraQuotaApi.OpenRouter.fetchUsage(creds[0])
-        GEMINICLI -> ExtraQuotaApi.GeminiCli.fetchUsage(creds[0])
         DOUBAO -> ExtraQuotaApi.Doubao.fetchUsage(creds[0])
         AGNES -> ExtraQuotaApi.Agnes.fetchUsage(creds[0], creds[1])
     }

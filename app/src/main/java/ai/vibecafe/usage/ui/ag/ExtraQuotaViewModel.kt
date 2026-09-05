@@ -51,10 +51,12 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
     init {
         // 清理 v2.10.2 及之前残留的 Codex/Claude 凭据（两平台已移除）
         // 清理 v2.16.0 的 Agnes 单 Key 凭据（v2.17 起改为账号密码登录，Key 已废弃）
+        // 清理 v2.17.1 及之前的 Gemini CLI 凭据（该供应商已移除）
         prefs.edit()
             .remove("codex_auth_raw").remove("codex_access").remove("codex_access_exp")
             .remove("claude_creds_raw").remove("claude_access").remove("claude_access_exp")
             .remove("agnes_key")
+            .remove("geminicli_key")
             .apply()
         ExtraProvider.entries.forEach { p ->
             if (p.credPrefsKeys.all { prefs.getString(it, null) != null }) {
@@ -92,13 +94,6 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                 val creds: List<String> = when (kind) {
                     OAuthKind.GOOGLE -> listOf(
                         withContext(Dispatchers.IO) { AgGoogleOAuth.login(getApplication()).refreshToken }
-                    )
-                    OAuthKind.GEMINI_CLI_OAUTH -> listOf(
-                        withContext(Dispatchers.IO) {
-                            ExtraQuotaApi.GeminiCli.exchangeCode(
-                                ai.vibecafe.usage.data.quota.GeminiCliOAuth.awaitCode(getApplication())
-                            )
-                        }
                     )
                     OAuthKind.OPENROUTER -> {
                         val auth = withContext(Dispatchers.IO) { OpenRouterOAuth.awaitCode(getApplication()) }
