@@ -385,7 +385,7 @@ fun SettingsScreen(
                     it.write(text.toByteArray())
                 } ?: throw IllegalStateException("写不进所选位置")
             }.onSuccess {
-                Toast.makeText(backupContext, "已导出凭据备份（明文，注意保管）", Toast.LENGTH_LONG).show()
+                Toast.makeText(backupContext, "已导出加密备份（凭据已 AES-256-GCM 加密，仅 VibeUsage 可解密）", Toast.LENGTH_LONG).show()
             }.onFailure {
                 Toast.makeText(backupContext, "导出失败：${it.message}", Toast.LENGTH_SHORT).show()
             }
@@ -416,7 +416,7 @@ fun SettingsScreen(
                 backdrop = backdrop,
                 icon = Icons.Filled.FileDownload,
                 title = "导出接入凭据",
-                subtitle = "扩展供应商 + 反重力凭据存为 JSON（明文，勿外传）",
+                subtitle = "扩展供应商 + 反重力凭据加密存为 JSON，仅 VibeUsage 可解密",
                 showChevron = false,
                 onClick = {
                     val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
@@ -429,7 +429,7 @@ fun SettingsScreen(
                 backdrop = backdrop,
                 icon = Icons.Filled.FileUpload,
                 title = "导入接入凭据",
-                subtitle = "从备份 JSON 恢复，完成后自动刷新各面板",
+                subtitle = "从加密备份恢复（兼容旧版明文 JSON），完成后自动刷新各面板",
                 showChevron = false,
                 onClick = {
                     importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
