@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.widget.Toast
 import ai.vibecafe.usage.BuildConfig
 import ai.vibecafe.usage.core.ApiKeyStore
 import ai.vibecafe.usage.data.UpdateChecker
@@ -287,10 +288,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** 生成玻璃风格总结分享卡并拉起系统分享（IO 线程绘制，主线程仅发起）。 */
     fun shareCard() {
         val s = _uiState.value
-        val stats = s.stats ?: return
+        val stats = s.stats
         val app = getApplication<Application>()
+        if (stats == null) {
+            Toast.makeText(app, "还没有用量数据，先刷新一下", Toast.LENGTH_SHORT).show()
+            return
+        }
         viewModelScope.launch {
-            val payload = ai.vibecafe.usage.share.ShareCard.Payload(
+            runCatching {
+                val payload = ai.vibecafe.usage.share.ShareCard.Payload(
                 rangeLabel = when (s.selectedTimeRange) {
                     TimeRange.CUSTOM -> s.customRange?.let { "总消耗 ${it.from} ~ ${it.to}" } ?: "总消耗（自定义范围）"
                     else -> "总消耗 · " + mapOf(
@@ -304,12 +310,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 toolCount = stats.toolCount,
                 modelCount = stats.modelCount,
                 sessionCount = stats.sessionCount,
-                monthProjected = s.monthProjection?.projected
-            )
-            val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                ai.vibecafe.usage.share.ShareCard.generate(app, payload)
-            }
-            runCatching { ai.vibecafe.usage.share.ShareCard.share(app, file) }
+                        monthProjected = s.monthProjection?.projected,
+                        trendPercent = s.trendPercent,
+                        topTools = s.toolDistribution.take(3).map {
+                            ai.vibecafe.usage.share.ShareCard.ShareItem(it.tool, it.cost, it.percentage / 100f)
+                        },
+                        topModels = s.modelCosts.take(3).map {
+                            ai.vibecafe.usage.share.ShareCard.ShareItem(
+                                it.model, it.cost,
+                                (if (stats.totalCost > 0.0) it.cost / stats.totalCost else 0.0).toFloat()
+                            )
+                        },
+                        deviceFilter = s.selectedDevices.takeIf { it.isNotEmpty() }?.sorted()?.joinToString("、"),
+                        inputTokens = stats.totalInputTokens,
+                        outputTokens = stats.totalOutputTokens
+                    )
+                    val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        ai.vibecafe.usage.share.ShareCard.generate(app, payload)
+                    }
+                    ai.vibecafe.usage.share.ShareCard.share(app, file)
+                }.onFailure {
+                    Toast.makeText(app, "分享卡片生成失败：${it.message}", Toast.LENGTH_SHORT).show()
+                }
         }
     }
 
