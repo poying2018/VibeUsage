@@ -1231,9 +1231,6 @@ object ExtraQuotaApi {
         private const val EXPIRED =
             "小米账号登录已失效，请重新复制 Cookie 里的 userId 与 api-platform_serviceToken"
 
-        /** 套餐主额度条目的类型名；其余条目（补偿积分、MiMo Claw 等）各自成行。 */
-        private const val PLAN_QUOTA = "plan_total_token"
-
         private val NUM_COOKIE = Regex("""userId["'\s]*[=:]["'\s]*(\d{4,})""")
         private val TOKEN_COOKIE = Regex("""api-platform_serviceToken["'\s]*[=:]["'\s]*"?([^";,\s]+)""")
 
@@ -1314,55 +1311,66 @@ object ExtraQuotaApi {
         }
 
         /**
-         * GET /tokenPlan/usage（+ /tokenPlan/detail 供订阅判定与重置时间）。
-         * 首行固定「本月套餐用量」，其余条目（补偿积分等）各自成行。
+         * GET /tokenPlan/usage（+ /tokenPlan/detail 供订阅判定与周期结束时间）。
+         *
+         * 已订阅 Lite 账号的实测形态：套餐周期额度在 `data.usage.items`、自然月累计在
+         * `data.monthUsage.items`，条目键叫 **name**（plan_total_token / compensation_total_token /
+         * month_total_token），而 **percent 是 0–1 的小数**（0.033 就是 3.3%）。所以一律以
+         * used/limit 折算百分比，比例字段只在拿不到绝对量时兜底——直接对 0.033 取整会永远显示 0%。
          */
         internal fun parsePlan(resp: String, detailResp: String?): List<Bar> {
             val data = envelope(resp).optObject("data") ?: return emptyList()
             val detail = detailResp?.let { runCatching { envelope(it).optObject("data") }.getOrNull() }
-            val month = data.optObject("monthUsage")
-            val items = mutableListOf<JsonObject>()
-            (month?.optArray("items") ?: data.optArray("usage"))?.forEach { (it as? JsonObject)?.let(items::add) }
+            val items = listOf(data.optObject("usage"), data.optObject("monthUsage")).flatMap { group ->
+                (group?.optArray("items") ?: JsonArray()).mapNotNull { it as? JsonObject }
+            }
             val subscribed = detail?.let { jstr(it, "planName") != null } ?: items.isNotEmpty()
             if (!subscribed) return emptyList()
-
-            val planItem = items.firstOrNull { (jstr(it, "type") ?: PLAN_QUOTA) == PLAN_QUOTA }
-            var used = planItem?.firstNum("used", "consumed", "usedCredits", "usedToken")
-            var limit = planItem?.firstNum("limit", "total", "quota", "totalToken")
-            if (used == null || limit == null) {
-                val sumUsed = items.sumOf { it.firstNum("used", "consumed", "usedCredits", "usedToken") ?: 0.0 }
-                val sumLimit = items.sumOf { it.firstNum("limit", "total", "quota", "totalToken") ?: 0.0 }
-                if (used == null && items.isNotEmpty()) used = sumUsed
-                if (limit == null && sumLimit > 0) limit = sumLimit
-            }
-            val percent = jnum(month, "percent")?.toInt()?.coerceIn(0, 100) ?: used?.let { u ->
-                limit?.takeIf { l -> l > 0 }?.let { l -> ((u / l) * 100).toInt().coerceIn(0, 100) }
-            }
-            val bars = mutableListOf<Bar>()
-            // 既没给百分比也没给可算出百分比的量 → 宁可不画，也不画一条「剩余 0%」吓人
-            if (percent != null) bars += Bar(
-                label = "本月套餐用量",
-                percentRemaining = 100 - percent,
-                usedPercent = percent,
-                counts = if (used != null && limit != null && limit > 0)
-                    "${credits(used)} / ${credits(limit)}" else null,
-                reset = detail?.let { jstr(it, "currentPeriodEnd") }?.let { formatReset(it) }
-            )
-            for (item in items.filter { it !== planItem }) {
-                // 没有类型名的条目已折算进首行，重复出行只会让人误以为是两份额度
-                val type = jstr(item, "type") ?: continue
-                val u = item.firstNum("used", "consumed", "usedCredits", "usedToken")
-                val l = item.firstNum("limit", "total", "quota", "totalToken")
-                val p = item.firstNum("percent", "usedPercent", "usagePercent")?.toInt()?.coerceIn(0, 100)
-                    ?: u?.let { uu -> l?.takeIf { ll -> ll > 0 }?.let { ll -> ((uu / ll) * 100).toInt().coerceIn(0, 100) } }
-                bars += Bar(
-                    label = if (type == "compensation_total_token") "补偿积分" else type,
-                    percentRemaining = 100 - (p ?: 100),
-                    usedPercent = p,
-                    counts = if (u != null && l != null && l > 0) "${credits(u)} / ${credits(l)}" else null
+            val reset = detail?.let { periodEnd(it) }
+            return items.mapNotNull { item ->
+                val name = jstr(item, "name") ?: jstr(item, "type") ?: return@mapNotNull null
+                val used = item.firstNum("used", "consumed", "usedCredits")
+                val limit = item.firstNum("limit", "total", "quota")
+                val percent = percentOf(used, limit, item.firstNum("percent", "usedPercent", "usagePercent"))
+                    ?: return@mapNotNull null
+                // used 与 limit 都明确为 0 才是「这份额度没发放」（真值里的补偿积分）；
+                // 字段缺失只表示服务端没给量，仍要靠 percent 画出来，不能一起当空丢掉
+                if (used != null && limit != null && used <= 0 && limit <= 0) return@mapNotNull null
+                Bar(
+                    label = when (name) {
+                        "plan_total_token" -> "当前套餐用量"
+                        "compensation_total_token" -> "补偿积分"
+                        "month_total_token" -> "本月累计用量"
+                        else -> name
+                    },
+                    percentRemaining = 100 - percent,
+                    usedPercent = percent,
+                    counts = if (used != null && limit != null && limit > 0)
+                        "${credits(used)} / ${credits(limit)}" else null,
+                    // 只有套餐周期条挂重置时间，累计条再挂一遍只会看花眼
+                    reset = if (name == "plan_total_token") reset else null
                 )
             }
-            return bars
+        }
+
+        /** 已用百分比（0–100，按仓库惯例截断取整）：有绝对量就以量折算，没量才放大比例字段。 */
+        private fun percentOf(used: Double?, limit: Double?, raw: Double?): Int? {
+            if (used != null && limit != null && limit > 0)
+                return (used / limit * 100).toInt().coerceIn(0, 100)
+            val r = raw ?: return null
+            return (if (r <= 1.0) r * 100 else r).toInt().coerceIn(0, 100)
+        }
+
+        /** detail.currentPeriodEnd 实测是「2026-10-22 23:59:59」北京时间且不带时区标记。 */
+        private fun periodEnd(detail: JsonObject): String? {
+            val raw = jstr(detail, "currentPeriodEnd") ?: return null
+            return try {
+                val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+                sdf.timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+                sdf.parse(raw)?.time?.let { epochReset(it) } ?: formatReset(raw)
+            } catch (_: Exception) {
+                formatReset(raw)
+            }
         }
 
         /** 套餐名胶囊；订阅状态查不清（响应异常）时不出胶囊，明确未订阅才写「未订阅」。 */

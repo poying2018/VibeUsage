@@ -10,41 +10,39 @@ import org.junit.Test
 /**
  * 小米 MiMo 额度解析。
  *
- * BALANCE_LIVE / PLAN_LIVE / DETAIL_LIVE 三份是 2026-09-22 用真实登录态直连
- * 2026-09-22 用真实登录态直连 platform.xiaomimimo.com 的 api 接口抓回来的原文
- * （账号：按量余额 ¥4.60、未订阅 Token Plan）。
- * PLAN_SUBSCRIBED 是**臆造**的已订阅样本：该账号没有套餐，items[] 真字段拿不到，
- * 字段名取自控制台前端 i18n（「当前套餐用量 {{used}} / {{limit}}」「补偿积分」）
- * 与第三方逆向资料里的 plan_total_token / compensation_total_token，属容错解析目标而非实测。
+ * 三份 LIVE 样本是 2026-09-22 用真实登录态直连 platform.xiaomimimo.com 的 api 接口抓回来的原文：
+ * 前两份是**未订阅**账号（按量余额 ¥4.60），USAGE_LIVE / DETAIL_LIVE 是**已订阅 Lite** 账号，
+ * 因此 percent 是 0–1 小数、条目键叫 name、currentPeriodEnd 是「yyyy-MM-dd HH:mm:ss」北京时间
+ * ——这三点都是真值教出来的，不要再按猜测改回去。
  */
 class MimoQuotaParseTest {
 
-    private val BALANCE_LIVE =
+    private val BALANCE_UNSUB =
         """{"code":0,"message":"","data":{"balance":"4.60","frozenBalance":"0.00","currency":"CNY","overdraftLimit":"0.00","remainingOverdraftLimit":"0.00","giftBalance":"0.00","cashBalance":"4.60"}}"""
 
-    private val PLAN_LIVE =
+    private val USAGE_UNSUB =
         """{"code":0,"message":"","data":{"monthUsage":{"percent":0,"items":null},"usage":null}}"""
 
-    private val DETAIL_LIVE =
+    private val DETAIL_UNSUB =
         """{"code":0,"message":"","data":{"planCode":null,"planName":null,"currentPeriodEnd":null,"expired":null,"enableAutoRenew":false,"autoRenewDiscount":"0.88","hasAutoRenewSubscribed":false,"clawEnabled":false,"clawPeriodEnd":null,"clawPurchased":false}}"""
 
-    private val PLAN_SUBSCRIBED =
-        """{"code":0,"data":{"monthUsage":{"percent":37,"items":[{"type":"plan_total_token","used":15170000000,"limit":41000000000,"percent":37},{"type":"compensation_total_token","used":0,"total":2000000000,"usedPercent":0}]}}}"""
+    /** 已订阅 Lite：percent 0.033 = 3.3%，used/limit 才是可核对的真量。 */
+    private val USAGE_LIVE =
+        """{"code":0,"message":"","data":{"monthUsage":{"percent":0.033,"items":[{"name":"month_total_token","used":135244472,"limit":4100000000,"percent":0.033}]},"usage":{"percent":0.03,"items":[{"name":"plan_total_token","used":135244472,"limit":4100000000,"percent":0.03},{"name":"compensation_total_token","used":0,"limit":0,"percent":0}]}}}"""
 
-    private val DETAIL_SUBSCRIBED =
-        """{"code":0,"data":{"planCode":"lite","planName":"Lite","currentPeriodEnd":"2026-10-08T16:00:00Z","expired":false,"enableAutoRenew":true}}"""
+    private val DETAIL_LIVE =
+        """{"code":0,"message":"","data":{"planCode":"lite","planName":"Lite","currentPeriodEnd":"2026-10-22 23:59:59","expired":false,"enableAutoRenew":false,"autoRenewDiscount":null,"hasAutoRenewSubscribed":true,"clawEnabled":false,"clawPeriodEnd":null,"clawPurchased":false}}"""
 
     // ─── 余额 ───
 
     @Test
     fun `live balance renders one full bar with cash split`() {
-        val bars = Mimo.parseBalance(BALANCE_LIVE)
+        val bars = Mimo.parseBalance(BALANCE_UNSUB)
         assertEquals(1, bars.size)
-        val b = bars[0]
-        assertEquals("CNY 余额 ¥4.60", b.label)
-        assertEquals(100, b.percentRemaining)
+        assertEquals("CNY 余额 ¥4.60", bars[0].label)
+        assertEquals(100, bars[0].percentRemaining)
         // 赠费/冻结/透支全为 0 时不占位，只留现金
-        assertEquals("现金 ¥4.60", b.counts)
+        assertEquals("现金 ¥4.60", bars[0].counts)
     }
 
     @Test
@@ -57,18 +55,122 @@ class MimoQuotaParseTest {
 
     @Test
     fun `usd balance uses dollar sign and missing balance yields nothing`() {
-        assertEquals("USD 余额 \$1.20", Mimo.parseBalance(
-            """{"code":0,"data":{"balance":"1.20","cashBalance":"1.20","currency":"USD"}}""").first().label)
+        assertEquals(
+            "USD 余额 \$1.20",
+            Mimo.parseBalance("""{"code":0,"data":{"balance":"1.20","cashBalance":"1.20","currency":"USD"}}""").first().label
+        )
         assertTrue(Mimo.parseBalance("""{"code":0,"data":{}}""").isEmpty())
         assertTrue(Mimo.parseBalance("""{"code":0,"message":""}""").isEmpty())
     }
 
-    // ─── 套餐额度 ───
+    // ─── 套餐额度：真订阅样本 ───
+
+    @Test
+    fun `fraction percent must move - 0_033 is 3 percent used not 0`() {
+        val bars = Mimo.parsePlan(USAGE_LIVE, DETAIL_LIVE)
+        val plan = bars.first { it.label == "当前套餐用量" }
+        // 135244472 / 4100000000 = 3.3% → 已用 3，剩余 97
+        assertEquals(3, plan.usedPercent!!.toInt())
+        assertEquals(97, plan.percentRemaining)
+        assertEquals("1.4亿 / 41亿", plan.counts)
+    }
+
+    @Test
+    fun `plan rows come from both usage and monthUsage item sets`() {
+        val labels = Mimo.parsePlan(USAGE_LIVE, DETAIL_LIVE).map { it.label }
+        // 套餐周期额度在 usage.items，自然月累计在 monthUsage.items，两处都要出
+        assertEquals(listOf("当前套餐用量", "本月累计用量"), labels)
+    }
+
+    @Test
+    fun `reset line parses beijing datetime without timezone marker`() {
+        val plan = Mimo.parsePlan(USAGE_LIVE, DETAIL_LIVE).first { it.label == "当前套餐用量" }
+        val reset = plan.reset
+        assertTrue("currentPeriodEnd 没解析出来", reset != null)
+        assertTrue("reset=$reset", reset!!.startsWith("10-22 23:59 重置"))
+        // 只有套餐周期条带重置时间，累计条不重复挂
+        assertNull(Mimo.parsePlan(USAGE_LIVE, DETAIL_LIVE).first { it.label == "本月累计用量" }.reset)
+    }
+
+    @Test
+    fun `zero-quota compensation row is dropped instead of showing an empty bar`() {
+        // 真值里 compensation_total_token 的 used 与 limit 都是 0：没有这份额度就别占一行
+        assertTrue(Mimo.parsePlan(USAGE_LIVE, DETAIL_LIVE).none { it.label == "补偿积分" })
+        val withComp = Mimo.parsePlan(
+            USAGE_LIVE.replace(
+                """{"name":"compensation_total_token","used":0,"limit":0,"percent":0}""",
+                """{"name":"compensation_total_token","used":50000000,"limit":2000000000,"percent":0.025}"""
+            ),
+            DETAIL_LIVE
+        )
+        val comp = withComp.first { it.label == "补偿积分" }
+        assertEquals(2, comp.usedPercent!!.toInt())
+        assertEquals("5000万 / 20亿", comp.counts)
+    }
 
     @Test
     fun `unsubscribed account draws no fake plan bar`() {
-        assertTrue(Mimo.parsePlan(PLAN_LIVE, DETAIL_LIVE).isEmpty())
-        assertEquals("未订阅 Token Plan", Mimo.accountOf(DETAIL_LIVE))
+        assertTrue(Mimo.parsePlan(USAGE_UNSUB, DETAIL_UNSUB).isEmpty())
+        assertEquals("未订阅 Token Plan", Mimo.accountOf(DETAIL_UNSUB))
+    }
+
+    @Test
+    fun `unsubscribed still reports rows when detail fetch failed but items exist`() {
+        val bars = Mimo.parsePlan(USAGE_LIVE, null)
+        assertTrue(bars.isNotEmpty())
+        assertEquals(97, bars.first { it.label == "当前套餐用量" }.percentRemaining)
+    }
+
+    @Test
+    fun `percent field alone is scaled when no absolute amounts come back`() {
+        // 服务端只给比例不给量：0.5 是 50%，而 37 这种历史形态按 0–100 解释
+        val half = Mimo.parsePlan(
+            """{"code":0,"data":{"usage":{"items":[{"name":"plan_total_token","percent":0.5}]}}}""",
+            DETAIL_LIVE
+        )
+        assertEquals(50, half.first().percentRemaining)
+        val legacy = Mimo.parsePlan(
+            """{"code":0,"data":{"usage":{"items":[{"name":"plan_total_token","percent":37}]}}}""",
+            DETAIL_LIVE
+        )
+        assertEquals(63, legacy.first().percentRemaining)
+    }
+
+    @Test
+    fun `used and limit win over a stale percent field`() {
+        val bars = Mimo.parsePlan(
+            """{"code":0,"data":{"usage":{"items":[{"name":"plan_total_token","used":800,"limit":1000,"percent":0.03}]}}}""",
+            DETAIL_LIVE
+        )
+        assertEquals(80, bars.first().usedPercent!!.toInt())
+    }
+
+    @Test
+    fun `unknown item name still surfaces with its own name instead of being dropped`() {
+        val bars = Mimo.parsePlan(
+            """{"code":0,"data":{"usage":{"items":[{"name":"claw_total_token","used":3,"limit":10}]}}}""",
+            DETAIL_LIVE
+        )
+        assertEquals("claw_total_token", bars.first().label)
+        assertEquals(70, bars.first().percentRemaining)
+    }
+
+    @Test
+    fun `row with neither percent nor amounts is skipped`() {
+        assertTrue(
+            Mimo.parsePlan("""{"code":0,"data":{"usage":{"items":[{"name":"plan_total_token"}]}}}""", DETAIL_LIVE).isEmpty()
+        )
+    }
+
+    // ─── 胶囊与错误 ───
+
+    @Test
+    fun `plan name pill carries expiry and auto-renew flags`() {
+        assertEquals("Lite", Mimo.accountOf(DETAIL_LIVE))
+        assertEquals(
+            "Pro · 已过期 · 自动续订",
+            Mimo.accountOf("""{"code":0,"data":{"planName":"Pro","expired":true,"enableAutoRenew":true}}""")
+        )
     }
 
     @Test
@@ -76,73 +178,6 @@ class MimoQuotaParseTest {
         assertNull(Mimo.accountOf("<html>502 Bad Gateway</html>"))
         assertNull(Mimo.accountOf("""{"code":500,"message":"boom"}"""))
     }
-
-    @Test
-    fun `unsubscribed still shows the month bar when detail fetch failed but items exist`() {
-        // detail 拉取失败（null）时以 items 为准，不能因为拿不到套餐名就把额度藏起来
-        val bars = Mimo.parsePlan(PLAN_SUBSCRIBED, null)
-        assertEquals("本月套餐用量", bars.first().label)
-        assertEquals(63, bars.first().percentRemaining)
-        assertEquals(37, bars.first().usedPercent)
-    }
-
-    @Test
-    fun `subscribed plan shows month usage bar plus compensation bar`() {
-        val bars = Mimo.parsePlan(PLAN_SUBSCRIBED, DETAIL_SUBSCRIBED)
-        assertEquals(2, bars.size)
-        val month = bars[0]
-        assertEquals("本月套餐用量", month.label)
-        assertEquals(63, month.percentRemaining)
-        assertEquals(37, month.usedPercent)
-        // 151.7亿 / 410亿：已用与总量并列，供条右侧小字显示
-        assertEquals("151.7亿 / 410亿", month.counts)
-        assertTrue(month.reset!!.contains("重置"))
-        val comp = bars[1]
-        assertEquals("补偿积分", comp.label)
-        assertEquals(100, comp.percentRemaining)
-        assertEquals("0 / 20亿", comp.counts)
-    }
-
-    @Test
-    fun `month percent missing falls back to summing items`() {
-        val bars = Mimo.parsePlan(
-            """{"code":0,"data":{"monthUsage":{"items":[{"used":25,"limit":100}]}}}""",
-            DETAIL_SUBSCRIBED
-        )
-        assertEquals(1, bars.size)
-        assertEquals(75, bars[0].percentRemaining)
-        assertEquals("25 / 100", bars[0].counts)
-    }
-
-    @Test
-    fun `unknown item type still surfaces with its own name instead of being dropped`() {
-        val bars = Mimo.parsePlan(
-            """{"code":0,"data":{"monthUsage":{"percent":10,"items":[
-              {"type":"claw_total_token","used":3,"limit":10}]}}}""",
-            DETAIL_SUBSCRIBED
-        )
-        assertEquals(2, bars.size)
-        assertEquals("claw_total_token", bars[1].label)
-        assertEquals(70, bars[1].percentRemaining)
-    }
-
-    @Test
-    fun `subscribed but unreadable usage shape draws no bar rather than a zero percent one`() {
-        // 套餐结构改了 / 端点换了形态时，宁可只剩余额组，也不能报出一条「剩余 0%」的红条
-        assertTrue(Mimo.parsePlan("""{"code":0,"data":{"monthUsage":{},"usage":[]}}""", DETAIL_SUBSCRIBED).isEmpty())
-        assertTrue(Mimo.parsePlan("""{"code":0,"data":{}}""", DETAIL_SUBSCRIBED).isEmpty())
-    }
-
-    @Test
-    fun `plan name pill carries expiry and auto-renew flags`() {
-        assertEquals("Lite · 自动续订", Mimo.accountOf(DETAIL_SUBSCRIBED))
-        assertEquals(
-            "Pro · 已过期",
-            Mimo.accountOf("""{"code":0,"data":{"planName":"Pro","expired":true,"enableAutoRenew":false}}""")
-        )
-    }
-
-    // ─── 信封与错误 ───
 
     @Test
     fun `business error code surfaces message`() {
