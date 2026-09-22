@@ -1208,6 +1208,203 @@ object ExtraQuotaApi {
         }
     }
 
+    // ─── 小米 MiMo（控制台接口：账户余额 + Token Plan 套餐额度）───
+    //
+    // 2026-09-22 用真实登录态实测的结论：
+    //   · 网关侧查不到额度——api.xiaomimimo.com/v1/balance 直接 404，API Key 在这里没用；
+    //     额度只认 platform.xiaomimimo.com 的 Cookie，且最小必需项只有两条：
+    //     userId + api-platform_serviceToken（slh / ph / xiaomichatbot_* 均可省，值带不带
+    //     双引号均可，但缺 userId 必 401 —— 单独只给 serviceToken 是查不动的）。
+    //   · 三端点均为 GET + {code,message,data} 信封，code=0 才算成功；未登录时 HTTP 401，
+    //     body 里甩 account.xiaomim.com/pass/serviceLogin 跳转。国内可达，始终直连。
+    //   · 未订阅 Token Plan 时 monthUsage.percent 恒为 0 且 items 为 null，那是「没有套餐」
+    //     而不是「满格」，所以一条都不画，只在胶囊位写明未订阅。
+    //   · 已订阅时 items[] 的真字段名尚未实测（验证账号无套餐）。下面按控制台前端 i18n
+    //     （「当前套餐用量 {{used}} / {{limit}}」「补偿积分」）与第三方逆向资料里的
+    //     plan_total_token / compensation_total_token 做多键名容错取值；拿到真样本后应据实对齐。
+
+    object Mimo {
+        private const val BASE = "https://platform.xiaomimimo.com/api/v1"
+        private const val UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        private const val NOT_SUBSCRIBED = "未订阅 Token Plan"
+        private const val EXPIRED =
+            "小米账号登录已失效，请重新复制 Cookie 里的 userId 与 api-platform_serviceToken"
+
+        /** 套餐主额度条目的类型名；其余条目（补偿积分、MiMo Claw 等）各自成行。 */
+        private const val PLAN_QUOTA = "plan_total_token"
+
+        private val NUM_COOKIE = Regex("""userId["'\s]*[=:]["'\s]*(\d{4,})""")
+        private val TOKEN_COOKIE = Regex("""api-platform_serviceToken["'\s]*[=:]["'\s]*"?([^";,\s]+)""")
+
+        /**
+         * 凭据归一：两格分别填 userId 与 serviceToken；但人往往整条 Cookie 一起复制，
+         * 因此任一格出现 userId= / api-platform_serviceToken= 都按键名取，并去掉包裹的双引号。
+         */
+        internal fun normalizeCreds(a: String, b: String): Pair<String, String> {
+            val blob = "$a;$b"
+            val userId = NUM_COOKIE.find(blob)?.groupValues?.get(1)
+                ?: a.trim().takeIf { it.matches(Regex("""\d{4,}""")) }
+                ?: b.trim().takeIf { it.matches(Regex("""\d{4,}""")) }
+                ?: throw QuotaException(
+                    0, "没找到 userId：platform.xiaomimimo.com 登录后 F12 → 网络 → 任意请求 → " +
+                        "Cookie 里的 userId（纯数字）"
+                )
+            val token = TOKEN_COOKIE.find(blob)?.groupValues?.get(1)?.trim('"')
+                ?: listOf(a, b).map { it.trim().trim('"') }.firstOrNull {
+                    it != userId && it.length >= 8 && it.any { c -> !c.isDigit() }
+                }
+                ?: throw QuotaException(
+                    0, "没找到 api-platform_serviceToken：同一份 Cookie 里最长的那串值（也可把整条 Cookie 粘进任一格）"
+                )
+            return userId to token
+        }
+
+        fun fetchUsage(userIdCred: String, tokenCred: String): Usage {
+            val (userId, token) = normalizeCreds(userIdCred, tokenCred)
+            val headers = mapOf(
+                "Cookie" to "userId=$userId; api-platform_serviceToken=\"$token\"",
+                "Referer" to "https://platform.xiaomimimo.com/console/balance"
+            )
+            fun get(path: String): String = try {
+                QuotaHttp.get(
+                    BASE + path, bearer = null, proxyFirst = false, ua = UA,
+                    extraHeaders = headers, directOnly = true
+                )
+            } catch (e: QuotaException) {
+                throw if (e.code == 401) QuotaException(401, EXPIRED) else e
+            }
+            val planText = get("/tokenPlan/usage")
+            val detailText = runCatching { get("/tokenPlan/detail") }.getOrNull()
+            val balanceText = runCatching { get("/balance") }.getOrNull()
+            val groups = linkedMapOf<String, MutableList<Bar>>()
+            parsePlan(planText, detailText).let { if (it.isNotEmpty()) groups["套餐额度"] = it.toMutableList() }
+            // 余额与套餐互不牵连：余额拉不到不该把额度区一起带走（Agnes 赠费余额同款处理）
+            balanceText?.let { t -> runCatching { parseBalance(t) }.getOrNull() }
+                ?.let { if (it.isNotEmpty()) groups["账户余额"] = it.toMutableList() }
+            if (groups.isEmpty())
+                throw QuotaException(0, "小米 MiMo 没有返回余额或套餐额度数据（未订阅套餐时至少应有账户余额）")
+            // detail 拉取失败时宁可不出胶囊，也不要把「没查到」说成「未订阅」
+            return Usage(detailText?.let { accountOf(it) }, groups)
+        }
+
+        /** GET /balance：金额均为字符串，现金/赠费/冻结/透支拆在 counts 里。 */
+        internal fun parseBalance(resp: String): List<Bar> {
+            val data = envelope(resp).optObject("data") ?: return emptyList()
+            val total = jnum(data, "balance") ?: return emptyList()
+            val currency = jstr(data, "currency")
+            val symbol = when (currency) {
+                "USD" -> "$"
+                "CNY" -> "¥"
+                else -> ""
+            }
+            val parts = mutableListOf("现金 $symbol${money(jnum(data, "cashBalance") ?: total)}")
+            for ((key, label) in listOf(
+                "giftBalance" to "赠费", "frozenBalance" to "冻结", "overdraftLimit" to "可透支"
+            )) {
+                (jnum(data, key) ?: 0.0).takeIf { it > 0 }?.let { parts += "$label $symbol${money(it)}" }
+            }
+            return listOf(
+                Bar(
+                    label = listOfNotNull(currency, "余额").joinToString(" ") + " $symbol${money(total)}",
+                    percentRemaining = 100,
+                    counts = parts.joinToString(" · ")
+                )
+            )
+        }
+
+        /**
+         * GET /tokenPlan/usage（+ /tokenPlan/detail 供订阅判定与重置时间）。
+         * 首行固定「本月套餐用量」，其余条目（补偿积分等）各自成行。
+         */
+        internal fun parsePlan(resp: String, detailResp: String?): List<Bar> {
+            val data = envelope(resp).optObject("data") ?: return emptyList()
+            val detail = detailResp?.let { runCatching { envelope(it).optObject("data") }.getOrNull() }
+            val month = data.optObject("monthUsage")
+            val items = mutableListOf<JsonObject>()
+            (month?.optArray("items") ?: data.optArray("usage"))?.forEach { (it as? JsonObject)?.let(items::add) }
+            val subscribed = detail?.let { jstr(it, "planName") != null } ?: items.isNotEmpty()
+            if (!subscribed) return emptyList()
+
+            val planItem = items.firstOrNull { (jstr(it, "type") ?: PLAN_QUOTA) == PLAN_QUOTA }
+            var used = planItem?.firstNum("used", "consumed", "usedCredits", "usedToken")
+            var limit = planItem?.firstNum("limit", "total", "quota", "totalToken")
+            if (used == null || limit == null) {
+                val sumUsed = items.sumOf { it.firstNum("used", "consumed", "usedCredits", "usedToken") ?: 0.0 }
+                val sumLimit = items.sumOf { it.firstNum("limit", "total", "quota", "totalToken") ?: 0.0 }
+                if (used == null && items.isNotEmpty()) used = sumUsed
+                if (limit == null && sumLimit > 0) limit = sumLimit
+            }
+            val percent = jnum(month, "percent")?.toInt()?.coerceIn(0, 100) ?: used?.let { u ->
+                limit?.takeIf { l -> l > 0 }?.let { l -> ((u / l) * 100).toInt().coerceIn(0, 100) }
+            }
+            val bars = mutableListOf<Bar>()
+            // 既没给百分比也没给可算出百分比的量 → 宁可不画，也不画一条「剩余 0%」吓人
+            if (percent != null) bars += Bar(
+                label = "本月套餐用量",
+                percentRemaining = 100 - percent,
+                usedPercent = percent,
+                counts = if (used != null && limit != null && limit > 0)
+                    "${credits(used)} / ${credits(limit)}" else null,
+                reset = detail?.let { jstr(it, "currentPeriodEnd") }?.let { formatReset(it) }
+            )
+            for (item in items.filter { it !== planItem }) {
+                // 没有类型名的条目已折算进首行，重复出行只会让人误以为是两份额度
+                val type = jstr(item, "type") ?: continue
+                val u = item.firstNum("used", "consumed", "usedCredits", "usedToken")
+                val l = item.firstNum("limit", "total", "quota", "totalToken")
+                val p = item.firstNum("percent", "usedPercent", "usagePercent")?.toInt()?.coerceIn(0, 100)
+                    ?: u?.let { uu -> l?.takeIf { ll -> ll > 0 }?.let { ll -> ((uu / ll) * 100).toInt().coerceIn(0, 100) } }
+                bars += Bar(
+                    label = if (type == "compensation_total_token") "补偿积分" else type,
+                    percentRemaining = 100 - (p ?: 100),
+                    usedPercent = p,
+                    counts = if (u != null && l != null && l > 0) "${credits(u)} / ${credits(l)}" else null
+                )
+            }
+            return bars
+        }
+
+        /** 套餐名胶囊；订阅状态查不清（响应异常）时不出胶囊，明确未订阅才写「未订阅」。 */
+        internal fun accountOf(detailResp: String): String? {
+            val data = runCatching { envelope(detailResp).optObject("data") }.getOrNull() ?: return null
+            val name = jstr(data, "planName") ?: return NOT_SUBSCRIBED
+            val flags = listOfNotNull(
+                if (data.bool("expired")) "已过期" else null,
+                if (data.bool("enableAutoRenew")) "自动续订" else null
+            )
+            return if (flags.isEmpty()) name else "$name · ${flags.joinToString(" · ")}"
+        }
+
+        private fun envelope(resp: String): JsonObject {
+            val obj = gson.fromJson(resp, JsonObject::class.java) ?: throw QuotaException(0, "响应为空")
+            val code = jnum(obj, "code")?.toInt() ?: 0
+            if (code != 0) {
+                val msg = jstr(obj, "message")?.takeIf { it.isNotBlank() } ?: "未知错误"
+                throw QuotaException(code, if (code == 401) EXPIRED else "小米 MiMo 错误 $code：$msg")
+            }
+            return obj
+        }
+
+        private fun JsonObject.firstNum(vararg keys: String): Double? =
+            keys.firstNotNullOfOrNull { jnum(this, it) }
+
+        private fun JsonObject.bool(key: String): Boolean =
+            (get(key) as? com.google.gson.JsonPrimitive)?.let { it.isBoolean && it.asBoolean } == true
+
+        private fun money(v: Double): String = String.format(Locale.US, "%.2f", v)
+
+        /** Credits 紧凑记数：15170000000 → 151.7亿；整数量不带小数点。 */
+        private fun credits(n: Double): String {
+            val (v, unit) = when {
+                n >= 1e8 -> n / 1e8 to "亿"
+                n >= 1e4 -> n / 1e4 to "万"
+                else -> return n.toLong().toString()
+            }
+            return String.format(Locale.US, if (v % 1.0 == 0.0) "%.0f$unit" else "%.1f$unit", v)
+        }
+    }
+
     // ─── 共用格式化 ───
 
     internal fun formatCountdown(ms: Long): String {

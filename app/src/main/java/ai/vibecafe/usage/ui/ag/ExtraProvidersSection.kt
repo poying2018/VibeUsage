@@ -411,6 +411,7 @@ private val ExtraProvider.credPlaceholders: List<String>
         ExtraProvider.OPENROUTER -> listOf("sk-or-v1-…")
         ExtraProvider.DOUBAO -> listOf("粘贴 sessionid 的值或整条 Cookie")
         ExtraProvider.AGNES -> listOf("登录邮箱或用户名", "登录密码")
+        ExtraProvider.MIMO -> listOf("userId（纯数字）", "api-platform_serviceToken 的值")
     }
 
 // ─── 已接入：状态行 + 分组明细 ───

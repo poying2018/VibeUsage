@@ -108,6 +108,14 @@ enum class ExtraProvider(
         listOf("邮箱 / 用户名", "登录密码"),
         "platform.agnes-ai.cn 登录账号即可（无需 API Key）：查今日/本月 token 消耗与套餐可用模型；中转优先，被拦自动直连",
         minCredLen = 4
+    ),
+    MIMO(
+        "mimo", "小米 MiMo", Color(0xFFFF6900), Icons.Filled.Bolt,
+        listOf("userId", "api-platform_serviceToken"),
+        "余额与 Token Plan 额度都只认控制台登录态：platform.xiaomimimo.com 登录后 F12 → 网络 → 任意请求 → " +
+            "Cookie，两格分别填 userId 与 api-platform_serviceToken（值里带 userId= / serviceToken= 前缀也能自动拆）；" +
+            "API Key 查不到额度，国内直连",
+        minCredLen = 6
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */
@@ -127,6 +135,7 @@ enum class ExtraProvider(
         OPENROUTER -> ExtraQuotaApi.OpenRouter.fetchUsage(creds[0])
         DOUBAO -> ExtraQuotaApi.Doubao.fetchUsage(creds[0])
         AGNES -> ExtraQuotaApi.Agnes.fetchUsage(creds[0], creds[1])
+        MIMO -> ExtraQuotaApi.Mimo.fetchUsage(creds[0], creds[1])
     }
 
     companion object {
