@@ -46,3 +46,6 @@
 /.npm-cache/
 .wrangler/
 .zcode/
+
+# 与本项目无关的独立仓库克隆（自带 .git，禁止并进来）
+/ai-passport/
