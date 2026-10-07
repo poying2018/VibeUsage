@@ -1,6 +1,6 @@
 package ai.vibecafe.usage.data.quota
 
-import ai.vibecafe.usage.data.quota.ExtraQuotaApi.Mimo
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue

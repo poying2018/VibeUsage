@@ -22,7 +22,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import ai.vibecafe.usage.data.quota.Agnes
+import ai.vibecafe.usage.data.quota.Ark
+import ai.vibecafe.usage.data.quota.Bailian
+import ai.vibecafe.usage.data.quota.DeepSeek
+import ai.vibecafe.usage.data.quota.Doubao
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi
+import ai.vibecafe.usage.data.quota.GitHubCopilot
+import ai.vibecafe.usage.data.quota.Glm
+import ai.vibecafe.usage.data.quota.Infini
+import ai.vibecafe.usage.data.quota.Kimi
+import ai.vibecafe.usage.data.quota.Mimo
+import ai.vibecafe.usage.data.quota.MiniMax
+import ai.vibecafe.usage.data.quota.OpenRouter
 
 /** 支持一键授权的登录方式（凭据粘贴始终作为后备）。 */
 enum class OAuthKind {
@@ -124,18 +136,18 @@ enum class ExtraProvider(
 
     /** 用已存凭据查询额度（在 IO 线程调用）。 */
     fun fetch(creds: List<String>): ExtraQuotaApi.Usage = when (this) {
-        MINIMAX -> ExtraQuotaApi.MiniMax.fetchUsage(creds[0])
-        GLM -> ExtraQuotaApi.Glm.fetchUsage(creds[0])
-        KIMI -> ExtraQuotaApi.Kimi.fetchUsage(creds[0])
-        DEEPSEEK -> ExtraQuotaApi.DeepSeek.fetchUsage(creds[0])
-        INFINI -> ExtraQuotaApi.Infini.fetchUsage(creds[0])
-        BAILIAN -> ExtraQuotaApi.Bailian.fetchUsage(creds[0])
-        ARK -> ExtraQuotaApi.Ark.fetchUsage(creds[0], creds[1])
-        GITHUB -> ExtraQuotaApi.GitHubCopilot.fetchUsage(creds[0])
-        OPENROUTER -> ExtraQuotaApi.OpenRouter.fetchUsage(creds[0])
-        DOUBAO -> ExtraQuotaApi.Doubao.fetchUsage(creds[0])
-        AGNES -> ExtraQuotaApi.Agnes.fetchUsage(creds[0], creds[1])
-        MIMO -> ExtraQuotaApi.Mimo.fetchUsage(creds[0], creds[1])
+        MINIMAX -> MiniMax.fetchUsage(creds[0])
+        GLM -> Glm.fetchUsage(creds[0])
+        KIMI -> Kimi.fetchUsage(creds[0])
+        DEEPSEEK -> DeepSeek.fetchUsage(creds[0])
+        INFINI -> Infini.fetchUsage(creds[0])
+        BAILIAN -> Bailian.fetchUsage(creds[0])
+        ARK -> Ark.fetchUsage(creds[0], creds[1])
+        GITHUB -> GitHubCopilot.fetchUsage(creds[0])
+        OPENROUTER -> OpenRouter.fetchUsage(creds[0])
+        DOUBAO -> Doubao.fetchUsage(creds[0])
+        AGNES -> Agnes.fetchUsage(creds[0], creds[1])
+        MIMO -> Mimo.fetchUsage(creds[0], creds[1])
     }
 
     companion object {

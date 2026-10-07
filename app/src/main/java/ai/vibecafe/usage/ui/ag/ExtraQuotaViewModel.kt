@@ -6,7 +6,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import ai.vibecafe.usage.data.quota.AgGoogleOAuth
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi
+import ai.vibecafe.usage.data.quota.GitHubCopilot
 import ai.vibecafe.usage.data.quota.OAuthFlow
+import ai.vibecafe.usage.data.quota.OpenRouter
 import ai.vibecafe.usage.data.quota.OpenRouterOAuth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -99,12 +101,12 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                         val auth = withContext(Dispatchers.IO) { OpenRouterOAuth.awaitCode(getApplication()) }
                         listOf(
                             withContext(Dispatchers.IO) {
-                                ExtraQuotaApi.OpenRouter.exchangeOAuthCode(auth.code, auth.verifier)
+                                OpenRouter.exchangeOAuthCode(auth.code, auth.verifier)
                             }
                         )
                     }
                     OAuthKind.GITHUB_DEVICE -> {
-                        val dc = withContext(Dispatchers.IO) { ExtraQuotaApi.GitHubCopilot.startDeviceCode() }
+                        val dc = withContext(Dispatchers.IO) { GitHubCopilot.startDeviceCode() }
                         update(id) { it.copy(oauthCode = dc.userCode) }
                         withContext(Dispatchers.Main) {
                             // 跳浏览器前先把授权码写进剪贴板，用户落地 github.com/login/device 直接粘贴
@@ -122,7 +124,7 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                             delay(dc.intervalSec.coerceAtLeast(5) * 1000)
                             try {
                                 token = withContext(Dispatchers.IO) {
-                                    ExtraQuotaApi.GitHubCopilot.pollToken(dc.deviceCode)
+                                    GitHubCopilot.pollToken(dc.deviceCode)
                                 }
                             } catch (e: CancellationException) {
                                 throw e

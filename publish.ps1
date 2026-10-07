@@ -58,12 +58,36 @@ Write-Host "[2/7] Build done" -ForegroundColor Green
 
 # 3. Verify APK signature
 Write-Host "[3/7] Verifying APK signature..." -ForegroundColor Yellow
-$apksigner = "D:\studio sdk\build-tools\37.0.0\apksigner.bat"
+# Resolve apksigner from local.properties sdk.dir so this script is not tied to one
+# machine's SDK location (it used to hardcode an absolute D:\ path that breaks elsewhere).
+$sdkDir = $null
+$lp = Join-Path $root "local.properties"
+if (Test-Path $lp) {
+    $line = Get-Content $lp | Where-Object { $_ -match '^\s*sdk\.dir=' } | Select-Object -First 1
+    if ($line) { $sdkDir = ($line -replace '^\s*sdk\.dir=', '').Trim() -replace '\\:', ':' -replace '/', '\' }
+}
+if (-not $sdkDir) { $sdkDir = $env:ANDROID_HOME }
+$apksigner = $null
+if ($sdkDir) {
+    $btRoot = Join-Path $sdkDir "build-tools"
+    if (Test-Path $btRoot) {
+        # Pick the highest build-tools version present (36.0.0 beats 35.x)
+        $bt = Get-ChildItem $btRoot -Directory |
+            Sort-Object { [version](($_.Name -split '-')[0]) } -Descending |
+            Select-Object -First 1
+        if ($bt) { $apksigner = Join-Path $bt.FullName "apksigner.bat" }
+    }
+}
+if (-not $apksigner -or -not (Test-Path $apksigner)) {
+    throw "apksigner not found under sdk.dir=$sdkDir\build-tools. Install build-tools or set sdk.dir in local.properties."
+}
+Write-Host "      using $apksigner" -ForegroundColor DarkGray
 $verifyOut = & $apksigner verify --print-certs $apk 2>&1 | Out-String
 if ($verifyOut -notmatch "certificate DN") {
     throw "Signature verification FAILED (unsigned APK): $verifyOut"
 }
-Write-Host "[3/7] Signature verified (Signer #1)" -ForegroundColor Green
+$certSha = ([regex]::Match($verifyOut, 'certificate SHA-256 digest: ([0-9a-fA-F]+)')).Groups[1].Value
+Write-Host "[3/7] Signature verified (Signer #1): $certSha" -ForegroundColor Green
 
 # 4. Copy to dist
 Write-Host "[4/7] Copying to dist/..." -ForegroundColor Yellow

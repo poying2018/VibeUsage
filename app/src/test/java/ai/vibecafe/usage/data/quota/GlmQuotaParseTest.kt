@@ -1,6 +1,5 @@
 package ai.vibecafe.usage.data.quota
 
-import ai.vibecafe.usage.data.quota.ExtraQuotaApi.Glm
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.QuotaException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
