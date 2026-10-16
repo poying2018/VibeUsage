@@ -4,7 +4,7 @@
 也能在一个面板里聚合 **12 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
 基于 **Jetpack Compose** 与 **液态玻璃（Liquid Glass）** 设计语言。
 
-当前版本 **2.21.1**（versionCode 67）· MIT
+当前版本 **2.21.2**（versionCode 69）· MIT
 
 ## ✨ 核心功能
 
@@ -58,7 +58,8 @@
 ./gradlew assembleRelease    # 发布包（强制签名）
 ```
 
-Maven 依赖已配置阿里云镜像（`settings.gradle.kts`）。
+Maven 依赖已配置阿里云镜像（`settings.gradle.kts`），Gradle 发行版走腾讯云镜像
+（`gradle/wrapper/gradle-wrapper.properties`，带 `distributionSha256Sum` 校验）。
 
 > - 项目路径包含非 ASCII 字符时，`gradle.properties` 已加 `android.overridePathCheck=true` 放行 AGP 路径检查。
 > - `app/build.gradle.kts` **强制签名**：缺少 `keystore.properties` 会直接构建失败，绝不产出未签名 APK。
