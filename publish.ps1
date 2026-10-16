@@ -3,6 +3,19 @@
 #   powershell -ExecutionPolicy Bypass -File publish.ps1 -Version 2.9.5
 # Auto: bump version -> signed release build -> verify signature -> copy to dist/
 #       -> git commit/push -> create/update GitHub Release
+#
+# Re-run safe: running the same command again after a failure is idempotent.
+#   - step 0 skips the bump when versionName already equals -Version
+#   - step 5 commits only when there is something to commit, and retries the push
+#   - step 6 uploads with --clobber instead of deleting assets first
+#   So recovery from a failed push is just: run the same command again.
+#
+# Transport note: on this machine github.com:443 is unreachable (git-over-HTTPS
+#   fails with "Connection was reset") while ssh.github.com and the GitHub API
+#   work. This repo has a local url.insteadOf rule routing HTTPS to SSH:
+#     git config url."git@github.com:".insteadOf "https://github.com/"
+#   Verify with: git fetch origin
+#
 # Note: this file is intentionally ASCII-only (no Chinese) to avoid
 #       PowerShell 5 encoding issues (BOM loss on edits).
 param(
@@ -27,17 +40,24 @@ Write-Host " VibeUsage publish v$Version" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 # 0. Auto bump version (versionCode +1, versionName, APP_VERSION)
+#    Skipped when versionName already equals -Version, so re-running after a
+#    failure cannot bump the versionCode twice.
 Write-Host "[0/7] Bump version -> v$Version ..." -ForegroundColor Yellow
 $gradleContent = [System.IO.File]::ReadAllText($gradleFile, $utf8)
 $currentCode = if ($gradleContent -match 'versionCode = (\d+)') { [int]$Matches[1] } else { throw "versionCode not found" }
-$newCode = $currentCode + 1
-$gradleContent = $gradleContent -replace 'versionCode = \d+', "versionCode = $newCode"
-$gradleContent = $gradleContent -replace 'versionName = "[^"]+"', "versionName = `"$Version`""
-[System.IO.File]::WriteAllText($gradleFile, $gradleContent, $utf8)
-$dashContent = [System.IO.File]::ReadAllText($dashboardFile, $utf8)
-$dashContent = $dashContent -replace 'APP_VERSION = "v[^"]+"', "APP_VERSION = `"v$Version`""
-[System.IO.File]::WriteAllText($dashboardFile, $dashContent, $utf8)
-Write-Host "[0/7] versionCode $currentCode -> $newCode, versionName -> $Version" -ForegroundColor Green
+$currentName = if ($gradleContent -match 'versionName = "([^"]+)"') { $Matches[1] } else { "" }
+if ($currentName -eq $Version) {
+    Write-Host "[0/7] Already at v$Version (versionCode $currentCode) - bump skipped" -ForegroundColor Green
+} else {
+    $newCode = $currentCode + 1
+    $gradleContent = $gradleContent -replace 'versionCode = \d+', "versionCode = $newCode"
+    $gradleContent = $gradleContent -replace 'versionName = "[^"]+"', "versionName = `"$Version`""
+    [System.IO.File]::WriteAllText($gradleFile, $gradleContent, $utf8)
+    $dashContent = [System.IO.File]::ReadAllText($dashboardFile, $utf8)
+    $dashContent = $dashContent -replace 'APP_VERSION = "v[^"]+"', "APP_VERSION = `"v$Version`""
+    [System.IO.File]::WriteAllText($dashboardFile, $dashContent, $utf8)
+    Write-Host "[0/7] versionCode $currentCode -> $newCode, versionName -> $Version" -ForegroundColor Green
+}
 
 # 1. Check signing config
 if (-not (Test-Path (Join-Path $root "keystore.properties"))) {
@@ -104,9 +124,31 @@ Write-Host "      SHA-256: $sha" -ForegroundColor Green
 # 5. Git commit & push
 Write-Host "[5/7] Git commit & push..." -ForegroundColor Yellow
 git -C $root add -A
-git -C $root -c user.name="poying2018" -c user.email="poying2018@users.noreply.github.com" commit -m "release: v$Version"
-git -C $root push origin main
-if ($LASTEXITCODE -ne 0) { throw "git push failed" }
+$pending = git -C $root status --porcelain
+if ($pending) {
+    git -C $root -c user.name="poying2018" -c user.email="poying2018@users.noreply.github.com" commit -m "release: v$Version"
+} else {
+    Write-Host "      nothing to commit (already committed) - skipped" -ForegroundColor DarkGray
+}
+# Push with retries. A transient network failure used to abort the script here and
+# leave "committed locally, not pushed, no GitHub Release" behind.
+$pushed = $false
+for ($try = 1; $try -le 3; $try++) {
+    git -C $root push origin main
+    if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
+    Write-Host "      push attempt $try failed, retrying in 5s..." -ForegroundColor DarkYellow
+    Start-Sleep -Seconds 5
+}
+if (-not $pushed) {
+    Write-Host ""
+    Write-Host "[5/7] PUSH FAILED - the release was NOT published." -ForegroundColor Red
+    Write-Host "      Local commit 'release: v$Version' exists; the remote does not have it." -ForegroundColor Red
+    Write-Host "      Check the transport first:  git fetch origin" -ForegroundColor Red
+    Write-Host "      (github.com:443 is blocked on this machine, SSH works - see header note.)" -ForegroundColor Red
+    Write-Host "      Once the network is back, run this script again with the same" -ForegroundColor Red
+    Write-Host "      -Version: it is re-run safe (no double version bump, clobber upload)." -ForegroundColor Red
+    exit 1
+}
 Write-Host "[5/7] Pushed" -ForegroundColor Green
 
 # 6. Create/update GitHub Release
@@ -115,15 +157,28 @@ Write-Host "[6/7] Updating GitHub Release..." -ForegroundColor Yellow
 cmd /c "gh release view $tag --repo $Repo >nul 2>nul"
 $releaseExists = $LASTEXITCODE -eq 0
 if ($releaseExists) {
-    $oldAsset = gh release view $tag --repo $Repo --json assets 2>$null | ConvertFrom-Json
-    foreach ($a in $oldAsset.assets) {
-        gh release delete-asset $tag $a.name --repo $Repo --yes 2>$null
-    }
+    # --clobber overwrites assets in place. The old code deleted every asset first,
+    # which left the release with no artifacts at all if the upload then failed.
     gh release upload $tag $distApk $hashFile --repo $Repo --clobber 2>$null
 } else {
     gh release create $tag $distApk $hashFile --repo $Repo --title "VibeUsage v$Version" --notes "VibeUsage v$Version (signed APK)" 2>$null
 }
-Write-Host "[6/7] Release $tag updated" -ForegroundColor Green
+# Verify the uploaded artifact really is this APK (byte-for-byte), so a silently
+# failed/partial upload cannot masquerade as a published release.
+$expected = "sha256:$($sha.ToLower())"
+$remote = gh release view $tag --repo $Repo --json assets 2>$null | ConvertFrom-Json
+$uploaded = $remote.assets | Where-Object { $_.name -eq $apkName }
+if (-not $uploaded) {
+    Write-Host "[6/7] Release $tag has no asset named $apkName." -ForegroundColor Red
+    exit 1
+}
+if ($uploaded.digest -and $uploaded.digest -ne $expected) {
+    Write-Host "[6/7] Asset digest MISMATCH - upload is not the local APK." -ForegroundColor Red
+    Write-Host "      remote: $($uploaded.digest)" -ForegroundColor Red
+    Write-Host "      local : $expected" -ForegroundColor Red
+    exit 1
+}
+Write-Host "[6/7] Release $tag updated (asset digest verified: $expected)" -ForegroundColor Green
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " Done: https://github.com/$Repo/releases/tag/$tag" -ForegroundColor Cyan
