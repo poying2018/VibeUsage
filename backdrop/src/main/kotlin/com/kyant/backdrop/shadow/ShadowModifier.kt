@@ -104,7 +104,7 @@ internal class ShadowNode(
                 drawContent()
                 return
             }
-            recordKey = key.copyOf()
+            recordKey = key
             shadowLayer.record(shadowSize) {
                 translate(radius * 2f + offsetX, radius * 2f + offsetY) {
                     val canvas = drawContext.canvas

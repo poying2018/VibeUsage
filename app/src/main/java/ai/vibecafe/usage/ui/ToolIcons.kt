@@ -75,7 +75,23 @@ private val iconRules = listOf(
  * 2. 打分：token==alias 精确=100；一方为另一方前缀=60（两位别名 o1/o3/o4 胶连 o4mini 也靠这条）；
  *    名称包含 alias=50（两字中文别名如 智谱/豆包 也允许）；编辑距离≤1=40。最高分者胜，同分取 priority。
  */
+private val TOKEN_SPLIT = Regex("[^\\p{L}\\p{N}]+")
+
+/**
+ * 图标查找结果缓存：仪表盘一次重组要查 30+ 次，而每次都要跑 28 条规则 × 多别名的
+ * 模糊匹配（含编辑距离 DP），所以按名字缓存。名字集合有界，另设上限兜底。
+ */
+private val iconCache = java.util.concurrent.ConcurrentHashMap<String, ToolIcon>()
+private const val ICON_CACHE_MAX = 512
+
 internal fun toolIconFor(name: String): ToolIcon {
+    iconCache[name]?.let { return it }
+    val icon = computeToolIconFor(name)
+    if (iconCache.size < ICON_CACHE_MAX) iconCache[name] = icon
+    return icon
+}
+
+private fun computeToolIconFor(name: String): ToolIcon {
     val lowered = name.lowercase(Locale.US)
     val sb = StringBuilder(lowered.length)
     for (ch in lowered) {
@@ -83,7 +99,7 @@ internal fun toolIconFor(name: String): ToolIcon {
         sb.append(if (c in 0xFF01..0xFF5E) (c - 0xFEE0).toChar() else ch)
     }
     val n = sb.toString()
-    val tokens = n.split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotBlank() }
+    val tokens = n.split(TOKEN_SPLIT).filter { it.isNotBlank() }
     var best: IconRule? = null
     var bestScore = 0
     for (rule in iconRules) {

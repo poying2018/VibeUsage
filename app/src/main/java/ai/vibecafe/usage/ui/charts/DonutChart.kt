@@ -51,6 +51,21 @@ fun DonutChart(
     }
     val textMeasurer = rememberTextMeasurer()
     val total = slices.sumOf { it.value.toDouble() }.toFloat()
+    val visible = remember(slices) { slices.filter { it.value > 0f } }
+    val visibleTotal = remember(visible) { visible.sumOf { it.value.toDouble() }.toFloat() }
+    // 文字布局在组合期量一次：原来在 draw lambda 里 measure，揭示动画期间每帧重量一次
+    val topLayout = remember(centerTop, p) {
+        textMeasurer.measure(
+            AnnotatedString(centerTop),
+            style = GlassText.NumericSmall.copy(color = p.InkHi, fontSize = 21.sp)
+        )
+    }
+    val bottomLayout = remember(centerBottom, p) {
+        textMeasurer.measure(
+            AnnotatedString(centerBottom),
+            style = GlassText.ChartAxis.copy(color = p.InkMid, fontSize = 11.sp)
+        )
+    }
 
     Canvas(modifier.size(diameter)) {
         val w = diameter.toPx()
@@ -73,8 +88,6 @@ fun DonutChart(
             )
         } else {
             var start = -90f
-            val visible = slices.filter { it.value > 0f }
-            val visibleTotal = visible.sumOf { it.value.toDouble() }.toFloat()
             visible.forEachIndexed { index, slice ->
                 val sweep = (slice.value / visibleTotal) * 360f
                 val drawSweep = ((sweep - gapDeg).coerceAtLeast(if (index == visible.size - 1) sweep * 0.8f else 0.5f)) * reveal
@@ -91,15 +104,7 @@ fun DonutChart(
             }
         }
 
-        // ---- 中心汇总文字 ----
-        val topLayout = textMeasurer.measure(
-            AnnotatedString(centerTop),
-            style = GlassText.NumericSmall.copy(color = p.InkHi, fontSize = 21.sp)
-        )
-        val bottomLayout = textMeasurer.measure(
-            AnnotatedString(centerBottom),
-            style = GlassText.ChartAxis.copy(color = p.InkMid, fontSize = 11.sp)
-        )
+        // ---- 中心汇总文字（布局已在组合期量好）----
         val gapY = 3.dp.toPx()
         val totalH = topLayout.size.height + gapY + bottomLayout.size.height
         val topY = center.y - totalH / 2f

@@ -119,13 +119,15 @@ internal class HighlightNode(
 
             highlightLayer.alpha = highlight.alpha
             highlightLayer.blendMode = highlight.style.blendMode
-            val key = arrayOf(*arrayOf<Any?>(size.width, size.height, layoutDirection, shapeProvider.shape, highlight))
+            // 单层数组，且直接把引用存进 recordKey：原来每帧每节点要分配两层数组、再 copyOf 一份
+            val key = arrayOf<Any?>(size.width, size.height, layoutDirection, shapeProvider.shape, highlight)
             if (key.contentDeepEquals(recordKey)) {
+                // 内容在上面已经画过一次；这里再调 drawContent() 会把整棵子树重画一遍，
+                // 而子树里的 backdrop 节点要跑完整的 blur+lens，等于每个玻璃面每帧画两次。
                 translate(-1f, -1f) { drawLayer(highlightLayer) }
-                drawContent()
                 return
             }
-            recordKey = key.copyOf()
+            recordKey = key
             highlightLayer.record(safeSize) {
                 translate(1f, 1f) {
                     val canvas = drawContext.canvas

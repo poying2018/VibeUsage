@@ -116,17 +116,18 @@ internal class InnerShadowNode(
                     }
                 prevRadius = radius
             }
-            val key = arrayOf(*arrayOf<Any?>(size.width, size.height, layoutDirection, shapeProvider.shape, shadow, offsetX, offsetY))
+            // 单层数组 + 直接存引用：原来每帧每节点分配两层数组再 copyOf 一份
+            val key = arrayOf<Any?>(size.width, size.height, layoutDirection, shapeProvider.shape, shadow, offsetX, offsetY)
             if (key.contentDeepEquals(recordKey)) {
             val canvas0 = drawContext.canvas
             canvas0.save()
             canvas0.clipOutline(outline, clipPath)
             drawLayer(shadowLayer)
             canvas0.restore()
-            drawContent()
+            // 内容已在方法开头画过；这里再画一次会让子树（含 backdrop 的 blur+lens）每帧执行两遍
             return
         }
-            recordKey = key.copyOf()
+            recordKey = key
             shadowLayer.record {
                 val canvas = drawContext.canvas
                 canvas.save()

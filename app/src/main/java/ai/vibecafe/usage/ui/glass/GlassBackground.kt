@@ -1,6 +1,5 @@
 package ai.vibecafe.usage.ui.glass
 
-import ai.vibecafe.usage.render.GlassEngine
 import android.annotation.SuppressLint
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.graphics.BitmapFactory
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
@@ -56,15 +54,11 @@ fun rememberPageBackdrop(): LayerBackdrop = rememberLayerBackdrop()
 fun GlassBackground(
     backdrop: LayerBackdrop,
     modifier: Modifier = Modifier,
-    imagePath: String? = null, auroraColorA: Color? = null, auroraColorB: Color? = null
+    imagePath: String? = null
 ) {
     val p = LocalGlassPalette.current
     val imageBitmap = rememberDecodedImage(imagePath)
-    
 
-    // ---- 自研渲染引擎（AGSL 极光层）：API 33+ 可用，绘制异常自动永久降级 ----
-    val engineShader = remember { GlassEngine.newAuroraShader() }
-    val engineFailed = remember { mutableStateOf(false) }
     // 普通动画时钟：极光只做时间流动，不绑定任何设备传感器
     val timeSec = produceState(0f) {
         var start = -1L
@@ -84,23 +78,23 @@ fun GlassBackground(
             }
         }
     }
-    val orbsTimeSec = timeSec
-
-    // 手动映射循环插值：周期 T，往返
-    fun orbBounce(phase: Float, period: Float): Float {
-        val mod = (orbsTimeSec.value + phase) % (period * 2)
-        return if (mod < period) mod / period else 2f - (mod / period)
-    }
-
-    val p1 = orbBounce(0f, 24f)
-    val p2 = orbBounce(7f, 16f)
-    val p3 = orbBounce(12f, 16f)
-    val p4 = orbBounce(3f, 16f)
-
     Box(modifier.fillMaxSize().layerBackdrop(backdrop)) {
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
+
+            // 时钟只在 draw 阶段读：在组合作用域读 timeSec 会让整个背景（也就是所有玻璃层的采样源）
+            // 每 100ms 重组一次；挪进 Canvas lambda 后退化成一次纯重绘。
+            // 手动映射循环插值：周期 T，往返
+            fun orbBounce(phase: Float, period: Float): Float {
+                val mod = (timeSec.value + phase) % (period * 2)
+                return if (mod < period) mod / period else 2f - (mod / period)
+            }
+
+            val p1 = orbBounce(0f, 24f)
+            val p2 = orbBounce(7f, 16f)
+            val p3 = orbBounce(12f, 16f)
+            val p4 = orbBounce(3f, 16f)
 
             if (imageBitmap != null) {
                 // 自定义背景：图片铺底 + 半透明纱罩保证对比度，玻璃折射更明显
@@ -143,17 +137,6 @@ fun GlassBackground(
                         radius = maxOf(w, h) * 0.78f
                     )
                 )
-            }
-
-            // ---- 自研渲染引擎叠加层：程序化极光（暂时关闭以避免对角线白色高光带干扰）----
-            // shader 仍然按帧创建但不再 drawRect。
-            // 残留的 4 个 orb 色块（orbPink/Blue/Teal/Amber）已提供足够的背景层次。
-            val shader = engineShader
-            if (shader != null && !engineFailed.value) {
-                runCatching {
-                    shader.setFloatUniform("uSize", w, h)
-                    shader.setFloatUniform("uTime", timeSec.value)
-                }.onFailure { engineFailed.value = true }
             }
         }
     }
@@ -265,7 +248,7 @@ private fun DrawScope.orb(
 fun GlassScaffold(
     backdrop: LayerBackdrop,
     modifier: Modifier = Modifier,
-    imagePath: String? = null, auroraColorA: Color? = null, auroraColorB: Color? = null,
+    imagePath: String? = null,
     content: @Composable () -> Unit
 ) {
     Box(modifier.fillMaxSize()) {

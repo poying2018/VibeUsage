@@ -96,18 +96,26 @@ object StatsEngine {
     private const val TAG = "VibeUsage"
 
     val beijingTz: TimeZone = TimeZone.getTimeZone("Asia/Shanghai")
-    private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
+    // 这些格式化器会被 Dispatchers.Default 的多个线程同时用到；SimpleDateFormat 不是线程安全的，
+    // 共享实例会算出错误结果（甚至抛异常），所以按线程各持一份。
+    // 对外名字保持不变，所有调用点无需改动。
+    private val isoFormatTl = ThreadLocal.withInitial {
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
     }
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+    private val dateFormatTl = ThreadLocal.withInitial { beijingFormat("yyyy-MM-dd") }
+    private val labelFormatTl = ThreadLocal.withInitial { beijingFormat("M/d") }
+    private val hourFormatTl = ThreadLocal.withInitial { beijingFormat("HH:00") }
+
+    private fun beijingFormat(pattern: String) = SimpleDateFormat(pattern, Locale.US).apply {
         timeZone = beijingTz
     }
-    private val labelFormat = SimpleDateFormat("M/d", Locale.US).apply {
-        timeZone = beijingTz
-    }
-    private val hourFormat = SimpleDateFormat("HH:00", Locale.US).apply {
-        timeZone = beijingTz
-    }
+
+    private val isoFormat: SimpleDateFormat get() = isoFormatTl.get()!!
+    private val dateFormat: SimpleDateFormat get() = dateFormatTl.get()!!
+    private val labelFormat: SimpleDateFormat get() = labelFormatTl.get()!!
+    private val hourFormat: SimpleDateFormat get() = hourFormatTl.get()!!
 
     private fun parseIsoTime(iso: String): Date? = runCatching { isoFormat.parse(iso) }.getOrNull()
     private fun toBeijingDateOnly(date: Date): String = dateFormat.format(date)
@@ -115,12 +123,18 @@ object StatsEngine {
 
     /**
      * 缓存 ISO 时间解析结果，避免同一 bucket 在多个 compute 函数间重复解析。
-     * 使用软引用语义——随着 filterBuckets 调用释放，不会内存泄漏。
+     * 由各 compute 函数开头/结尾 clearIsoCache() 控制生命周期，不长期驻留。
      */
-    private val isoCache = HashMap<String, Date?>()
+    private val isoCache = java.util.concurrent.ConcurrentHashMap<String, Any>()
+    private val noDate = Any()
 
     private fun parseCached(iso: String): Date? {
-        return isoCache.getOrPut(iso) { parseIsoTime(iso) }
+        val cached = isoCache[iso] ?: run {
+            val stored: Any = parseIsoTime(iso) ?: noDate
+            isoCache[iso] = stored
+            stored
+        }
+        return cached as? Date
     }
 
     private fun clearIsoCache() {

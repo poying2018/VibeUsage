@@ -4,6 +4,7 @@ import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -91,6 +92,14 @@ private fun Modifier.liquidGlass(
     val lensHeight = with(density) { (cornerRadius.value * 0.75f).dp.coerceAtLeast(6f.dp).toPx() }
     val lensAmount = with(density) { (cornerRadius.value * 0.85f).dp.coerceAtLeast(8f.dp).toPx() }
     val overlayColor = Color.White.copy(alpha = s.whiteOverlay)
+    // 顶部内高光每帧都要画一次。Brush 在这里建一次、由 draw 阶段复用：
+    // 放进 draw lambda 里会让每个玻璃面每帧新建一个原生 SkShader（20+ 个面 × 每帧）。
+    val sheen = remember(p.SheenTop) {
+        Brush.verticalGradient(
+            0f to p.SheenTop,
+            0.22f to Color.Transparent
+        )
+    }
     return drawBackdrop(
         backdrop = backdrop,
         shape = { RoundedCornerShape(cornerRadius) },
@@ -107,12 +116,7 @@ private fun Modifier.liquidGlass(
             tint?.let { drawRect(it) }
         },
         onDrawSurface = {
-            drawRect(
-                Brush.verticalGradient(
-                    0f to p.SheenTop,
-                    0.22f to Color.Transparent
-                )
-            )
+            drawRect(sheen)
         },
         exportedBackdrop = exportedBackdrop
     )

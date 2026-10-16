@@ -259,9 +259,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun showToolDetail(tool: String) {
         val tr = _uiState.value.selectedTimeRange
         val data = dataForRange(tr) ?: return
-        _uiState.value = _uiState.value.copy(
-            toolDetail = StatsEngine.computeToolDetail(data, tr, tool, _uiState.value.selectedDevices, customOf(tr))
-        )
+        val devices = _uiState.value.selectedDevices
+        val custom = customOf(tr)
+        // 细分详情要遍历整个数据集，放主线程会让长按手势当场掉帧
+        viewModelScope.launch {
+            val detail = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                StatsEngine.computeToolDetail(data, tr, tool, devices, custom)
+            }
+            if (_uiState.value.selectedTimeRange == tr) {
+                _uiState.value = _uiState.value.copy(toolDetail = detail)
+            }
+        }
     }
 
     fun hideToolDetail() {
@@ -274,9 +282,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun showModelDetail(model: String) {
         val tr = _uiState.value.selectedTimeRange
         val data = dataForRange(tr) ?: return
-        _uiState.value = _uiState.value.copy(
-            modelDetail = StatsEngine.computeModelDetail(data, tr, model, _uiState.value.selectedDevices, customOf(tr))
-        )
+        val devices = _uiState.value.selectedDevices
+        val custom = customOf(tr)
+        viewModelScope.launch {
+            val detail = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                StatsEngine.computeModelDetail(data, tr, model, devices, custom)
+            }
+            if (_uiState.value.selectedTimeRange == tr) {
+                _uiState.value = _uiState.value.copy(modelDetail = detail)
+            }
+        }
     }
 
     fun hideModelDetail() {

@@ -46,6 +46,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.border
@@ -69,10 +71,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Cloud
@@ -193,24 +193,10 @@ fun DashboardScreen(
         if (uri != null) bgPath = BackgroundStore.set(context, uri)
     }
 
-    // 极光颜色随指标联动：金额=青/蓝（默认），Tokens=紫/洋红（呼应趋势图渐变 secondary）
-    val auroraA by androidx.compose.animation.animateColorAsState(
-        targetValue = if (trendMetric == TrendMetric.TOKENS) Color(0xFF7C6BFF) else Color(0xFF1FE0C4),
-        animationSpec = tween(800),
-        label = "auroraA"
-    )
-    val auroraB by androidx.compose.animation.animateColorAsState(
-        targetValue = if (trendMetric == TrendMetric.TOKENS) Color(0xFFFF4D9D) else Color(0xFF6E8CFF),
-        animationSpec = tween(800),
-        label = "auroraB"
-    )
-
     Box(Modifier.fillMaxSize()) {
         GlassBackground(
             backdrop,
-            imagePath = bgPath,
-            auroraColorA = auroraA,
-            auroraColorB = auroraB
+            imagePath = bgPath
         )
 
         // 内容整体导出进 backdrop（用包裹 Box，避开 scroll modifier 对录制的影响），
@@ -243,10 +229,12 @@ fun DashboardScreen(
                 }
             }
         ) {
-        Column(
+        // 惰性滚动容器。手机单列的列表行（18 条，每条都是独立玻璃面）被提升为 LazyColumn
+        // 的 item：滚出视口的行不再参与绘制与图层录制 —— 这是本次结构改造的全部意义。
+        // 顶部内容仍放在同一个 item 内的 Column 里，保留原来的 20dp 间距。
+        LazyColumn(
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 // 下拉展开时：点页面任意空白处（卡片、背景等未消费点击的区域）自动收起；
                 // 菜单行/按钮等自身可点的控件会先消费点击，不会误触
                 .pointerInput(Unit) {
@@ -263,8 +251,11 @@ fun DashboardScreen(
                     start = 18.dp,
                     end = 18.dp
                 ),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            // 11dp = 原列表内层 Column 的行间距；非行 item 需要的 20dp 由它们自己补足
+            verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {
+        item {
+        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Header(
                 onRefresh = {
                     if (showAgPanel) agPanelViewModel.refresh()
@@ -447,17 +438,82 @@ fun DashboardScreen(
                             }
                         }
                     } else {
-                        // 手机：单列顺序排列
-                        if (hasTools) ToolDistributionSection(state, backdrop, onShowToolDetail)
-                        if (hasModels) ModelCostSection(state, backdrop, onShowModelDetail)
+                        // 手机：单列。标题与环形图留在顶部（非惰性），两个长列表的行
+                        // 由 LazyColumn 的惰性 item 渲染，滚出视口的行不再绘制
+                        if (hasTools) {
+                            ToolDistributionSection(state, backdrop, onShowToolDetail, includeRows = false)
+                        }
                         if (!hasTools && !hasModels) {
                             StatusCard("当前时间范围内没有用量记录", backdrop)
                         }
                     }
                 }
             }
-        } // 结束 if (showAgPanel) 的 else 分支
+        } // 设置页 / 额度页 / 主内容 的 else 分支结束
+        } // 顶部内容 Column 结束
+        } // item 结束
+
+        // ---- 手机单列：两个长列表的行提升为惰性 item ----
+        // 行是各自独立的玻璃面，放进 itemsIndexed 后滚出视口就不再绘制/录制图层。
+        // 间距逐项复刻改造前：行间 11dp（LazyColumn arrangement），
+        // 与上方内容、以及模型标题前后的 20dp 由 9dp 补齐（11 + 9 = 20）。
+        if (!showSettings && !showAgPanel && !wide &&
+            !state.isLoading && state.error == null && state.stats != null
+        ) {
+            val toolRows = state.toolDistribution.take(8)
+            if (toolRows.isNotEmpty()) {
+                itemsIndexed(toolRows, key = { _, it -> "tool-${it.tool}" }) { index, item ->
+                    Box(Modifier.padding(top = if (index == 0) 9.dp else 0.dp)) {
+                        GlassListRow(
+                            backdrop = backdrop,
+                            icon = toolIconFor(item.tool),
+                            name = item.tool,
+                            meta = "${formatTokens(item.tokens)} tokens · " +
+                                String.format(Locale.US, "%.1f", item.percentage) + "%",
+                            value = formatCost(item.cost),
+                            active = state.toolDetail?.tool == item.tool,
+                            onLongPress = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onShowToolDetail(item.tool)
+                            },
+                            delayMs = 160 + index * 45
+                        )
+                    }
+                }
+            }
+            val modelRows = state.modelCosts.take(10)
+            if (modelRows.isNotEmpty()) {
+                val maxCost = modelRows.maxOfOrNull { it.cost } ?: 0.0
+                item {
+                    Box(Modifier.padding(top = 9.dp)) {
+                        SectionTitle("模型消耗", modifier = Modifier.fadeSlideIn(140))
+                    }
+                }
+                itemsIndexed(modelRows, key = { _, it -> "model-${it.model}" }) { index, item ->
+                    Box(Modifier.padding(top = if (index == 0) 9.dp else 0.dp)) {
+                        GlassListRow(
+                            backdrop = backdrop,
+                            icon = toolIconFor(item.model),
+                            name = item.model,
+                            meta = "${formatTokens(item.tokens)} tokens",
+                            value = formatCost(item.cost),
+                            progress = if (maxCost > 0.0) {
+                                (item.cost / maxCost).toFloat().coerceIn(0.02f, 1f)
+                            } else {
+                                null
+                            },
+                            active = state.modelDetail?.model == item.model,
+                            onLongPress = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onShowModelDetail(item.model)
+                            },
+                            delayMs = 180 + index * 45
+                        )
+                    }
+                }
+            }
         }
+        } // LazyColumn 结束
         } // PullToRefreshBox 结束
         } // 内容导出 Box 结束
 
@@ -1041,11 +1097,11 @@ private fun SkeletonDashboard(wide: Boolean, backdrop: com.kyant.backdrop.Backdr
                 .glassCard(backdrop)
                 .padding(20.dp)
         ) {
-            SkeletonBlock(palette, alpha.value, width = 0.42f, height = 13.dp)
+            SkeletonBlock(palette, { alpha.value }, width = 0.42f, height = 13.dp)
             Spacer(Modifier.height(14.dp))
-            SkeletonBlock(palette, alpha.value, width = 0.62f, height = if (wide) 52.dp else 42.dp)
+            SkeletonBlock(palette, { alpha.value }, width = 0.62f, height = if (wide) 52.dp else 42.dp)
             Spacer(Modifier.height(16.dp))
-            SkeletonBlock(palette, alpha.value, width = 1f, height = 15.dp)
+            SkeletonBlock(palette, { alpha.value }, width = 1f, height = 15.dp)
         }
         // 趋势卡
         Column(
@@ -1054,9 +1110,9 @@ private fun SkeletonDashboard(wide: Boolean, backdrop: com.kyant.backdrop.Backdr
                 .glassCard(backdrop)
                 .padding(18.dp)
         ) {
-            SkeletonBlock(palette, alpha.value, width = 0.3f, height = 12.dp)
+            SkeletonBlock(palette, { alpha.value }, width = 0.3f, height = 12.dp)
             Spacer(Modifier.height(16.dp))
-            SkeletonBlock(palette, alpha.value, width = 1f, height = if (wide) 150.dp else 120.dp)
+            SkeletonBlock(palette, { alpha.value }, width = 1f, height = if (wide) 150.dp else 120.dp)
         }
         if (!wide) {
             // 分布卡
@@ -1066,22 +1122,30 @@ private fun SkeletonDashboard(wide: Boolean, backdrop: com.kyant.backdrop.Backdr
                     .glassCard(backdrop)
                     .padding(18.dp)
             ) {
-                SkeletonBlock(palette, alpha.value, width = 0.3f, height = 12.dp)
+                SkeletonBlock(palette, { alpha.value }, width = 0.3f, height = 12.dp)
                 Spacer(Modifier.height(16.dp))
-                SkeletonBlock(palette, alpha.value, width = 1f, height = 90.dp)
+                SkeletonBlock(palette, { alpha.value }, width = 1f, height = 90.dp)
             }
         }
     }
 }
 
 @Composable
-private fun SkeletonBlock(palette: GlassPalette, alpha: Float, width: Float, height: androidx.compose.ui.unit.Dp) {
+private fun SkeletonBlock(
+    palette: GlassPalette,
+    alpha: () -> Float,
+    width: Float,
+    height: androidx.compose.ui.unit.Dp
+) {
     Box(
         Modifier
             .fillMaxWidth(width)
             .height(height)
             .clip(RoundedCornerShape(10.dp))
-            .background(palette.InkHi.copy(alpha = 0.09f * alpha + 0.03f))
+            .background(palette.InkHi)
+            // 呼吸透明度在 layer 阶段才读：以前 alpha.value 在组合作用域取值，
+            // 整个骨架屏（3 张玻璃卡 + 7 个块）每帧重组一次
+            .graphicsLayer { this.alpha = 0.09f * alpha() + 0.03f }
     )
 }
 
@@ -1090,12 +1154,16 @@ private fun SkeletonBlock(palette: GlassPalette, alpha: Float, width: Float, hei
 private fun ToolDistributionSection(
     state: UiState,
     backdrop: com.kyant.backdrop.Backdrop,
-    onShowToolDetail: (String) -> Unit
+    onShowToolDetail: (String) -> Unit,
+    // 手机单列时由页面把列表行提升为惰性 item，这里只出标题 + 环形图卡
+    includeRows: Boolean = true
 ) {
     val palette = LocalGlassPalette.current
     val haptic = LocalHapticFeedback.current
     val wide = isWideScreen()
-    val top = state.toolDistribution.take(8)
+    val top = remember(state.toolDistribution) { state.toolDistribution.take(8) }
+    // 切片只在数据变化时算一次：以前每次重组都新建 List（不稳定类型），DonutChart 永远无法跳过
+    val slices = remember(top) { top.map { DonutSlice(it.tool, it.percentage, toolIconFor(it.tool).color) } }
 
     SectionTitle("应用分布", modifier = Modifier.fadeSlideIn(120))
     Column(
@@ -1107,7 +1175,7 @@ private fun ToolDistributionSection(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             DonutChart(
-                slices = top.map { DonutSlice(it.tool, it.percentage, toolIconFor(it.tool).color) },
+                slices = slices,
                 diameter = if (wide) 150.dp else 126.dp,
                 stroke = 17.dp,
                 centerTop = "${top.size}",
@@ -1144,23 +1212,27 @@ private fun ToolDistributionSection(
             }
         }
     }
+    // 11dp 的空隙在惰性模式下要保留：它与 LazyColumn 的 11dp 行距、首行补的 9dp 一起，
+    // 正好复刻改造前「环形图卡 → 第一行」的 51dp
     Spacer(Modifier.height(11.dp))
-    Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-        top.forEachIndexed { index, item ->
-            GlassListRow(
-                backdrop = backdrop,
-                icon = toolIconFor(item.tool),
-                name = item.tool,
-                meta = "${formatTokens(item.tokens)} tokens · " +
-                    String.format(Locale.US, "%.1f", item.percentage) + "%",
-                value = formatCost(item.cost),
-                active = state.toolDetail?.tool == item.tool,
-                onLongPress = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onShowToolDetail(item.tool)
-                },
-                delayMs = 160 + index * 45
-            )
+    if (includeRows) {
+        Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            top.forEachIndexed { index, item ->
+                GlassListRow(
+                    backdrop = backdrop,
+                    icon = toolIconFor(item.tool),
+                    name = item.tool,
+                    meta = "${formatTokens(item.tokens)} tokens · " +
+                        String.format(Locale.US, "%.1f", item.percentage) + "%",
+                    value = formatCost(item.cost),
+                    active = state.toolDetail?.tool == item.tool,
+                    onLongPress = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onShowToolDetail(item.tool)
+                    },
+                    delayMs = 160 + index * 45
+                )
+            }
         }
     }
 }
@@ -1424,7 +1496,8 @@ private fun ModelDetailOverlay(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF0D1520).copy(alpha = dimAlpha))
+            .background(Color(0xFF0D1520))
+            .graphicsLayer { alpha = dimAlpha }
             .clickable(ripple, null, onClick = onDismiss),
         contentAlignment = Alignment.Center
     ) {
@@ -1639,7 +1712,8 @@ private fun ToolDetailOverlay(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF0D1520).copy(alpha = dimAlpha))
+            .background(Color(0xFF0D1520))
+            .graphicsLayer { alpha = dimAlpha }
             .clickable(ripple, null, onClick = onDismiss),
         contentAlignment = Alignment.Center
     ) {
