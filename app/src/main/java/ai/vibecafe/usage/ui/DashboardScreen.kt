@@ -57,6 +57,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -241,16 +242,18 @@ fun DashboardScreen(
                     detectTapGestures {
                         if (switcherExpanded) switcherExpanded = false
                     }
-                }
-                .padding(
-                    top = insets.calculateTopPadding() + 18.dp,
-                    // 底部留出「底部导航栏 64+14 +（概览页：时间选择条 58+10）+ 呼吸」的空间：
-                    // 内容可滚动到悬浮玻璃下方被实时模糊，滚到底时最后一行仍不会被遮挡
-                    bottom = insets.calculateBottomPadding() +
-                            (if (!showAgPanel && !showSettings) 176.dp else 106.dp),
-                    start = 18.dp,
-                    end = 18.dp
-                ),
+                },
+            // 内边距必须走 contentPadding：Modifier.padding 会缩小 LazyColumn 自己的视口，
+            // 内容滚不到那段内边距里，也就没有任何内容能落到悬浮玻璃下方被实时模糊
+            contentPadding = PaddingValues(
+                top = insets.calculateTopPadding() + 18.dp,
+                // 底部留出「底部导航栏 64+14 +（概览页：时间选择条 58+10）+ 呼吸」的空间：
+                // 内容可滚动到悬浮玻璃下方被实时模糊，滚到底时最后一行仍不会被遮挡
+                bottom = insets.calculateBottomPadding() +
+                        (if (!showAgPanel && !showSettings) 176.dp else 106.dp),
+                start = 18.dp,
+                end = 18.dp
+            ),
             // 11dp = 原列表内层 Column 的行间距；非行 item 需要的 20dp 由它们自己补足
             verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {
@@ -1496,8 +1499,9 @@ private fun ModelDetailOverlay(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF0D1520))
-            .graphicsLayer { alpha = dimAlpha }
+            // 遮罩透明度只该作用于背景绘制本身：graphicsLayer{alpha} 会把整层内容
+            // （含详情卡）一起变透明，卡片被压到 0.45，看起来像「背景穿出来了」。
+            .background(Color(0xFF0D1520).copy(alpha = dimAlpha))
             .clickable(ripple, null, onClick = onDismiss),
         contentAlignment = Alignment.Center
     ) {
@@ -1712,8 +1716,9 @@ private fun ToolDetailOverlay(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF0D1520))
-            .graphicsLayer { alpha = dimAlpha }
+            // 遮罩透明度只该作用于背景绘制本身：graphicsLayer{alpha} 会把整层内容
+            // （含详情卡）一起变透明，卡片被压到 0.45，看起来像「背景穿出来了」。
+            .background(Color(0xFF0D1520).copy(alpha = dimAlpha))
             .clickable(ripple, null, onClick = onDismiss),
         contentAlignment = Alignment.Center
     ) {
