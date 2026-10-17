@@ -464,17 +464,28 @@ private fun LoggedArea(
         }
 
         ps.groups.forEach { (groupTitle, bars) ->
-            Spacer(Modifier.height(8.dp))
-            Text(
-                groupTitle,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = palette.InkMid
-            )
-            Spacer(Modifier.height(8.dp))
-            bars.forEachIndexed { idx, bar ->
-                if (idx > 0) Spacer(Modifier.height(12.dp))
-                BarRow(bar)
+            Spacer(Modifier.height(10.dp))
+            // 每个时间窗口一个独立的半透明子面：原来两个窗口是同一根「平铺的柱子」，
+            // 标题、数值、进度条、重置时间全糊在一起，读不出分组边界
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(palette.InkHi.copy(alpha = 0.05f))
+                    .padding(horizontal = 14.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    groupTitle,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = palette.InkMid,
+                    letterSpacing = 0.4.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                bars.forEachIndexed { idx, bar ->
+                    if (idx > 0) Spacer(Modifier.height(14.dp))
+                    BarRow(bar)
+                }
             }
         }
 
@@ -575,26 +586,36 @@ private fun BarRow(bar: Bar) {
                     Text(it, fontSize = 11.sp, color = palette.InkMid, maxLines = 1)
                 }
             }
+            // 余量放大加粗、与进度条同色。「已用」下沉到底部那一行：
+            // 和百分比挤在同一行时，`100%` 这种四位数会把中文标签挤到被裁掉半截。
             Text(
-                buildString {
-                    append("$percent%")
-                    bar.usedPercent?.let { append(" · 已用 $it%") }
-                },
-                fontSize = 12.sp,
+                "$percent%",
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = barColor
             )
         }
         Spacer(Modifier.height(6.dp))
-        // 进度条：按余量渐变（100% 绿 → 0% 红）
         QuotaBarFill(percent, 8.dp, palette.InkHi.copy(alpha = 0.10f))
-        if (bar.reset != null) {
-            Text(
-                bar.reset,
-                fontSize = 10.sp,
-                color = palette.InkMid,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+        if (bar.reset != null || bar.usedPercent != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    bar.reset ?: "",
+                    fontSize = 10.sp,
+                    color = palette.InkMid,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f)
+                )
+                bar.usedPercent?.let {
+                    Text("已用 $it%", fontSize = 10.sp, color = palette.InkMid)
+                }
+            }
         }
     }
 }

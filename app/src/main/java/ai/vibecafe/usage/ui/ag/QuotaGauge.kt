@@ -15,9 +15,20 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/** 额度余量 → 平滑色相渐变：0% 红(4°) 经橙/黄过渡到 100% 绿(140°)。 */
+/**
+ * 额度余量 → 色相。**不再从 0% 到 100% 线性扫过整条彩虹**。
+ *
+ * 线性映射的问题很直观：46% 剩余（其实还很充裕）会被染成黄色，看起来像告警。
+ * 改成三段：≥60% 保持绿；60%→30% 由绿转琥珀；30%→0% 由琥珀转红。
+ * 三段在 30 / 60 处连续，色相不会跳变。
+ */
 internal fun quotaGaugeColor(percentRemaining: Int): Color {
-    val hue = 4f + (percentRemaining.coerceIn(0, 100) / 100f) * 136f
+    val p = percentRemaining.coerceIn(0, 100).toFloat()
+    val hue = when {
+        p >= 60f -> 140f
+        p >= 30f -> 45f + (p - 30f) / 30f * 95f
+        else -> 4f + p / 30f * 41f
+    }
     return Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 0.72f, 0.98f)))
 }
 
