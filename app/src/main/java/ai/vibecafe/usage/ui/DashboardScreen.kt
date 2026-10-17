@@ -115,6 +115,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -1375,11 +1376,14 @@ private fun GlassListRow(
             }
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f, fill = false)) {
+                // 模型 id 常带「供应商/型号」长前缀，单行会把区分度最高的尾巴吃掉；
+                // 允许折两行，只有真的放不下时卡片才会变高。
                 Text(
                     name,
-                    style = GlassText.Body,
+                    // Heading 的断行策略不拆词：否则长 id 会被切成「Flash-Pre / view」
+                    style = GlassText.Body.copy(lineBreak = LineBreak.Heading),
                     color = palette.InkHi,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(2.dp))
@@ -1543,7 +1547,7 @@ private fun ModelDetailOverlay(
                     // 模型 id 常带「供应商/型号」长前缀，收小字号并允许折三行。
                     Text(
                         detail.model,
-                        style = GlassText.Title,
+                        style = GlassText.Title.copy(lineBreak = LineBreak.Heading),
                         fontSize = 21.sp,
                         lineHeight = 25.sp,
                         color = palette.InkHi,
