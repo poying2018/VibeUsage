@@ -66,6 +66,7 @@ fun AgPanelScreen(
 
 // ─── 登录卡 ───
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun AgLoginCard(
     backdrop: Backdrop,
@@ -127,15 +128,18 @@ private fun AgLoginCard(
                 text = "Google Antigravity 配额查询",
                 fontSize = 13.sp,
                 color = palette.InkMid,
+                // 系统字号放大时这句会折行；不设居中会剩一个孤零零的字贴在左边
+                textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
             )
 
             // 接入前先说清楚能看到什么。空态是新用户没接任何凭据时的默认落地页，
             // 只摆一个按钮的话，用户不知道值不值得点。
-            Row(
+            // 用 FlowRow 而非 Row：大字号下三个标签一行放不下，Row 会把最后一个裁掉
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                // 横屏/平板下卡片很宽，靠左排会与居中的标题、按钮错位
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 // 标签沿用额度页里窗口组用的那套说法（「5 小时窗口」），既更短放得下，
                 // 也和接入后看到的措辞一致
