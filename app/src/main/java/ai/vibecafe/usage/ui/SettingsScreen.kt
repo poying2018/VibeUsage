@@ -471,18 +471,31 @@ fun SettingsScreen(
     }
 }
 
-/** 分组标题（卡片外的小标签）。 */
+/**
+ * 分组标题：与概览页 SectionTitle 同一规格（accent 竖条 + 字距标签）。
+ * 原来是光秃秃的 11sp 粗灰字，没有竖条也没有字距 —— 设置页、概览页、额度页
+ * 三处分区标题长得不一样。
+ */
 @Composable
 private fun SectionLabel(text: String) {
     val p = LocalGlassPalette.current
-    Text(
-        text,
-        style = GlassText.Label,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        color = p.InkLo,
-        modifier = Modifier.padding(start = 6.dp, top = 4.dp)
-    )
+    Row(
+        modifier = Modifier.padding(start = 2.dp, top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(width = 3.5.dp, height = 13.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(p.Accent)
+        )
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text,
+            style = GlassText.Section,
+            color = p.InkMid
+        )
+    }
 }
 
 /** 行首图标底座：小玻璃块 + 主题色图标。 */
