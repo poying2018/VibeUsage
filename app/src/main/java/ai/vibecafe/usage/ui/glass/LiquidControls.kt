@@ -217,19 +217,29 @@ fun LiquidSlider(
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
                         blur(8f.dp.toPx() * (1f - progress))
-                        lens(
-                            10f.dp.toPx() * progress,
-                            14f.dp.toPx() * progress,
-                            chromaticAberration = true
-                        )
+                        // 静止时 lens(0,0) 是恒等变换，但带色散的折射着色器仍会每像素做
+                        // 7 次纹理采样。设置页有 5 个滑杆，不守卫就是每帧白跑 5 遍。
+                        // （底部 Tab 和分段控件早就这么守卫了，滑杆这里漏了。）
+                        if (progress > 0f) {
+                            lens(
+                                10f.dp.toPx() * progress,
+                                14f.dp.toPx() * progress,
+                                chromaticAberration = true
+                            )
+                        }
                     },
                     highlight = {
                         val progress = dampedDragAnimation.pressProgress
-                        Highlight.Ambient.copy(
-                            width = Highlight.Ambient.width / 1.5f,
-                            blurRadius = Highlight.Ambient.blurRadius / 1.5f,
-                            alpha = progress
-                        )
+                        // 静止时高光 alpha 为 0、整层不可见；不生成就省掉一次图层录制
+                        if (progress <= 0f) {
+                            null
+                        } else {
+                            Highlight.Ambient.copy(
+                                width = Highlight.Ambient.width / 1.5f,
+                                blurRadius = Highlight.Ambient.blurRadius / 1.5f,
+                                alpha = progress
+                            )
+                        }
                     },
                     shadow = {
                         Shadow(
