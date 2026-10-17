@@ -127,8 +127,31 @@ private fun AgLoginCard(
                 text = "Google Antigravity 配额查询",
                 fontSize = 13.sp,
                 color = palette.InkMid,
-                modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp)
             )
+
+            // 接入前先说清楚能看到什么。空态是新用户没接任何凭据时的默认落地页，
+            // 只摆一个按钮的话，用户不知道值不值得点。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 标签沿用额度页里窗口组用的那套说法（「5 小时窗口」），既更短放得下，
+                // 也和接入后看到的措辞一致
+                listOf("5 小时窗口", "每周窗口", "可用模型").forEach { label ->
+                    Text(
+                        label,
+                        fontSize = 11.sp,
+                        color = palette.InkMid,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(palette.InkHi.copy(alpha = 0.06f))
+                            .padding(horizontal = 9.dp, vertical = 5.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(20.dp))
 
             // 一键授权：浏览器 Google 登录，loopback 捕获授权码，凭据自动保存
             LiquidButton(
@@ -193,9 +216,21 @@ private fun AgLoginCard(
             }
 
             // 手动粘贴（降级方式）
-            TextButton(onClick = { showManual = !showManual }) {
+            // 原来是一行 12sp 灰字，看起来像一个失效的标签，而不是「也有这条路、
+            // 只是麻烦点」的次要操作。改成药丸形的次要按钮：保留 TextButton 的
+            // 涟漪与无障碍，只补上可点击的视觉暗示。
+            TextButton(
+                onClick = { showManual = !showManual },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(palette.InkHi.copy(alpha = 0.05f))
+                    .padding(horizontal = 4.dp)
+            ) {
                 Text(
-                    if (showManual) "收起手动输入" else "手动粘贴账号 JSON / refresh_token",
+                    // 原文案「手动粘贴账号 JSON / refresh_token」加上药丸内边距后会折成两行，
+                    // 体量逼近主按钮，次要操作反而更抢眼。收成一行；具体要粘什么，
+                    // 展开后的输入框标题已经写了「账号 JSON 或 refresh_token」。
+                    if (showManual) "收起手动输入" else "手动粘贴凭据",
                     color = palette.InkMid,
                     fontSize = 12.sp
                 )
