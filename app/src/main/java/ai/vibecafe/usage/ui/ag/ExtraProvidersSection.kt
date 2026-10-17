@@ -447,22 +447,51 @@ private fun LoggedArea(
                     CircularProgressIndicator(Modifier.size(14.dp), color = provider.color, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                if (ps.account != null) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(provider.color.copy(alpha = 0.16f))
-                            .padding(horizontal = 9.dp, vertical = 3.dp)
-                    ) {
-                        Text(ps.account!!, fontSize = 10.sp, color = provider.color, maxLines = 1)
+                // 状态胶囊：以前只在有账号名时才渲染。API Key 型供应商 ps.account 为 null，
+                // 左边整片空着，两个操作图标孤零零飘在卡片顶部。凭据已生效本身就是有用的信息，
+                // 补一个胶囊把这行撑住，也顺带说明当前是哪种凭据在生效。
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(provider.color.copy(alpha = 0.16f))
+                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(provider.color)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            ps.account ?: "凭据已生效",
+                            fontSize = 10.sp,
+                            color = provider.color,
+                            maxLines = 1
+                        )
                     }
                 }
             }
-            IconButton(onClick = { viewModel.refresh(provider.id) }, modifier = Modifier.size(30.dp)) {
-                Icon(Icons.Filled.Refresh, "刷新", Modifier.size(16.dp), tint = palette.InkMid)
+            // 操作加一层底面：裸图标在这个尺寸下读起来像装饰，不像可点的控件
+            IconButton(
+                onClick = { viewModel.refresh(provider.id) },
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(palette.InkHi.copy(alpha = 0.06f))
+            ) {
+                Icon(Icons.Filled.Refresh, "刷新", Modifier.size(15.dp), tint = palette.InkMid)
             }
-            IconButton(onClick = { viewModel.logout(provider.id) }, modifier = Modifier.size(30.dp)) {
-                Icon(Icons.Filled.Logout, "解绑", Modifier.size(15.dp), tint = palette.InkMid)
+            Spacer(Modifier.width(6.dp))
+            IconButton(
+                onClick = { viewModel.logout(provider.id) },
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(palette.InkHi.copy(alpha = 0.06f))
+            ) {
+                Icon(Icons.Filled.Logout, "解绑", Modifier.size(14.dp), tint = palette.InkMid)
             }
         }
 
