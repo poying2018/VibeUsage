@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -122,7 +123,18 @@ fun QuotaSwitcher(
                     color = palette.InkHi,
                     maxLines = 1
                 )
-                Spacer(Modifier.width(18.dp))
+                Spacer(Modifier.width(7.dp))
+                // 下拉指示 + 展开时翻转：没有它这个胶囊读起来只是一个标签，
+                // 不像「点开能换供应商」。翻转走 graphicsLayer，只重绘不重组。
+                Icon(
+                    Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(16.dp)
+                        .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+                    tint = palette.InkMid
+                )
+                Spacer(Modifier.width(11.dp))
             }
             Spacer(Modifier.height(6.dp))
             content()
