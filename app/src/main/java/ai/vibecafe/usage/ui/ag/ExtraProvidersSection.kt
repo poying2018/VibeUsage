@@ -531,14 +531,17 @@ private fun LoggedArea(
         }
 
         if (ps.models.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
-                ps.modelsLabel ?: "可用模型",
+                // 带上数量，这一区就有了一个可读的结论，而不是一堆裸芯片
+                "${ps.modelsLabel ?: "可用模型"} · ${ps.models.size}",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
-                color = palette.InkMid
+                color = palette.InkMid,
+                // 与窗口组标题同一套规格：同一张卡里不该出现两套标题样式
+                letterSpacing = 0.4.sp
             )
-            Spacer(Modifier.height(7.dp))
+            Spacer(Modifier.height(8.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -552,8 +555,8 @@ private fun LoggedArea(
                         maxLines = 1,
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(palette.InkHi.copy(alpha = 0.08f))
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                            .background(palette.InkHi.copy(alpha = 0.10f))
+                            .padding(horizontal = 9.dp, vertical = 4.dp)
                     )
                 }
                 if (ps.models.size > 20) {
@@ -561,7 +564,10 @@ private fun LoggedArea(
                         "+${ps.models.size - 20} 个",
                         fontSize = 10.sp,
                         color = palette.InkMid,
-                        modifier = Modifier.padding(vertical = 3.dp)
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(palette.InkHi.copy(alpha = 0.06f))
+                            .padding(horizontal = 9.dp, vertical = 4.dp)
                     )
                 }
             }
