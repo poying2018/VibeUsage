@@ -57,6 +57,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -117,6 +118,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -626,11 +628,15 @@ fun DashboardScreen(
                     .background(Color.Black.copy(alpha = 0.35f))
                     .clickable { showCustomPicker = false }
             )
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                // 面板高度随可用高度收缩：竖屏 640dp 够放下整月，横屏 360dp 只够两三周，
+                // 写死 400dp 会把「取消/确定」顶到屏幕外（横屏实测点不到）。
+                val pickerHeight = (maxHeight - 100.dp).coerceIn(200.dp, 400.dp)
                 CustomRangePanel(
                     backdrop = scrimBackdrop,
                     initialFromMillis = System.currentTimeMillis() - 6L * 86_400_000L,
                     initialToMillis = System.currentTimeMillis(),
+                    pickerHeight = pickerHeight,
                     onConfirm = { from, to ->
                         showCustomPicker = false
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -994,6 +1000,7 @@ private fun CustomRangePanel(
     backdrop: com.kyant.backdrop.Backdrop,
     initialFromMillis: Long,
     initialToMillis: Long,
+    pickerHeight: Dp,
     onConfirm: (from: String, to: String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1008,6 +1015,8 @@ private fun CustomRangePanel(
     }
     Column(
         Modifier
+            // 横屏时 0.94 宽会把日历拉成超宽格，日与日之间空出一大截；先限宽再取比例
+            .widthIn(max = 420.dp)
             .fillMaxWidth(0.94f)
             .glassCard(backdrop, cornerRadius = 24.dp)
             .padding(horizontal = 6.dp, vertical = 10.dp)
@@ -1024,10 +1033,9 @@ private fun CustomRangePanel(
                 )
             },
             headline = null,
-            // 340dp 只放得下 3.8 个星期行：整月最后一周被切成半行，看着像渲染坏了。
-            // 400dp = 标题 60 + 星期行 50 + 月份头 47 + 5 行日格 240，整月能完整看到；
-            // 六行月份仍可滚动，卡片总高约 474dp，留白充足。
-            modifier = Modifier.height(400.dp),
+            // 竖屏 400dp = 标题 60 + 星期行 50 + 月份头 47 + 5 行日格 240，整月完整可见；
+            // 横屏由调用方按可用高度收窄，避免按钮被顶出屏幕。六行月份仍可滚动。
+            modifier = Modifier.height(pickerHeight),
             colors = DatePickerDefaults.colors(
                 containerColor = Color.Transparent,
                 titleContentColor = palette.InkHi,
