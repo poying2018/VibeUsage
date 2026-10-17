@@ -324,7 +324,13 @@ fun TrendChart(
         // ---- 轴标签（缓存布局 + 透明度）----
         val labelAlpha = ((T - 0.1f) / 0.35f).coerceIn(0f, 1f)
         if (labelAlpha > 0f) {
-            drawText(texts.axisMaxLabel, topLeft = Offset(padLeft, 2.dp.toPx()), alpha = labelAlpha)
+            // 刻度统一贴右缘：最大值以前单独挂在左上角，和下面三个刻度分居两侧，
+            // 读起来像「左轴 + 右轴」的双轴图
+            drawText(
+                texts.axisMaxLabel,
+                topLeft = Offset(w - padRight - texts.axisMaxLabel.size.width, 2.dp.toPx()),
+                alpha = labelAlpha
+            )
             for ((idx, frac) in texts.subFractions.withIndex()) {
                 val lab = texts.subLabels[idx]
                 drawText(
@@ -373,7 +379,9 @@ fun TrendChart(
             )
             val lx = (px - texts.peakLabel.size.width / 2f)
                 .coerceIn(padLeft, (w - padRight - texts.peakLabel.size.width).coerceAtLeast(padLeft))
-            val ly = (py - texts.peakLabel.size.height - 9.dp.toPx()).coerceAtLeast(1.dp.toPx())
+            // 峰顶贴到上边距时，硬夹到 y=1dp 会压住顶部的轴刻度；这时改画在峰点下方
+            val above = py - texts.peakLabel.size.height - 9.dp.toPx()
+            val ly = if (above >= padTop - 6.dp.toPx()) above else py + 7.dp.toPx()
             drawText(texts.peakLabel, topLeft = Offset(lx, ly), alpha = peakAlpha)
         }
 
