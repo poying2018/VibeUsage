@@ -201,7 +201,9 @@ object ShareCard {
         }
         val barTrack = Paint().apply { color = 0x14FFFFFF }
         list.take(3).forEachIndexed { i, item ->
-            val y = (984f + i * 52f) * scale
+            // 行距 58：52 时上一行的进度条几乎贴到下一行文字（间隔仅 8px），
+            // 榜单看起来糊成一团；58 留出 14px 呼吸，末行距底部分隔条仍有 28px
+            val y = (984f + i * 58f) * scale
             val np = paint(InkHi, 30f * scale, body)
             val pt = paint(InkMid, 28f * scale, body)
             val pct = String.format(Locale.US, "%.0f%%", (item.share * 100f).coerceIn(0f, 999f))
