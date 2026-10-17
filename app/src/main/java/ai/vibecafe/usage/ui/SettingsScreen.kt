@@ -245,6 +245,13 @@ fun SettingsScreen(
                 valueRange = 0f..0.5f,
                 onChange = { GlassStyleStore.set(context, style.copy(whiteOverlay = it)) }
             )
+            // 「恢复默认」是重置操作，之前紧跟第 5 个滑杆、同一列连着排，
+            // 视觉上和调节滑杆混作一排。补一条发丝线把两者分开。
+            HorizontalDivider(
+                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                thickness = 1.dp,
+                color = p.InkLo.copy(alpha = 0.28f)
+            )
             SettingRow(
                 backdrop = backdrop,
                 icon = Icons.Filled.RestartAlt,

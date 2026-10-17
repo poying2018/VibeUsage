@@ -109,9 +109,9 @@ fun LiquidSlider(
             .height(32f.dp)
             .pointerInput(valueRange, isLtr) {
                 // 整条轨道区域可按可拖（M3 滑杆交互）：
-                // 按下立即播放玻璃按压动效；滑动量达到 touchSlop 即接管手势
-                // （不再区分方向，避免起手轻微竖直抖动被判成滚动导致拖不动），
-                // 值直接取指针横向落点并跟随。
+                // 按下立即播放玻璃按压动效；横向意图（横向位移先越过 touchSlop）
+                // 才接管手势，值直接取指针横向落点并跟随。
+                // 竖直意图必须放行给父级滚动——否则滑杆会吞掉页面纵向滑动。
                 val slop = viewConfiguration.touchSlop
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -125,8 +125,12 @@ fun LiquidSlider(
                             if (change.changedToUpIgnoreConsumed()) break
                             if (!claimed) {
                                 acc += change.positionChangeIgnoreConsumed()
-                                if (abs(acc.x) >= slop || abs(acc.y) >= slop) {
+                                val dx = abs(acc.x)
+                                val dy = abs(acc.y)
+                                if (dx >= slop && dx > dy) {
                                     claimed = true
+                                } else if (dy >= slop && dy > dx) {
+                                    break
                                 }
                             }
                             if (claimed) {
