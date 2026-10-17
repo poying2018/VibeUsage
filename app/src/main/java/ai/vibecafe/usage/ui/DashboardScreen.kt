@@ -1024,7 +1024,10 @@ private fun CustomRangePanel(
                 )
             },
             headline = null,
-            modifier = Modifier.height(340.dp),
+            // 340dp 只放得下 3.8 个星期行：整月最后一周被切成半行，看着像渲染坏了。
+            // 400dp = 标题 60 + 星期行 50 + 月份头 47 + 5 行日格 240，整月能完整看到；
+            // 六行月份仍可滚动，卡片总高约 474dp，留白充足。
+            modifier = Modifier.height(400.dp),
             colors = DatePickerDefaults.colors(
                 containerColor = Color.Transparent,
                 titleContentColor = palette.InkHi,
