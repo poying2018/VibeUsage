@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -298,6 +299,9 @@ fun LiquidButton(
 
     Row(
         modifier
+            // 禁用态必须有视觉反馈：此前只拦点击、外观不变，空表单里的「接入」
+            // 看起来和可点的一样亮，点了没反应像卡死
+            .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
             .drawBackdrop(
                 backdrop = backdrop,
                 shape = { RoundedCornerShape(percent = 50) },
