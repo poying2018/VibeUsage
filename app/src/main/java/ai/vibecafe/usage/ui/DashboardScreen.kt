@@ -802,14 +802,24 @@ private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: ()
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 when {
-                    customActive && state.customRange != null ->
-                        "总消耗（${state.customRange.from.replace("-", "/")} ~ ${state.customRange.to.replace("-", "/")}）"
+                    // 同年时省略结束日期的年份（2026/11/01 ~ 11/05），否则整行会被省略号切掉
+                    customActive && state.customRange != null -> {
+                        val from = state.customRange.from
+                        val to = state.customRange.to
+                        val toShort = if (from.take(4) == to.take(4)) to.drop(5) else to
+                        "总消耗（${from.replace("-", "/")} ~ ${toShort.replace("-", "/")}）"
+                    }
                     else -> "总消耗（当前范围）"
                 },
                 style = GlassText.Label,
-                color = palette.InkMid
+                color = palette.InkMid,
+                // 自定义范围时标题会变长（2026/11/01 ~ 2026/11/05），先把剩余宽度给标题，
+                // 否则右侧药丸被挤成两行（「自定」+「义」）
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.width(8.dp))
             Row(
                 Modifier
                     .clip(RoundedCornerShape(999.dp))
@@ -838,7 +848,9 @@ private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: ()
                     style = GlassText.ChartAxis.copy(
                         fontSize = 10.sp,
                         color = if (customActive) palette.Accent else palette.InkMid
-                    )
+                    ),
+                    maxLines = 1,
+                    softWrap = false
                 )
             }
         }
