@@ -134,7 +134,8 @@ private fun AgLoginCard(
             // 只摆一个按钮的话，用户不知道值不值得点。
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                // 横屏/平板下卡片很宽，靠左排会与居中的标题、按钮错位
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
             ) {
                 // 标签沿用额度页里窗口组用的那套说法（「5 小时窗口」），既更短放得下，
                 // 也和接入后看到的措辞一致
@@ -182,7 +183,7 @@ private fun AgLoginCard(
                     startX = 0f,
                     endX = 620f
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth()
             ) {
                 if (oauthBusy) {
                     CircularProgressIndicator(
