@@ -1539,11 +1539,15 @@ private fun ModelDetailOverlay(
                 }
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
+                    // 详情是「看全名」的最后一道门：列表行可以省略，这里不行。
+                    // 模型 id 常带「供应商/型号」长前缀，收小字号并允许折三行。
                     Text(
                         detail.model,
                         style = GlassText.Title,
+                        fontSize = 21.sp,
+                        lineHeight = 25.sp,
                         color = palette.InkHi,
-                        maxLines = 1,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(Modifier.height(3.dp))
