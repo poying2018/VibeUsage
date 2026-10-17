@@ -571,7 +571,15 @@ private fun SettingRow(
             )
             subtitle?.let {
                 Spacer(Modifier.height(1.dp))
-                Text(it, style = GlassText.Meta, color = p.InkMid, maxLines = 1)
+                // 说明文案长短不一：单行 + Clip 会把长句硬切在卡片右缘（无省略号，
+                // 像被裁掉一半的「仅」「完」）。允许折两行，超出才省略。
+                Text(
+                    it,
+                    style = GlassText.Meta,
+                    color = p.InkMid,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
         if (showChevron) {
