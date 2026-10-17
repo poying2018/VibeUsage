@@ -521,8 +521,8 @@ fun DashboardScreen(
         } // 内容导出 Box 结束
 
         // ---- 底部悬浮时间选择器（DS+ 面板时不显示；不贴边，留出呼吸空间）----
-        // 采样纯页面背景（与金额/Tokens 切换器同源），玻璃通透、折射彩色光斑，
-        // Q 弹滑动效果与切换器观感一致；不再磨砂模糊滚动内容
+        // 与底部导航栏同用 scrimBackdrop：滚动内容实时进入玻璃模糊，
+        // Q 弹滑动效果与金额/Tokens 切换器观感一致
         if (!showAgPanel && !showSettings) {
             Box(
                 Modifier
