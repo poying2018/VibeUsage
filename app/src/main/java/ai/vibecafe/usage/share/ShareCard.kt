@@ -81,12 +81,12 @@ object ShareCard {
         val line = Paint().apply { color = 0x26FFFFFF }
         c.drawRoundRect(72f * scale, 176f * scale, W - 72f * scale, 178f * scale, 2f, 2f, line)
 
-        // ---- 范围标签 + 趋势（与仪表盘 TrendChip 同语义：升 teal / 降 rose）----
+        // ---- 范围标签 + 趋势（与仪表盘 TrendChip 同语义：消耗上升走警示色 / 下降走品牌青）----
         val trend = payload.trendPercent?.let { trendText(it) }
         val trendPaint = if (payload.trendPercent != null && payload.trendPercent < 0f) {
-            paint(Down, 36f * scale, body)
-        } else {
             paint(Accent, 36f * scale, body)
+        } else {
+            paint(Down, 36f * scale, body)
         }
         val trendW = trend?.let { trendPaint.measureText(it) } ?: 0f
         val labelText = payload.deviceFilter?.let { "${payload.rangeLabel} · 设备：$it" } ?: payload.rangeLabel
@@ -144,8 +144,14 @@ object ShareCard {
         }
 
         // ---- Top 应用 / Top 模型 双栏榜单（带占比渐变条）----
+        // 模型列字号小一档：模型 id 比应用名长得多（`MiniMax-M3.1-Flash-Preview`），
+        // 同字号下尾巴被砍掉一大截看不出是哪个变体。仍按尾部截断——
+        // 中间截断会切在词中间（`MiniMax-M…sh-Preview`），比原来还碎。
         drawTopList(c, scale, "Top 应用", payload.topTools, 72f * scale, payload.topModels.isEmpty(), body, black)
-        drawTopList(c, scale, "Top 模型", payload.topModels, 560f * scale, payload.topTools.isEmpty(), body, black)
+        drawTopList(
+            c, scale, "Top 模型", payload.topModels, 560f * scale, payload.topTools.isEmpty(), body, black,
+            nameSize = 25f
+        )
 
         // ---- 底部点缀：渐变条 + 标语 ----
         val grad = Paint().apply {
@@ -187,7 +193,9 @@ object ShareCard {
         x: Float,
         fullWidth: Boolean,
         body: Typeface?,
-        black: Typeface?
+        black: Typeface?,
+        nameSize: Float = 30f,
+        nameTruncateAt: TextUtils.TruncateAt = TextUtils.TruncateAt.END
     ) {
         if (list.isEmpty()) return
         val colW = if (fullWidth) (W - 144f * scale) else 448f * scale
@@ -200,15 +208,19 @@ object ShareCard {
             )
         }
         val barTrack = Paint().apply { color = 0x14FFFFFF }
-        list.take(3).forEachIndexed { i, item ->
+        // 只画「看得见」的占比：显示成 0% 的行对读者零信息量，却照样占一行高度，
+        // 还会在进度条上留下一截 6px 的残条，看着像渲染 bug。
+        // list 已按消耗降序，滤掉 0% 后 take(3) 自然由后面的条目补位。
+        val rows = list.filter { (it.share * 100f) >= 0.5f }.take(3)
+        rows.forEachIndexed { i, item ->
             // 行距 58：52 时上一行的进度条几乎贴到下一行文字（间隔仅 8px），
             // 榜单看起来糊成一团；58 留出 14px 呼吸，末行距底部分隔条仍有 28px
             val y = (984f + i * 58f) * scale
-            val np = paint(InkHi, 30f * scale, body)
+            val np = paint(InkHi, nameSize * scale, body)
             val pt = paint(InkMid, 28f * scale, body)
             val pct = String.format(Locale.US, "%.0f%%", (item.share * 100f).coerceIn(0f, 999f))
             val pctW = pt.measureText(pct)
-            val name = ellipsize(item.name, np, colW - pctW - 24f * scale)
+            val name = ellipsize(item.name, np, colW - pctW - 24f * scale, nameTruncateAt)
             c.drawText(name, x, y, np)
             c.drawText(pct, x + colW - pctW, y, pt)
             val barY = y + 14f * scale
@@ -218,15 +230,22 @@ object ShareCard {
         }
     }
 
-    /** 与 App 内 TrendChip 一致：升 ↗（teal）/ 降 ↘（rose），trend 为小数比例。 */
+    /** 与 App 内 TrendChip 一致：升 ↗ / 降 ↘，trend 为小数比例。 */
     internal fun trendText(trend: Float): String = when {
         trend >= 0.005f -> String.format(Locale.US, "↗ %+.0f%%", trend * 100f)
         trend <= -0.005f -> String.format(Locale.US, "↘ %+.0f%%", trend * 100f)
         else -> "→ 持平"
     }
 
-    private fun ellipsize(text: String, p: Paint, max: Float): String =
-        TextUtils.ellipsize(text, TextPaint(p), max, TextUtils.TruncateAt.END).toString()
+    /**
+     * 名称截断。
+     *
+     * 模型 id 很长（`MiniMax-M3.1-Flash-Preview-…`、`wb/global:step-5-preview`），
+     * 尾部截断只剩前缀，看不出是哪个变体；改成**中间截断**，前后都留一段。
+     * 应用名本来就短，不受影响。
+     */
+    private fun ellipsize(text: String, p: Paint, max: Float, at: TextUtils.TruncateAt = TextUtils.TruncateAt.END): String =
+        TextUtils.ellipsize(text, TextPaint(p), max, at).toString()
 
     private fun typeface(context: Context, resId: Int): Typeface? =
         runCatching { ResourcesCompat.getFont(context, resId) }.getOrNull()
