@@ -87,6 +87,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.DatePickerDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -348,7 +349,13 @@ fun DashboardScreen(
                         .padding(20.dp)
                 ) {
                     Summary(state, wide = false, onPickCustomRange = { showCustomPicker = true })
-                    Spacer(Modifier.height(20.dp))
+                    // 发丝线把「总览」和「分项统计」分成两块：四格统计直接贴在预测行下面，
+                    // 数字大、字重高，扫读时容易把上一行的百分比读成这一行的
+                    HorizontalDivider(
+                        modifier = Modifier.padding(top = 18.dp, bottom = 18.dp),
+                        thickness = 1.dp,
+                        color = LocalGlassPalette.current.InkLo.copy(alpha = 0.28f)
+                    )
                     StatsStrip(state)
                 }
             }
@@ -904,9 +911,11 @@ private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: ()
 private fun TrendChip(trend: Float) {
     val palette = LocalGlassPalette.current
     val up = trend >= 0f
-    val bg = if (up) palette.AccentWash else palette.DownWash
-    val rim = if (up) palette.AccentRim else palette.DownRim
-    val ink = if (up) palette.AccentInk else palette.Down
+    // 语义要对：消耗上升 = 花得更多，走警示色；消耗下降 = 花得更少，走品牌青。
+    // 原来反着来——下降穿警告色，看着像「出事了」，其实那是省钱。
+    val bg = if (up) palette.DownWash else palette.AccentWash
+    val rim = if (up) palette.DownRim else palette.AccentRim
+    val ink = if (up) palette.Down else palette.AccentInk
     Box(
         Modifier
             .clip(CircleShape)
@@ -1191,6 +1200,13 @@ private fun ToolDistributionSection(
     val top = remember(state.toolDistribution) { state.toolDistribution.take(8) }
     // 切片只在数据变化时算一次：以前每次重组都新建 List（不稳定类型），DonutChart 永远无法跳过
     val slices = remember(top) { top.map { DonutSlice(it.tool, it.percentage, toolIconFor(it.tool).color) } }
+    // 图例只描述「看得见」的占比：显示成 0% 的条目对读者零信息量，却在图例里各占一行，
+    // 把卡片重心压歪。注意不能只按 >0 过滤——占比是 0.3% 的应用四舍五入后也是「0%」，
+    // 但它是圆环上真实存在的一段颜色。圆环照旧按真实占比画，图例只命名看得见的那些，
+    // 剩下的归进「其他 N 个应用」，数量对得上环上的段数。
+    val ringItems = remember(top) { top.filter { it.percentage > 0f } }
+    val legendItems = remember(ringItems) { ringItems.filter { it.percentage >= 0.5f }.take(5) }
+    val otherCount = ringItems.size - legendItems.size
 
     SectionTitle("应用分布", modifier = Modifier.fadeSlideIn(120))
     Column(
@@ -1210,14 +1226,14 @@ private fun ToolDistributionSection(
             )
             Spacer(Modifier.width(18.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                top.take(5).forEach { item ->
+                legendItems.forEach { item ->
                     LegendRow(
-                        color = toolIconFor(item.tool).color,
+                        icon = toolIconFor(item.tool),
                         name = item.tool,
                         pct = item.percentage
                     )
                 }
-                if (top.size > 5) {
+                if (otherCount > 0) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             Modifier
@@ -1227,7 +1243,7 @@ private fun ToolDistributionSection(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            "其他 ${top.size - 5} 个应用",
+                            "其他 $otherCount 个应用",
                             style = GlassText.ChartAxis,
                             color = palette.InkMid,
                             maxLines = 1,
@@ -1297,16 +1313,30 @@ private fun ModelCostSection(
 }
 
 @Composable
-private fun LegendRow(color: Color, name: String, pct: Float) {
+private fun LegendRow(icon: ToolIcon, name: String, pct: Float) {
     val palette = LocalGlassPalette.current
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        // 图例用应用自己的品牌 Logo，和同一张卡下方列表行、以及额度页保持一致。
+        // 之前这里是纯色圆点：同一批应用在同一张卡里出现两次，一次有 Logo 一次没有，看着像两套数据。
         Box(
             Modifier
-                .size(9.dp)
-                .clip(CircleShape)
-                .background(color)
-        )
-        Spacer(Modifier.width(8.dp))
+                .size(18.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(icon.color.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = if (icon.drawable != null) {
+                    painterResource(icon.drawable)
+                } else {
+                    rememberVectorPainter(icon.vector!!)
+                },
+                contentDescription = icon.label,
+                tint = if (icon.colorful) Color.Unspecified else icon.color,
+                modifier = Modifier.size(12.dp)
+            )
+        }
+        Spacer(Modifier.width(9.dp))
         Text(
             name,
             style = GlassText.ChartAxis.copy(fontSize = 12.5.sp),
