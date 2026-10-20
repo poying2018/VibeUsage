@@ -46,6 +46,12 @@ import kotlin.math.roundToInt
 enum class TrendMetric { COST, TOKENS }
 
 /** 纵轴上限吸附到「整数阶梯」，避免 781.7M / 521.2M 这类随意刻度。 */
+/**
+ * 画布左右内边距：首尾日期标签与曲线端点要留出呼吸，不能贴着卡片内缘。
+ * 命中测试（点选/拖拽）必须用同一个值，否则点击位置会整体偏移。
+ */
+private val CanvasSidePad = 10.dp
+
 private fun niceAxisMax(v: Double): Double {
     if (v <= 0.0) return 1.0
     val base = Math.pow(10.0, Math.floor(Math.log10(v)))
@@ -176,10 +182,10 @@ fun TrendChart(
             .fillMaxWidth()
             .height(height)
             .pointerInput(data, metric) {
-                // 画布内边距与 draw 阶段保持一致：左右各 4dp；再点同一点取消选中
+                // 画布内边距与 draw 阶段保持一致（CanvasSidePad）；再点同一点取消选中
                 fun indexAt(x: Float): Int {
                     if (data.isEmpty()) return -1
-                    val pad = 4.dp.toPx()
+                    val pad = CanvasSidePad.toPx()
                     val plotW = (size.width - pad * 2).coerceAtLeast(1f)
                     return (((x - pad) / plotW) * (data.size - 1)).roundToInt().coerceIn(0, data.size - 1)
                 }
@@ -192,7 +198,7 @@ fun TrendChart(
                 // 仅响应横向拖动，不与外层纵向滚动手势冲突
                 detectHorizontalDragGestures { change, _ ->
                     change.consume()
-                    val pad = 4.dp.toPx()
+                    val pad = CanvasSidePad.toPx()
                     val plotW = (size.width - pad * 2).coerceAtLeast(1f)
                     selected = (((change.position.x - pad) / plotW) * (data.size - 1))
                         .roundToInt().coerceIn(0, data.size - 1)
@@ -201,8 +207,8 @@ fun TrendChart(
     ) {
         val w = size.width
         val h = size.height
-        val padLeft = 4.dp.toPx()
-        val padRight = 4.dp.toPx()
+        val padLeft = CanvasSidePad.toPx()
+        val padRight = CanvasSidePad.toPx()
         val padTop = 22.dp.toPx()    // 留给 y 轴最大值标签
         val padBottom = 18.dp.toPx() // 留给首尾日期标签
         val plotW = (w - padLeft - padRight).coerceAtLeast(1f)
@@ -229,16 +235,18 @@ fun TrendChart(
         fun xOf(i: Int): Float = padLeft + if (n == 1) plotW / 2f else plotW * i / (n - 1).toFloat()
         fun yOf(v: Double): Float = padTop + plotH * (1f - (v / axisMax).toFloat().coerceIn(0f, 1f))
 
-        // ---- 横向刻度虚线（0 / 1/4 / 1/2 / 3/4 / 满刻度）----
+        // ---- 横向刻度虚线（1/4 / 1/2 / 3/4 / 满刻度）----
+        // 不画 0 基线：卡片底边已经起到分隔作用，再画一条纯多一条灰线。
+        // 虚线压到最低对比，只当「刻度参考」而不是「网格」，把视觉焦点留给曲线。
         val gridAlpha = (T * 2.5f).coerceIn(0f, 1f)
-        val gridColor = p.InkLo.copy(alpha = p.InkLo.alpha * 0.8f * gridAlpha)
-        for (f in 0..4) {
+        val gridColor = p.InkLo.copy(alpha = p.InkLo.alpha * 0.45f * gridAlpha)
+        for (f in 1..4) {
             val y = padTop + plotH * (1f - f / 4f)
             var x = padLeft
             while (x < w - padRight) {
-                val seg = minOf(6.dp.toPx(), w - padRight - x)
+                val seg = minOf(4.dp.toPx(), w - padRight - x)
                 drawLine(gridColor, Offset(x, y), Offset(x + seg, y), strokeWidth = 1f.dp.toPx())
-                x += 12.dp.toPx()
+                x += 9.dp.toPx()
             }
         }
 
@@ -280,23 +288,25 @@ fun TrendChart(
             style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
         )
 
-        // ---- 数据点（点少才画）：随波浪经过逐点回弹落位 ----
+        // ---- 数据点（点少才画）：实心小点 + 一圈极淡的白色柔光 ----
+        // 之前是「白心 + 彩环」双层描边，远看像散落一地的药丸，抢曲线的戏。
+        // 现在让点退成配角：曲线是主角，点只标记「这里有数据」。
         if (n <= 12) {
             for (i in 0 until n) {
                 val wp = waveP(i)
                 if (wp <= 0f) continue
                 val pop = easeOutBack(wp)
                 val c = Offset(xOf(i), yOf(morphed[i]))
+                val r = 2.4.dp.toPx() * (0.6f + 0.4f * pop)
                 drawCircle(
-                    Color.White.copy(alpha = 0.95f * wp),
-                    radius = 3.6.dp.toPx() * (0.6f + 0.4f * pop),
+                    Color.White.copy(alpha = 0.30f * wp),
+                    radius = r + 1.6.dp.toPx(),
                     center = c
                 )
                 drawCircle(
-                    accent.copy(alpha = 0.9f * wp),
-                    radius = 3.6.dp.toPx() * (0.6f + 0.4f * pop),
-                    center = c,
-                    style = Stroke(width = 1.4.dp.toPx())
+                    accent.copy(alpha = 0.95f * wp),
+                    radius = r,
+                    center = c
                 )
             }
         }
@@ -318,6 +328,19 @@ fun TrendChart(
             } else {
                 avgY + 4.dp.toPx()
             }
+            // 均值标签要有底面：裸文字和右侧的 $5 / $7.50 刻度在同一行抢读，
+            // 垫一层半透明圆角底才读得出「这是标注，不是坐标轴刻度」。
+            val padX = 5.dp.toPx()
+            val padY = 2.dp.toPx()
+            drawRoundRect(
+                color = secondary.copy(alpha = 0.13f * lateAlpha),
+                topLeft = Offset(padLeft - padX, labelY - padY),
+                size = Size(
+                    texts.avgLabel.size.width + padX * 2,
+                    texts.avgLabel.size.height + padY * 2
+                ),
+                cornerRadius = CornerRadius(5.dp.toPx())
+            )
             drawText(texts.avgLabel, topLeft = Offset(padLeft, labelY), alpha = lateAlpha)
         }
 
