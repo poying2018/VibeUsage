@@ -111,9 +111,19 @@ fun LiquidSlider(
             .pointerInput(valueRange, isLtr) {
                 // 整条轨道区域可按可拖（M3 滑杆交互）：
                 // 按下立即播放玻璃按压动效；横向意图（横向位移先越过 touchSlop）
-                // 才接管手势，值直接取指针横向落点并跟随。
+                // 才接管手势，值直接取指针横向落点并跟随；没走出 slop 的轻点则跳到落点。
                 // 竖直意图必须放行给父级滚动——否则滑杆会吞掉页面纵向滑动。
                 val slop = viewConfiguration.touchSlop
+                fun emit(x: Float) {
+                    val fraction = if (isLtr) {
+                        (x / size.width).coerceIn(0f, 1f)
+                    } else {
+                        1f - (x / size.width).coerceIn(0f, 1f)
+                    }
+                    onValueChange(
+                        valueRange.start + (valueRange.endInclusive - valueRange.start) * fraction
+                    )
+                }
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     dampedDragAnimation.press()
@@ -123,7 +133,12 @@ fun LiquidSlider(
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUpIgnoreConsumed()) break
+                            if (change.changedToUpIgnoreConsumed()) {
+                                // 点按（没走出 slop）：M3 滑杆是「点哪到哪」，
+                                // 此前轻点没有任何反应，只能拖着走
+                                if (!claimed) emit(change.position.x)
+                                break
+                            }
                             if (!claimed) {
                                 acc += change.positionChangeIgnoreConsumed()
                                 val dx = abs(acc.x)
@@ -136,14 +151,7 @@ fun LiquidSlider(
                             }
                             if (claimed) {
                                 change.consume()
-                                val fraction = if (isLtr) {
-                                    (change.position.x / size.width).coerceIn(0f, 1f)
-                                } else {
-                                    1f - (change.position.x / size.width).coerceIn(0f, 1f)
-                                }
-                                onValueChange(
-                                    valueRange.start + (valueRange.endInclusive - valueRange.start) * fraction
-                                )
+                                emit(change.position.x)
                             }
                         }
                     } finally {
