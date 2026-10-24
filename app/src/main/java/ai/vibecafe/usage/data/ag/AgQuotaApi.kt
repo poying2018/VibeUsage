@@ -379,21 +379,12 @@ object AgQuotaApi {
         return QuotaSummary(b5, bw)
     }
 
-    /** ISO8601 重置时间 → 剩余毫秒；解析失败返回 null */
+    /** ISO8601 重置时间 → 剩余毫秒；解析失败返回 null。
+     *  带数字时区偏移（+08:00）按偏移换算成绝对时间，`Z` 结尾按 UTC 解析。 */
     fun remainingMillis(resetIso: String?, now: Long = System.currentTimeMillis()): Long? {
         if (resetIso.isNullOrBlank()) return null
-        return try {
-            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
-            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
-            val cleaned = resetIso.let { s ->
-                val dot = s.indexOf('.')
-                (if (dot > 0) s.substring(0, dot) else s).trimEnd('Z')
-            }
-            val target = sdf.parse(cleaned)?.time ?: return null
-            target - now
-        } catch (_: Exception) {
-            null
-        }
+        val target = ai.vibecafe.usage.data.quota.parseIsoMillis(resetIso) ?: return null
+        return target - now
     }
 
     // ─── 底层请求 ───

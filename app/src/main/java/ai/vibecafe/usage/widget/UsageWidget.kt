@@ -68,12 +68,20 @@ object UsageWidgetCache {
 
     fun write(context: Context, snapshot: WidgetSnapshot) {
         runCatching {
-            file(context).writeText(gson.toJson(snapshot))
+            val f = file(context)
+            // 原子写：先写临时文件再改名，避免读到写了一半的 JSON
+            // （读侧解析失败会被吞成 null，桌面就显示 $0.00）
+            val tmp = File(f.parentFile, "${f.name}.tmp")
+            tmp.writeText(gson.toJson(snapshot))
+            if (!tmp.renameTo(f)) {
+                f.writeText(tmp.readText())
+                tmp.delete()
+            }
         }
     }
 }
 
-/** 后台同步：拉 days=1 数据，落盘今日快照并刷新小组件。 */
+/** 后台同步：拉 days=1 今日数据，落盘快照并刷新小组件。 */
 class UsageWidgetSyncWorker(
     context: Context,
     params: WorkerParameters
@@ -83,7 +91,9 @@ class UsageWidgetSyncWorker(
         val context = applicationContext
         val key = ApiKeyStore.get(context)
         if (key.isEmpty()) return Result.success()
-        val resp = UsageRepository().fetchDailyData(key).getOrNull()
+        // 只要今天的数据：原来这里调 fetchDailyData（days=3650 全量历史），
+        // 每 30 分钟下载一次账号全部历史只为显示一行「今日消耗」
+        val resp = UsageRepository().fetchTodayData(key).getOrNull()
             ?: return if (runAttemptCount < 3) Result.retry() else Result.failure()
         val stats = StatsEngine.computeStats(resp, TimeRange.TODAY)
         UsageWidgetCache.write(
@@ -105,7 +115,14 @@ object UsageWidgetSync {
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 PERIODIC_NAME,
                 ExistingPeriodicWorkPolicy.KEEP,
-                PeriodicWorkRequestBuilder<UsageWidgetSyncWorker>(30, TimeUnit.MINUTES).build()
+                PeriodicWorkRequestBuilder<UsageWidgetSyncWorker>(30, TimeUnit.MINUTES)
+                    // 没网就别跑：离线执行必然失败，还白耗一次唤醒
+                    .setConstraints(
+                        androidx.work.Constraints.Builder()
+                            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                            .build()
+                    )
+                    .build()
             )
         }
     }
@@ -165,12 +182,18 @@ class UsageWidget : GlanceAppWidget() {
                     contentAlignment = Alignment.CenterStart
                 ) {
                     Column {
+                        // 快照是昨天的就明确标出来：连续同步失败时，
+                        // 用户不能把隔天的数字当成今天的
+                        val stale = snapshot != null && snapshot.updatedAt > 0 &&
+                            !isSameDay(snapshot.updatedAt, System.currentTimeMillis())
                         Text(
-                            "今日消耗",
+                            if (stale) "上次消耗" else "今日消耗",
                             style = TextStyle(color = ColorProvider(DarkGlass.InkMid), fontSize = 11.sp)
                         )
+                        // 没有快照时显示占位符而不是 $0.00：
+                        // 「真的是 0」和「还没同步过」是两回事，不能混为一谈
                         Text(
-                            "$" + formatCost(snapshot?.costToday ?: 0.0),
+                            if (snapshot == null) "—" else formatCost(snapshot.costToday),
                             style = TextStyle(
                                 color = ColorProvider(DarkGlass.Accent),
                                 fontSize = 22.sp,
@@ -178,11 +201,13 @@ class UsageWidget : GlanceAppWidget() {
                             )
                         )
                         Text(
-                            formatTokens(snapshot?.tokensToday ?: 0L) + " tokens",
+                            if (snapshot == null) "等待同步" else formatTokens(snapshot.tokensToday) + " tokens",
                             style = TextStyle(color = ColorProvider(DarkGlass.InkMid), fontSize = 11.sp)
                         )
                         if (snapshot != null && snapshot.updatedAt > 0) {
-                            val fmt = SimpleDateFormat("HH:mm", Locale.US)
+                            // 同步时间带日期：昨天的数据要能看出来，
+                            // 否则用户会把隔天的数字当成今天的
+                            val fmt = SimpleDateFormat("MM-dd HH:mm", Locale.US)
                             Text(
                                 fmt.format(Date(snapshot.updatedAt)) + " 同步",
                                 style = TextStyle(color = ColorProvider(DarkGlass.InkLo), fontSize = 10.sp)
@@ -202,4 +227,10 @@ private object DarkGlass {
     val Accent = Color(0xFF31E0CF)
     val InkMid = Color(0xB3C7D2E6)
     val InkLo = Color(0x59C7D2E6)
+}
+
+/** 两个时间戳是否同一天（按设备本地时区，与统计引擎的北京时间口径互不影响）。 */
+private fun isSameDay(t1: Long, t2: Long): Boolean {
+    val f = SimpleDateFormat("yyyyMMdd", Locale.US)
+    return f.format(Date(t1)) == f.format(Date(t2))
 }

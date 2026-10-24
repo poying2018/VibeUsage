@@ -56,7 +56,21 @@ object OAuthFlow {
      */
     class LoopbackServer(private val port: Int, private val path: String) {
 
-        data class Callback(val code: String?, val error: String?, val state: String?)
+        /**
+         * 回调携带的内容。
+         *
+         * - [code]：标准 OAuth 授权码（Antigravity / OpenRouter）
+         * - [apiKey]：服务端直接把凭据回传的形态（CommandCode：授权页登录后
+         *   重定向到 `127.0.0.1:port/callback?apiKey=...&state=...&userId=...&userName=...`）
+         */
+        data class Callback(
+            val code: String? = null,
+            val error: String? = null,
+            val state: String? = null,
+            val apiKey: String? = null,
+            val userId: String? = null,
+            val userName: String? = null
+        )
 
         private var server: ServerSocket? = null
 
@@ -89,7 +103,8 @@ object OAuthFlow {
                         throw QuotaException(0, "已发起新的授权，本次等待已取消")
                     }
                     val cb = handle(sock)
-                    if (cb.code != null || cb.error != null) return@withContext cb
+                    // 收到 code / error / 直接回传的 apiKey 才算一次有效回调
+                    if (cb.code != null || cb.error != null || cb.apiKey != null) return@withContext cb
                 }
             } finally {
                 stop()
@@ -106,7 +121,11 @@ object OAuthFlow {
             val params: Map<String, String> = if (target.startsWith(path)) {
                 target.substringAfter('?', "").split("&").mapNotNull {
                     val kv = it.split("=", limit = 2)
-                    if (kv.size == 2) kv[0] to URLDecoder.decode(kv[1], "UTF-8") else null
+                    // 单个参数解码失败不能整批丢弃：error_description 里出现裸 % 就会抛，
+                    // 那样浏览器连 HTTP 响应都收不到，App 端只能空等到超时。
+                    // 解码失败就原样保留该值。
+                    if (kv.size == 2) kv[0] to runCatching { URLDecoder.decode(kv[1], "UTF-8") }.getOrDefault(kv[1])
+                    else null
                 }.toMap()
             } else emptyMap()
             val body = if (target.startsWith(path)) SUCCESS_HTML else NOT_FOUND_HTML
@@ -116,9 +135,16 @@ object OAuthFlow {
                     .toByteArray()
             )
             sock.getOutputStream().flush()
-            Callback(params["code"], params["error"], params["state"])
+            Callback(
+                code = params["code"],
+                error = params["error"],
+                state = params["state"],
+                apiKey = params["apiKey"],
+                userId = params["userId"],
+                userName = params["userName"]
+            )
         } catch (_: Exception) {
-            Callback(null, null, null)
+            Callback()
         } finally {
             try { sock.close() } catch (_: Exception) { }
         }
@@ -136,6 +162,67 @@ object OAuthFlow {
 
             val SUCCESS_HTML = """<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="background:#141218;color:#E6E0E9;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h1>&#10003;</h1><p>授权成功，请返回 VibeUsage</p></div></body></html>"""
             const val NOT_FOUND_HTML = "<html><body>Not Found</body></html>"
+        }
+    }
+}
+
+// ─── CommandCode 一键授权（网页登录 + 本地 loopback 回调）───
+
+/**
+ * CommandCode（commandcode.ai）的网页授权。
+ *
+ * 与官方 CLI 的登录流程一致：起一个本地临时 HTTP 服务（127.0.0.1），把浏览器打开到
+ * Studio 的授权页 `{studio}/studio/auth/cli?callback=...&state=...&mode=redirect`；
+ * 用户在网页完成登录后，授权页会重定向回本地回调地址，并**直接在 query 里带上凭据**
+ * （apiKey / state / userId / userName），本服务校验 state 后即可拿到 API Key。
+ *
+ * 授权页未登录时服务端会 302 到 /signin，登录后自动跳回本地回调。
+ */
+object CommandCodeOAuth {
+
+    data class Login(val apiKey: String, val userId: String?, val userName: String?)
+
+    /** 端口与 CLI 的授权流程独立取值，避免与 Antigravity(51121) / OpenRouter(51123) 冲突。 */
+    private const val PORT = 51125
+    private const val PATH = "/callback"
+
+    private const val STUDIO_BASE = "https://commandcode.ai"
+
+    /** 构造授权页地址（与官方 CLI 的 buildCommandAuthUrl 同构）。 */
+    fun buildAuthorizeUrl(port: Int, state: String): String {
+        val callback = OAuthFlow.enc("http://127.0.0.1:$port$PATH")
+        return "$STUDIO_BASE/studio/auth/cli?callback=$callback" +
+            "&state=${OAuthFlow.enc(state)}&mode=redirect"
+    }
+
+    suspend fun login(context: Context): Login = coroutineScope {
+        val state = OAuthFlow.newState()
+        val server = withContext(Dispatchers.IO) { OAuthFlow.LoopbackServer(PORT, PATH) }
+        try {
+            val pending = async { server.await() }
+            OAuthFlow.openBrowser(context, buildAuthorizeUrl(PORT, state))
+            val cb = pending.await()
+            validateState(cb, state)
+            if (cb.error != null) {
+                throw QuotaException(0, "授权失败：${cb.error}")
+            }
+            val key = cb.apiKey
+                ?: throw QuotaException(0, "授权未返回 API Key，请在网页完成登录后再试")
+            Login(key, cb.userId, cb.userName)
+        } finally {
+            server.stop()
+        }
+    }
+
+    /**
+     * 校验回调带回的 state。
+     *
+     * 必须与发起时一致：缺失或不匹配都拒绝——否则任何能访问本机回调端口的页面
+     * 都能塞一个 apiKey 进来（CSRF）。
+     */
+    internal fun validateState(cb: OAuthFlow.LoopbackServer.Callback, expected: String) {
+        if (cb.state != expected) {
+            throw QuotaException(0, "授权 state 校验失败，请重新发起授权")
         }
     }
 }

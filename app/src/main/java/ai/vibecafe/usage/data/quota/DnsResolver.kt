@@ -56,9 +56,10 @@ object DnsResolver : Dns {
                     val ips = (0 until answer.length()).mapNotNull { i ->
                         val item = answer.getJSONObject(i)
                         val data = item.optString("data")
-                        if (item.optInt("type") == 1 &&
-                            Regex("""^\d{1,3}(\.\d{1,3}){3}$""").matches(data)
-                        ) InetAddress.getByName(data) else null
+                        if (item.optInt("type") == 1 && isIpv4(data)) {
+                            // 单条 IP 非法不能让整个端点的结果作废
+                            runCatching { InetAddress.getByName(data) }.getOrNull()
+                        } else null
                     }
                     if (ips.isNotEmpty()) {
                         cache[hostname] = Entry(ips, now + 5 * 60_000)
@@ -70,5 +71,14 @@ object DnsResolver : Dns {
             }
         }
         throw UnknownHostException("Unable to resolve host \"$hostname\" (系统 DNS 与 DoH 均失败)")
+    }
+
+    /** IPv4 合法性：每段必须是 0..255（光靠 \d{1,3} 会放行 999.1.1.1）。 */
+    private fun isIpv4(s: String): Boolean {
+        val parts = s.split('.')
+        if (parts.size != 4) return false
+        return parts.all { p ->
+            p.isNotEmpty() && p.length <= 3 && p.all { it.isDigit() } && p.toInt() <= 255
+        }
     }
 }

@@ -80,9 +80,19 @@ object GitHubCopilot {
         return when (val err = jstr(obj, "error")) {
             "authorization_pending", "slow_down" -> null
             null -> throw QuotaException(0, "授权响应缺少 access_token")
+            // 终止性错误：用户点了 Deny、或设备码已过期。重试无意义，必须立刻中止授权流程，
+            // 否则调用方会把它当成网络抖动继续空转到设备码过期为止。
+            "access_denied" -> throw TerminalAuthException("你已拒绝本次授权，请重新发起")
+            "expired_token" -> throw TerminalAuthException("设备码已过期，请重新发起授权")
             else -> throw QuotaException(0, jstr(obj, "error_description") ?: err)
         }
     }
+
+    /**
+     * 终止性授权错误：与「网络抖动」区分开的信号。
+     * 轮询方收到它应立即结束等待并把原因报给用户，而不是继续重试。
+     */
+    class TerminalAuthException(message: String) : Exception(message)
 
     /** GET /copilot_internal/user：quota_snapshots（chat / completions / premium_interactions）。 */
     fun fetchUsage(token: String): Usage {
@@ -140,7 +150,12 @@ object GitHubCopilot {
             .firstNotNullOfOrNull { jstr(obj, it) }?.let { r ->
                 try {
                     val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(r.take(10))
-                    d?.let { SimpleDateFormat("MM-dd", Locale.getDefault()).format(it) + " 重置" }
+                    // 解析按 UTC、格式按北京时间，与其它额度口径一致
+                    d?.let {
+                        SimpleDateFormat("MM-dd", Locale.US).apply {
+                            timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+                        }.format(it) + " 重置"
+                    }
                 } catch (_: Exception) { null }
             }
         val groups = linkedMapOf<String, MutableList<Bar>>()

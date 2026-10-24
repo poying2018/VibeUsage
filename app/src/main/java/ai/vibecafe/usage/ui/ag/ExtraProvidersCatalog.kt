@@ -16,15 +16,18 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Paid
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import ai.vibecafe.usage.ui.theme.ensureContrast
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import ai.vibecafe.usage.data.quota.Agnes
 import ai.vibecafe.usage.data.quota.Ark
 import ai.vibecafe.usage.data.quota.Bailian
+import ai.vibecafe.usage.data.quota.CommandCode
 import ai.vibecafe.usage.data.quota.DeepSeek
 import ai.vibecafe.usage.data.quota.Doubao
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi
@@ -45,7 +48,10 @@ enum class OAuthKind {
     GITHUB_DEVICE,
 
     /** OpenRouter 官方 OAuth（localhost 回调换 Key，存 sk-or Key）。 */
-    OPENROUTER
+    OPENROUTER,
+
+    /** CommandCode 网页授权（浏览器登录 Studio，回调直接带 user_ 开头的 API Key）。 */
+    COMMANDCODE
 }
 
 /** 「额度」页下拉可切换的凭据型供应商（反重力为独立面板，不在此列）。 */
@@ -128,6 +134,14 @@ enum class ExtraProvider(
             "Cookie，两格分别填 userId 与 api-platform_serviceToken（值里带 userId= / serviceToken= 前缀也能自动拆）；" +
             "API Key 查不到额度，国内直连",
         minCredLen = 6
+    ),
+    COMMANDCODE(
+        "commandcode", "CommandCode", Color(0xFF1F2937), Icons.Filled.Terminal,
+        listOf("API Key"),
+        "推荐一键授权（浏览器登录 Command Code Studio，自动取回 API Key）；手动：本机 ~/.commandcode/auth.json 里的 " +
+            "apiKey 字段，或在 commandcode.ai/studio 复制。查 5 小时 / 每周窗口额度、套餐 Credits 与本周期用量",
+        oauth = OAuthKind.COMMANDCODE,
+        minCredLen = 20
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */
@@ -148,9 +162,28 @@ enum class ExtraProvider(
         DOUBAO -> Doubao.fetchUsage(creds[0])
         AGNES -> Agnes.fetchUsage(creds[0], creds[1])
         MIMO -> Mimo.fetchUsage(creds[0], creds[1])
+        COMMANDCODE -> CommandCode.fetchUsage(creds[0])
     }
 
     companion object {
         fun byId(id: String): ExtraProvider? = entries.firstOrNull { it.id == id }
     }
 }
+
+/**
+ * 品牌色在给定底色上要看得见的版本。
+ *
+ * 平台给的原始品牌色深浅跨度极大：CommandCode 是近黑 #1F2937，
+ * Kimi 是浅灰 #A8B3C5，两者在深色 / 浅色玻璃上的可读性正好相反 ——
+ * 近黑在深底上隐形，浅灰在浅底上隐形。
+ *
+ * 这里不按固定亮度阈值分档（那种写法救不回来某一端，还会误伤本来正常的颜色），
+ * 而是直接对着背景算对比度，达不到 3.0 就朝「远离背景」的方向调。
+ *
+ * **只用于前景**（图标 / 小圆点 / 线条）；大面积填充底色（按钮底）
+ * 仍用原始品牌色 —— 那种地方是白字压色块，近黑反而对比最好。
+ *
+ * @param background 前景实际压着的底色（玻璃卡片合成后的颜色）
+ */
+fun readableBrandColor(base: Color, background: Color): Color =
+    base.ensureContrast(background, minRatio = 3.0f)

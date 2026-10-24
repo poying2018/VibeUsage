@@ -6,10 +6,11 @@ import android.util.Base64
  * GitHub 下载加速器 —— 通过 Cloudflare 边缘代理下载 APK。
  *
  * 安全设计：
- * - 代理地址与访问令牌以 XOR+Base64 混淆后硬编码，运行时才解密，
- *   反编译源码只能看到密文，无法直接读取代理地址/令牌。
+ * - 代理地址与访问令牌以 XOR+Base64 混淆后硬编码，运行时才解密。
+ *   （注意：混淆密钥与密文在同一文件里，这只是**提高反编译成本**，
+ *   不是密码学保护——任何人都能还原出代理地址与密钥。
+ *   真正的信任边界在 Worker 端：AUTH_TOKEN / APP_KEY 校验 + IP 限流 + 全局限流。）
  * - 令牌通过 Authorization 头传递，不出现在 URL 中。
- * - 真正的防刷由 Worker 端保障：AUTH_TOKEN 校验 + IP 限流 + 全局限流。
  * - 加速过程对用户完全透明，界面不展示代理地址。
  */
 object DownloadAccelerator {

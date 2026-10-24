@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 网络安全配置：默认只允许 HTTPS。
+     应用内所有出站请求（vibecafe.ai 用量接口、各家额度接口、GitHub 加速代理）都是 https；
+     之前的 android:usesCleartextTraffic="true" 是全局放开明文流量，属于不必要的攻击面。
+     唯一需要明文的是 OAuth 回调用的本机 loopback 服务，但那是**入站**监听
+     （浏览器 → App 的 127.0.0.1 端口），不经过出站策略，这里仍显式放行以备后用。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

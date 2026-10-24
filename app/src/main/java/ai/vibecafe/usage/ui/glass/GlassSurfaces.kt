@@ -100,7 +100,11 @@ private fun Modifier.liquidGlass(
             0.22f to Color.Transparent
         )
     }
-    return drawBackdrop(
+    // 注意：必须以 receiver（this）作为链的起点。
+    // 之前这里直接 `return drawBackdrop(...)`，把接收者丢掉了 —— 调用方
+    // `Modifier.padding(...).glassCard(...)` 里的 padding 会被整段吞掉，
+    // 玻璃面覆盖到不该覆盖的区域。
+    return this.drawBackdrop(
         backdrop = backdrop,
         shape = { RoundedCornerShape(cornerRadius) },
         effects = {

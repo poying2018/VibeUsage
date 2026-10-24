@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.math.BigInteger
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
@@ -235,18 +236,56 @@ object UpdateChecker {
     fun isNewer(latest: String, current: String): Boolean = compareVersions(latest, current) > 0
 
     /**
-     * 下载完成后校验安装包：尝试获取 `<apkUrl>.sha256` 并与本地文件哈希比对。
-     * 远端未提供 hash（404/网络失败）时视为通过，保持对旧 Release 的兼容；
-     * 提供了但不匹配时返回 false，上层阻止安装。
+     * 安装包校验结果。
+     *
+     * 区分「校验不通过」与「拿不到校验基准」，避免把两者混为一谈，
+     * 也绝不允许在无法校验的情况下静默放行安装。
      */
-    suspend fun verifyDownloadedApk(apkUrl: String, file: File): Boolean = withContext(Dispatchers.IO) {
-        val expected = runCatching { fetchSha256(apkUrl + ".sha256") }.getOrNull()
-            ?: return@withContext true
-        val actual = sha256Of(file) ?: return@withContext true
-        expected.equals(actual, ignoreCase = true)
+    enum class VerifyStatus {
+        /** 校验通过，可以安装。 */
+        VERIFIED,
+
+        /** 远端未提供 .sha256 校验基准（404 / 内容不是 hash 格式）——无法校验，已阻止安装。 */
+        NO_BASELINE,
+
+        /** 拉取校验基准时网络失败——暂时无法校验，已阻止安装，可重试。 */
+        BASELINE_UNREACHABLE,
+
+        /** 校验不通过（本地摘要读不出，或与远端不一致）——已阻止安装。 */
+        MISMATCH
     }
 
-    /** 拉取远端 hash 文本（首行第一段 hex）。 */
+    /**
+     * 下载完成后校验安装包：尝试获取 `<apkUrl>.sha256` 并与本地文件哈希比对。
+     *
+     * - 远端提供了 hash 且一致 → [VerifyStatus.VERIFIED]
+     * - 远端未提供 hash（404 / 内容不是 hash 格式）→ [VerifyStatus.NO_BASELINE]
+     * - 拉取 hash 时网络异常 → [VerifyStatus.BASELINE_UNREACHABLE]
+     * - 远端有 hash 但本地摘要读不出 → [VerifyStatus.MISMATCH]（读不出摘要必须中止安装）
+     * - 远端有 hash 但与本地不一致 → [VerifyStatus.MISMATCH]
+     */
+    suspend fun verifyDownloadedApk(apkUrl: String, file: File): VerifyStatus =
+        withContext(Dispatchers.IO) {
+            val expected = try {
+                fetchSha256(apkUrl + ".sha256")
+            } catch (e: Exception) {
+                // 网络异常：拿不到校验基准，同样不允许放行安装，但语义与「远端没有 hash」不同
+                return@withContext VerifyStatus.BASELINE_UNREACHABLE
+            }
+            if (expected == null) {
+                // 无校验基准：不允许静默放行，交给上层提示
+                return@withContext VerifyStatus.NO_BASELINE
+            }
+            // 本地摘要读不出来也要中止安装（方向不能反）
+            val actual = sha256Of(file) ?: return@withContext VerifyStatus.MISMATCH
+            if (expected.equals(actual, ignoreCase = true)) {
+                VerifyStatus.VERIFIED
+            } else {
+                VerifyStatus.MISMATCH
+            }
+        }
+
+    /** 拉取远端 hash 文本（首行第一段 hex）。远端没有 hash 时返回 null。 */
     private fun fetchSha256(url: String): String? {
         val request = Request.Builder()
             .url(DownloadAccelerator.accelerate(url))
@@ -256,8 +295,8 @@ object UpdateChecker {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful || response.body == null) return null
             val text = response.body!!.string().trim()
-            // 兼容 "abc123  filename.apk" 与纯 hex 两种格式
-            return text.split(Regex("\\s+")).firstOrNull()?.takeIf { it.matches(Regex("[0-9a-fA-F]{32,128}")) }
+            // 兼容 "abc123  filename.apk" 与纯 hash 两种格式；SHA-256 恒为 64 位 hex
+            return text.split(Regex("\\s+")).firstOrNull()?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
         }
     }
 
@@ -276,19 +315,57 @@ object UpdateChecker {
 
     /** 版本号比较器：a < b 返回负数，相等返回 0，a > b 返回正数。 */
     private fun compareVersions(a: String, b: String): Int {
-        val va = versionNumbers(a)
-        val vb = versionNumbers(b)
-        val n = maxOf(va.size, vb.size)
+        val va = parseVersion(a)
+        val vb = parseVersion(b)
+        val n = maxOf(va.numbers.size, vb.numbers.size)
         for (i in 0 until n) {
-            val x = va.getOrElse(i) { 0 }
-            val y = vb.getOrElse(i) { 0 }
+            val x = va.numbers.getOrElse(i) { BigInteger.ZERO }
+            val y = vb.numbers.getOrElse(i) { BigInteger.ZERO }
             if (x != y) return x.compareTo(y)
         }
-        return 0
+        // 数字段全同：正式版高于预发布版（1.0.0 > 1.0.0-beta.1）
+        return when {
+            va.preRelease == vb.preRelease -> 0
+            va.preRelease -> -1
+            else -> 1
+        }
+    }
+
+    /** 解析后的版本：数字段序列 + 是否为预发布版。 */
+    private data class ParsedVersion(val numbers: List<BigInteger>, val preRelease: Boolean)
+
+    /**
+     * 解析版本号：取数字段，遇到「数字之后」的 `-` / `+`（预发布 / 构建元数据）就停止解析数字段，
+     * 避免把 `-beta.1` 的后缀数字当成版本段（否则 1.0.0-beta.1 会比 1.0.0 新）。
+     * `-` 开头的是预发布标记（低于同版本正式版）；`+` 是构建元数据（仅停止解析，不降级）。
+     * 数字段用 BigInteger 解析，任意长度的数字段都不会抛异常。
+     */
+    private fun parseVersion(version: String): ParsedVersion {
+        val raw = version.removePrefix("v").trim()
+        // 只认「出现在数字之后」的 -/+，像 "release-2.0.0" 这种前缀不会误截断
+        var cut = -1
+        var seenDigit = false
+        for (i in raw.indices) {
+            val c = raw[i]
+            if (c.isDigit()) {
+                seenDigit = true
+                continue
+            }
+            if ((c == '-' || c == '+') && seenDigit) {
+                cut = i
+                break
+            }
+        }
+        val core = if (cut >= 0) raw.substring(0, cut) else raw
+        val numbers = versionSegment.findAll(core)
+            .map { it.value.toBigIntegerOrNull() ?: BigInteger.ZERO }
+            .toList()
+        val preRelease = cut >= 0 && raw[cut] == '-'
+        return ParsedVersion(numbers, preRelease)
     }
 
     private val versionSegment = Regex("\\d+")
 
-    private fun versionNumbers(version: String): List<Int> =
-        versionSegment.findAll(version.removePrefix("v").trim()).map { it.value.toInt() }.toList()
+    /** 版本号中的数字段（忽略预发布/构建后缀）。 */
+    private fun versionNumbers(version: String): List<BigInteger> = parseVersion(version).numbers
 }

@@ -72,7 +72,9 @@ fun DonutChart(
         val h = diameter.toPx()
         val center = Offset(w / 2f, h / 2f)
         val radius = (w - stroke.toPx()) / 2f
-        val gapDeg = if (slices.size > 1) 3.5f else 0f
+        // 间隙只应在**可见扇区之间**留白：可见段只有一段时（其余占比为 0）
+        // 不该留缺口，否则一个名义上 100% 的环看起来像不到 100%
+        val gapDeg = if (visible.size > 1) 3.5f else 0f
         val reveal = progress.value
 
         if (total <= 0f || slices.isEmpty()) {

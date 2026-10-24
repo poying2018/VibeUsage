@@ -27,7 +27,7 @@
     --surface: rgba(255, 255, 255, .55);
     --surface-soft: rgba(255, 255, 255, .50);
     --pill: rgba(255, 255, 255, .32);
-    --rim: rgba(255, 255, 255, .70);
+    --rim: rgba(255, 255, 255, .32);
     --shadow-soft: 0 30px 80px rgba(70, 90, 130, .18);
     --shadow-bar: 0 12px 32px rgba(70, 90, 130, .16);
     --shadow-pill: 0 8px 24px rgba(70, 90, 130, .22);
@@ -381,7 +381,7 @@
               <div class="brand-logo"><img src="assets/brands/logo_v.png" alt="V"></div>
               <div>
                 <div class="brand-name">VibeUsage</div>
-                <div class="brand-ver">用量概览 · v2.4.6</div>
+                <div class="brand-ver">用量概览 · v2.21.6</div>
               </div>
             </div>
             <div class="header-btns">
@@ -458,7 +458,7 @@
     </div>
 
     <div class="actions">
-      <a class="btn" href="https://github.com/poying2018/VibeUsage/releases/download/v2.4.6/VibeUsage-v2.4.6-debug.apk" target="_blank" rel="noopener">下载 Android APK</a>
+      <a class="btn" href="https://github.com/poying2018/VibeUsage/releases/latest" target="_blank" rel="noopener">下载 Android APK</a>
       <a class="btn btn-outline" href="https://github.com/poying2018/VibeUsage" target="_blank" rel="noopener">GitHub 仓库</a>
     </div>
 
@@ -502,7 +502,12 @@ function rowIconHtml(name) {
   const b = iconFor(name);
   if (b) {
     const hex = b.c + '24'; /* 品牌色 14% 染底 */
-    return '<div class="row-ico" style="background:' + hex + '"><img src="assets/brands/' + b.img + '" alt="' + b.label + '"></div>';
+    /* 品牌 PNG 缺失时（如 Cursor 只有矢量图标，没有 PNG）退回通用字形，
+       否则浏览器会显示破图 */
+    return '<div class="row-ico" style="background:' + hex + '">' +
+      '<img src="assets/brands/' + b.img + '" alt="' + b.label + '" ' +
+      'onerror="this.style.display=\'none\';this.parentNode.insertAdjacentHTML(\'beforeend\',\'<span class="fallback">✨</span>\')">' +
+      '</div>';
   }
   return '<div class="row-ico" style="background:rgba(100,116,139,.14)"><span class="fallback">✨</span></div>';
 }

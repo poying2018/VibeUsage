@@ -38,6 +38,23 @@ object GlassStyleStore {
     private const val KEY_WHITE = "glass_white_overlay"
     private const val KEY_BLUR = "glass_blur_card"
 
+    /**
+     * 参数钳制：prefs 里的值可能来自旧版本或被外部改写，越界/NaN 会一路传进
+     * ColorMatrix / RuntimeShader —— contrast=0 让画面全黑、NaN 让 blur 变未定义。
+     * 所有入口（读 prefs 与写入）都过这里，保证渲染层拿到的永远是合法值。
+     */
+    private fun sanitize(v: GlassStyle): GlassStyle = GlassStyle(
+        brightness = v.brightness.safeRange(-0.5f, 0.5f, 0f),
+        contrast = v.contrast.safeRange(0.5f, 1.5f, 1f),
+        saturation = v.saturation.safeRange(0f, 2f, 1.5f),
+        whiteOverlay = v.whiteOverlay.safeRange(0f, 0.5f, 0.15f),
+        blurCardDp = v.blurCardDp.safeRange(0f, 32f, 8f)
+    )
+
+    /** NaN/Infinity 一律回落到默认值，其余钳到区间内。 */
+    private fun Float.safeRange(min: Float, max: Float, fallback: Float): Float =
+        if (isNaN() || isInfinite()) fallback else coerceIn(min, max)
+
     @Volatile
     private var initialized = false
 
@@ -51,12 +68,14 @@ object GlassStyleStore {
         synchronized(this) {
             if (initialized) return
             val prefs = context.getSharedPreferences("vibe_usage", Context.MODE_PRIVATE)
-            style = GlassStyle(
-                brightness = prefs.getFloat(KEY_BRIGHTNESS, Default.brightness),
-                contrast = prefs.getFloat(KEY_CONTRAST, Default.contrast),
-                saturation = prefs.getFloat(KEY_SATURATION, Default.saturation),
-                whiteOverlay = prefs.getFloat(KEY_WHITE, Default.whiteOverlay),
-                blurCardDp = prefs.getFloat(KEY_BLUR, Default.blurCardDp)
+            style = sanitize(
+                GlassStyle(
+                    brightness = prefs.getFloat(KEY_BRIGHTNESS, Default.brightness),
+                    contrast = prefs.getFloat(KEY_CONTRAST, Default.contrast),
+                    saturation = prefs.getFloat(KEY_SATURATION, Default.saturation),
+                    whiteOverlay = prefs.getFloat(KEY_WHITE, Default.whiteOverlay),
+                    blurCardDp = prefs.getFloat(KEY_BLUR, Default.blurCardDp)
+                )
             )
             initialized = true
         }
@@ -64,14 +83,15 @@ object GlassStyleStore {
 
     /** 更新样式并持久化（滑杆拖动时高频调用，apply() 异步写盘）。 */
     fun set(context: Context, value: GlassStyle) {
-        style = value
+        val safe = sanitize(value)
+        style = safe
         context.getSharedPreferences("vibe_usage", Context.MODE_PRIVATE)
             .edit()
-            .putFloat(KEY_BRIGHTNESS, value.brightness)
-            .putFloat(KEY_CONTRAST, value.contrast)
-            .putFloat(KEY_SATURATION, value.saturation)
-            .putFloat(KEY_WHITE, value.whiteOverlay)
-            .putFloat(KEY_BLUR, value.blurCardDp)
+            .putFloat(KEY_BRIGHTNESS, safe.brightness)
+            .putFloat(KEY_CONTRAST, safe.contrast)
+            .putFloat(KEY_SATURATION, safe.saturation)
+            .putFloat(KEY_WHITE, safe.whiteOverlay)
+            .putFloat(KEY_BLUR, safe.blurCardDp)
             .apply()
     }
 }

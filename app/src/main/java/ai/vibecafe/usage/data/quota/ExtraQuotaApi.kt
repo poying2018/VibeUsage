@@ -102,24 +102,25 @@ object ExtraQuotaApi {
         }
     }
 
-    /** 毫秒时间戳 → 「MM-dd HH:mm 重置 · X后」。 */
+    /**
+     * 毫秒时间戳 → 「MM-dd HH:mm 重置 · X后」。
+     *
+     * 固定按北京时间格式化：各家额度接口的时间口径都是 Asia/Shanghai
+     * （Mimo 解析侧就显式用了 Asia/Shanghai），若这里跟随设备默认时区，
+     * 非东八区设备显示的重置时刻会整体偏移，单测也会随机器时区而红。
+     */
     internal fun epochReset(ms: Long): String =
-        "${SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(ms))} 重置 · ${formatCountdown(ms - System.currentTimeMillis())}后"
+        "${SimpleDateFormat("MM-dd HH:mm", Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+        }.format(Date(ms))} 重置 · ${formatCountdown(ms - System.currentTimeMillis())}后"
 
     /** ISO8601 → 「MM-dd HH:mm · X后重置」；解析失败返回 null。 */
     internal fun formatReset(iso: String): String? {
         val remaining = ai.vibecafe.usage.data.ag.AgQuotaApi.remainingMillis(iso) ?: return null
-        val abs = try {
-            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
-            val cleaned = iso.let { s ->
-                val dot = s.indexOf('.')
-                (if (dot > 0) s.substring(0, dot) else s).trimEnd('Z')
-            }
-            val t = sdf.parse(cleaned)?.time ?: return null
-            SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(t))
-        } catch (_: Exception) {
-            null
+        val abs = parseIsoMillis(iso)?.let { ms ->
+            SimpleDateFormat("MM-dd HH:mm", Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+            }.format(Date(ms))
         }
         return when {
             remaining <= 0 -> "已重置"
@@ -128,14 +129,55 @@ object ExtraQuotaApi {
         }
     }
 
-    /** 大数紧凑显示：1234567 → 123.5万。 */
+    /**
+     * 大数紧凑显示：1234567 → 123.5万。
+     *
+     * 固定用 Locale.US：数字格式随默认 Locale 变化（de/ru 会用逗号当小数点），
+     * 会把同一数值渲染成不同文本。
+     */
     internal fun compact(n: Double): String = when {
-        n >= 1e8 -> String.format(Locale.getDefault(), "%.1f亿", n / 1e8)
-        n >= 1e4 -> String.format(Locale.getDefault(), "%.1f万", n / 1e4)
+        n >= 1e8 -> String.format(Locale.US, "%.1f亿", n / 1e8)
+        n >= 1e4 -> String.format(Locale.US, "%.1f万", n / 1e4)
         n == n.toLong().toDouble() -> "${n.toLong()}"
-        else -> String.format(Locale.getDefault(), "%.1f", n)
+        else -> String.format(Locale.US, "%.1f", n)
     }
 }
+
+/**
+ * ISO8601 时间戳 → 绝对毫秒（UTC 纪元）；解析失败返回 null。
+ *
+ * 服务端可能下发三种形态：`…Z`（UTC）、`…+08:00`（带数字时区偏移）、不带时区标记。
+ * 带数字偏移时必须按偏移换算成绝对时间——把尾部偏移直接截掉再当 UTC 解析，
+ * 倒计时会整整差一个时区（东八区差 8 小时）。
+ */
+internal fun parseIsoMillis(iso: String): Long? {
+    val raw = iso.trim()
+    if (raw.isEmpty()) return null
+    val s = raw.replace('t', 'T').replace('z', 'Z')
+    // 带数字偏移（含 Z）：按偏移换算绝对时间；"+0800" 这种没冒号的先补上
+    val candidates = listOf(s, s.replace(Regex("([+-]\\d{2})(\\d{2})$")) { m ->
+        m.groupValues[1] + ":" + m.groupValues[2]
+    })
+    for (candidate in candidates) {
+        runCatching {
+            java.time.OffsetDateTime.parse(candidate, java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+                .toInstant().toEpochMilli()
+        }.getOrNull()?.let { return it }
+    }
+    // 不带偏移：按 UTC 本地时间解析（各家接口未标注时区时口径都是 UTC）
+    return runCatching {
+        java.time.LocalDateTime.parse(
+            s.removeSuffix("Z"),
+            java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME
+        ).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+    }.getOrNull()
+}
+
+/**
+ * 秒 / 毫秒归一：> 1e11 视为毫秒，否则视为秒（与 Ark.kt、Bailian.kt 同款判定）。
+ * 服务端秒级时间戳（约 1.7e9）直接当毫秒用会落到 1970 年，倒计时变成负数。
+ */
+internal fun normalizeEpochMs(v: Long): Long = if (v > 100_000_000_000L) v else v * 1000L
 
 /** 防御式取值：成员存在但类型不符时返回 null，而不是抛 ClassCastException */
 internal fun JsonObject.optObject(key: String): JsonObject? = get(key) as? JsonObject
@@ -284,17 +326,19 @@ internal object QuotaHttp {
                     if (!resp.isSuccessful) {
                         throw ExtraQuotaApi.QuotaException(resp.code, httpErrorBody(text, resp.code))
                     }
-                    if (viaRelay) noteRelayResult(host, true)
+                    if (viaRelay) noteRelayResult(host, ok = true, relayFault = false)
                     return text
                 }
             } catch (e: ExtraQuotaApi.QuotaException) {
-                if (viaRelay && e.code != 401) noteRelayResult(host, false)
+                // HTTP 状态码错误来自目标站本身（403/500 等），不是中转线路的锅
+                if (viaRelay) noteRelayResult(host, ok = false, relayFault = false)
                 // 鉴权类错误（401）在直连/中转下语义一致，直接抛；
                 // 403 可能只是某条线路被拦（如 Cloudflare 质询页），要给备用线路机会，试完所有线路再抛
                 if (e.code == 401 || index == urls.distinct().lastIndex) throw e
                 lastErr = e
             } catch (e: Exception) {
-                if (viaRelay) noteRelayResult(host, false)
+                // 连接异常/超时才是中转线路本身的问题，计入熔断计数
+                if (viaRelay) noteRelayResult(host, ok = false, relayFault = e is java.io.IOException)
                 lastErr = e
             }
         }
@@ -311,16 +355,26 @@ internal object QuotaHttp {
     private fun relayTripped(host: String): Boolean =
         (relayBlockedUntil[host] ?: 0L) > System.currentTimeMillis()
 
-    /** 中转成功清零；失败累计，达到阈值拉闸 TTL（401 不算——那说明中转已把请求送达目标）。 */
-    private fun noteRelayResult(host: String, ok: Boolean) {
+    /** 中转成功清零；失败累计，达到阈值拉闸 TTL。
+     *
+     *  只有**中转线路本身**的故障才计数：
+     *  - 连接异常/超时（IOException 类）→ 计（中转挂了或链路不通）
+     *  - HTTP 状态码错误（401/403/500…）→ 不计（那是目标站的应答，说明请求已送达目标站）
+     *  401 一律不计（中转已把请求送达目标站，只是目标站不认这个凭据）。
+     *
+     *  熔断阈值与 TTL 的行为保持不变：连续 [RELAY_TRIP_THRESHOLD] 次中转故障后拉闸
+     *  [RELAY_TRIP_TTL_MS]，TTL 内不再走该主机的中转线路。
+     */
+    private fun noteRelayResult(host: String, ok: Boolean, relayFault: Boolean) {
         if (host.isEmpty()) return
         if (ok) {
             relayFailures.remove(host)
             relayBlockedUntil.remove(host)
             return
         }
-        val n = (relayFailures[host] ?: 0) + 1
-        relayFailures[host] = n
+        if (!relayFault) return
+        // 原子自增：读-改-写会丢计数（并发刷新时两次失败只算一次）
+        val n: Int = relayFailures.merge(host, 1) { old, _ -> (old ?: 0) + 1 } ?: 0
         if (n >= RELAY_TRIP_THRESHOLD) {
             relayBlockedUntil[host] = System.currentTimeMillis() + RELAY_TRIP_TTL_MS
             relayFailures.remove(host)

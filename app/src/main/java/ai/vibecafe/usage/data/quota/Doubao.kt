@@ -4,6 +4,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import com.google.gson.JsonPrimitive
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -87,8 +88,13 @@ object Doubao {
         }
         val data = obj.optObject("data") ?: throw QuotaException(0, "响应中没有额度数据")
         val sub = data.optObject("current_subscription")
+        // hasActiveSubscription 可能是 null：JsonNull 取 asBoolean 会抛 UnsupportedOperationException，
+        // 整个解析崩掉、额度全丢，所以先确认是普通值再取（字符串 "true" 也认）
+        val hasActiveSub = (data.optObject("member_info")?.get("hasActiveSubscription") as? JsonPrimitive)
+            ?.let { if (it.isBoolean) it.asBoolean else it.asString.trim().equals("true", ignoreCase = true) }
+            ?: false
         val account = sub?.optObject("display")?.let { jstr(it, "short_name") ?: jstr(it, "product_name") }
-            ?: if (data.optObject("member_info")?.get("hasActiveSubscription")?.asBoolean == true) "豆包订阅" else "未订阅"
+            ?: if (hasActiveSub) "豆包订阅" else "未订阅"
         val groups = linkedMapOf<String, MutableList<Bar>>()
         val bars = mutableListOf<Bar>()
         // window_limit_section：个人订阅窗口额度；企业窗口（enterprise_*）不在消费者订阅范围
@@ -98,8 +104,9 @@ object Doubao {
                 val w = el as? JsonObject ?: continue
                 val used = jnum(w, "used_percent")?.toInt()?.coerceIn(0, 100) ?: continue
                 val type = jnum(w, "window_type")?.toInt() ?: 0
-                val endMs = jnum(w, "end_time")?.toLong() ?: 0L
-                val startMs = jnum(w, "start_time")?.toLong() ?: 0L
+                // 秒/毫秒归一：服务端可能下发秒级时间戳，直接当毫秒会落到 1970 年、倒计时为负
+                val endMs = jnum(w, "end_time")?.toLong()?.let { normalizeEpochMs(it) } ?: 0L
+                val startMs = jnum(w, "start_time")?.toLong()?.let { normalizeEpochMs(it) } ?: 0L
                 val label = when (type) {
                     1 -> "当前时段"
                     2 -> "近 7 天"

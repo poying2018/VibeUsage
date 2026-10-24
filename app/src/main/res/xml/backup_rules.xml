@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 云备份规则：只备份外观类设置，**排除全部凭据**。
+     凭据（vibe_credentials 里的 vibecafe api_key、quota_extra 里各家的 OAuth token /
+     serviceToken / 账号密码、ag_panel 里的 Google refresh_token）不该随平台备份离开设备——
+     应用自己提供了 CredentialBackup 的 AES-256-GCM 加密导出通道，那才是受控的迁移方式。
+     vibe_usage 只剩主题与液态玻璃参数（外观设置），照常备份。 -->
 <full-backup-content>
     <include domain="sharedpref" path="." />
+    <exclude domain="sharedpref" path="vibe_credentials.xml" />
+    <exclude domain="sharedpref" path="quota_extra.xml" />
+    <exclude domain="sharedpref" path="ag_panel.xml" />
 </full-backup-content>

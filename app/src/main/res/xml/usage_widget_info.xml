@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis=0：不由系统定时驱动刷新。
+     系统的周期刷新（原本 30 分钟）会触发 onUpdate → refreshNow，与 WorkManager 的
+     30 分钟周期任务形成**双通道**，每周期最多打两次 API。现在只保留 WorkManager 一条通道：
+     组件放置时系统仍会回调一次 onUpdate（立即同步），之后由周期任务负责刷新。 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="110dp"
     android:minHeight="110dp"
     android:targetCellWidth="2"
     android:targetCellHeight="2"
-    android:updatePeriodMillis="1800000"
+    android:updatePeriodMillis="0"
     android:initialLayout="@layout/glance_default_loading_layout"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen" />

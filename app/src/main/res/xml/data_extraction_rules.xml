@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ 的备份/迁移规则：只带走外观类设置，凭据一律排除。
+     凭据（vibe_credentials 里的 vibecafe api_key、quota_extra 里各家的 OAuth token /
+     serviceToken / 账号密码、ag_panel 里的 Google refresh_token）不应随云备份或换机迁移
+     离开设备——应用自己提供了 CredentialBackup 的 AES-256-GCM 加密导出通道，
+     那才是受控的迁移方式。vibe_usage 只剩主题与液态玻璃参数（外观设置），照常迁移。 -->
 <data-extraction-rules>
     <cloud-backup>
         <include domain="sharedpref" path="." />
+        <exclude domain="sharedpref" path="vibe_credentials.xml" />
+        <exclude domain="sharedpref" path="quota_extra.xml" />
+        <exclude domain="sharedpref" path="ag_panel.xml" />
     </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="." />
+        <exclude domain="sharedpref" path="vibe_credentials.xml" />
+        <exclude domain="sharedpref" path="quota_extra.xml" />
+        <exclude domain="sharedpref" path="ag_panel.xml" />
+    </device-transfer>
 </data-extraction-rules>

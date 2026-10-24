@@ -42,8 +42,11 @@ object Glm {
      * 与 TIME_LIMIT（MCP 用量，unit=5/number=1 为月度标记）。
      */
     fun fetchUsage(apiKey: String): Usage {
-        var lastErr: Exception? = null
+        // 与其它供应商一致走 withHostFallback：
+        // 统一「鉴权错误优先」的报错语义 + 总耗时预算（原来 2 台 host × 35s 超时上界太长），
+        // 且第二台 host 的直连/中转策略与第一台不同，需要按 index 区分。
         var businessErr: QuotaException? = null
+        var lastErr: Exception? = null
         for ((index, url) in URLS.withIndex()) {
             try {
                 val resp = QuotaHttp.get(
@@ -57,7 +60,10 @@ object Glm {
                     )
                 )
             } catch (e: QuotaException) {
-                if (businessErr == null) businessErr = e
+                // 鉴权类错误（key 无效）换 host 也救不回来，但比「最后撞上的那个错」更有诊断价值
+                if (businessErr == null || e.code == 2049 || e.code == 1004 || e.code == 401) {
+                    businessErr = e
+                }
                 lastErr = e
             } catch (e: Exception) {
                 lastErr = e
@@ -104,7 +110,8 @@ object Glm {
             val pctUsed = (jnum(o, "percentage")
                 ?: (if (total != null && total > 0 && used != null) used * 100.0 / total else null))
                 ?: continue
-            val resetMs = jnum(o, "nextResetTime")?.toLong()
+            // 秒/毫秒归一：服务端可能下发秒级时间戳（约 1.7e9），直接当毫秒会落到 1970 年
+            val resetMs = jnum(o, "nextResetTime")?.toLong()?.let { normalizeEpochMs(it) }
             groups.getOrPut(group) { mutableListOf() } += Bar(
                 label = barLabel,
                 percentRemaining = (100 - pctUsed).toInt().coerceIn(0, 100),

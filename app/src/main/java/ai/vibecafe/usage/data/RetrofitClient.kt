@@ -1,5 +1,6 @@
 package ai.vibecafe.usage.data
 
+import ai.vibecafe.usage.data.quota.DnsResolver
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -14,6 +15,9 @@ object RetrofitClient {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
+            // 与额度层一致挂上 DnsResolver：模拟器与部分大陆网络下系统解析会间歇性整体失效，
+            // 此时概览页会全挂而额度页照常工作
+            .dns(DnsResolver)
             .addInterceptor(RetryInterceptor())
             // 网络日志只在 debug 包开启，release 不往 logcat 泄露请求信息
             .addInterceptor(HttpLoggingInterceptor().apply {

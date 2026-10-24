@@ -232,13 +232,22 @@ object StatsEngine {
         return result
     }
 
+    /**
+     * 按时间范围过滤会话；[devices] 非空时同时按主机过滤。
+     *
+     * 设备筛选必须同时作用在会话上：bucket 按 hostname 过滤了，会话却不过滤的话，
+     * 会话数会把其它设备的也算进来，被分摊的会话还会以 0 tokens/0 成本混进列表。
+     */
     private fun filterSessionsByTimeRange(
         sessions: List<Session>,
         timeRange: TimeRange,
-        b: TimeBoundaries
+        b: TimeBoundaries,
+        devices: Set<String> = emptySet()
     ): List<Session> {
-        if (timeRange == TimeRange.ALL) return sessions
-        return sessions.filter { s ->
+        val byDevice = if (devices.isEmpty()) sessions
+        else sessions.filter { it.hostname in devices }
+        if (timeRange == TimeRange.ALL) return byDevice
+        return byDevice.filter { s ->
             val t = parseCached(s.lastMessageAt) ?: return@filter false
             dateInRange(t, timeRange, b)
         }
@@ -291,7 +300,7 @@ object StatsEngine {
             totalCost = buckets.sumOf { it.estimatedCost },
             toolCount = buckets.map { it.source }.distinct().size,
             modelCount = buckets.map { it.model }.distinct().size,
-            sessionCount = filterSessionsByTimeRange(data.sessions, timeRange, b).size
+            sessionCount = filterSessionsByTimeRange(data.sessions, timeRange, b, devices).size
         ).also { clearIsoCache() }
     }
 
@@ -348,7 +357,7 @@ object StatsEngine {
         val buckets = scoped.filter { it.source == tool }
         if (buckets.isEmpty()) return null
         val total = scoped.sumOf { it.fullTokens() }.toFloat()
-        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b).filter { it.source == tool }
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b, devices).filter { it.source == tool }
         return ToolDetail(
             tool = tool,
             cost = buckets.sumOf { it.estimatedCost },
@@ -378,7 +387,7 @@ object StatsEngine {
         if (buckets.isEmpty()) return null
         val total = scoped.sumOf { it.fullTokens() }.toFloat()
         val sources = buckets.map { it.source }.toSet()
-        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b).filter { it.source in sources }
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b, devices).filter { it.source in sources }
         val input = buckets.sumOf { it.inputTokens }
         val cached = buckets.sumOf { it.cachedInputTokens }
         return ModelDetail(
@@ -484,7 +493,7 @@ object StatsEngine {
             a.cost += bk.estimatedCost
             a.tokens += bk.fullTokens()
         }
-        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b)
+        val sessions = filterSessionsByTimeRange(data.sessions, timeRange, b, devices)
         // 分摊基数：该工具+主机在范围内所有会话的消息总数
         for (s in sessions) {
             val key = SessionKey(s.source, s.hostname)
@@ -518,7 +527,8 @@ object StatsEngine {
     fun computeTrendPercent(
         data: UsageResponse,
         timeRange: TimeRange,
-        custom: CustomRange? = null
+        custom: CustomRange? = null,
+        devices: Set<String> = emptySet()
     ): Float? {
         clearIsoCache()
         val now = Date()
@@ -529,28 +539,42 @@ object StatsEngine {
         }.time
         fun hoursAgo(h: Long): Date = Date(now.time - h * 3600_000L)
 
-        val (curStart, prevStart) = when (timeRange) {
-            TimeRange.TODAY -> cal(today, 0) to cal(today, -1)
-            TimeRange.HOURS_24 -> hoursAgo(24) to hoursAgo(48)
-            TimeRange.DAYS_7 -> cal(today, -6) to cal(today, -13)
-            TimeRange.DAYS_30 -> cal(today, -29) to cal(today, -59)
-            TimeRange.DAYS_90 -> cal(today, -89) to cal(today, -179)
-            TimeRange.ALL -> cal(today, -29) to cal(today, -59)
+        // 当前周期窗口 [curStart, curEnd)；上一周期窗口 [prevStart, prevEnd)。
+        // curEnd 为 null 表示"到数据末尾"（非自定义档的数据里不会有未来时间点）。
+        val windows: Triple<Date, Date?, Date> = when (timeRange) {
+            TimeRange.TODAY -> Triple(cal(today, 0), null, cal(today, -1))
+            TimeRange.HOURS_24 -> Triple(hoursAgo(24), null, hoursAgo(48))
+            TimeRange.DAYS_7 -> Triple(cal(today, -6), null, cal(today, -13))
+            TimeRange.DAYS_30 -> Triple(cal(today, -29), null, cal(today, -59))
+            TimeRange.DAYS_90 -> Triple(cal(today, -89), null, cal(today, -179))
+            TimeRange.ALL -> Triple(cal(today, -29), null, cal(today, -59))
             TimeRange.CUSTOM -> {
                 val from = custom?.let { dateFormat.parse(it.from) } ?: return null
                 val to = custom?.let { dateFormat.parse(it.to) } ?: return null
                 val len = ((to.time - from.time) / 86_400_000L).toInt() + 1
-                from to cal(from, -len)
+                // 当前周期必须**封顶**在 to（含当天）：不封顶的话，
+                // 选一个过去的区间时，to 之后的消耗会被算进"当前周期"，趋势百分比虚高甚至翻倍。
+                val curEnd = Calendar.getInstance(beijingTz).apply {
+                    time = to
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }.time
+                Triple(from, curEnd, cal(from, -len))
             }
         }
+        val (curStart, curEnd, prevStart) = windows
 
         var cur = 0.0
         var prev = 0.0
-        for (bk in data.buckets) {
+        // 设备筛选必须在这里也生效：趋势芯片显示的是「涨了百分之多少」，
+        // 要是用全量设备算、而页面上的金额是筛选后的，用户看到的百分比和金额对不上。
+        val base = if (devices.isEmpty()) data.buckets else data.buckets.filter { it.hostname in devices }
+        for (bk in base) {
             val t = parseCached(bk.bucketStart) ?: continue
-            if (!t.before(curStart)) {
+            val inCur = !t.before(curStart) && (curEnd == null || t.before(curEnd))
+            val inPrev = !t.before(prevStart) && t.before(curStart)
+            if (inCur) {
                 cur += bk.estimatedCost
-            } else if (!t.before(prevStart)) {
+            } else if (inPrev) {
                 prev += bk.estimatedCost
             }
         }
@@ -562,6 +586,9 @@ object StatsEngine {
 
     /** 月度预测：本月（北京时间）已消耗，按日均推算整月总额。 */
     fun computeMonthProjection(data: UsageResponse, devices: Set<String> = emptySet()): MonthProjection? {
+        // 与其它 compute 函数保持一致：进出都清一次 ISO 解析缓存，
+        // 避免复用上一次调用留下的条目（缓存虽是无害的，但生命周期要统一）
+        clearIsoCache()
         val base = if (devices.isEmpty()) data.buckets else data.buckets.filter { it.hostname in devices }
         if (base.isEmpty()) return null
         val nowCal = Calendar.getInstance(beijingTz)
@@ -579,6 +606,7 @@ object StatsEngine {
         }.sumOf { it.estimatedCost }
         val daysElapsed = nowCal.get(Calendar.DAY_OF_MONTH)
         val daysInMonth = nowCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        clearIsoCache()
         if (monthCost <= 0.0 || daysElapsed <= 0) return null
         val dailyAvg = monthCost / daysElapsed
         return MonthProjection(monthCost = monthCost, projected = dailyAvg * daysInMonth)

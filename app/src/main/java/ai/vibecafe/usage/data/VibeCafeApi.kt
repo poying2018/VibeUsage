@@ -19,6 +19,15 @@ interface VibeCafeApi {
         @Header("Authorization") authorization: String
     ): UsageResponse
 
+    /**
+     * 今日数据（days=1）。小组件只需要今天的用量，
+     * 不必为此拉 days=3650 的全量历史。
+     */
+    @GET("/api/usage?days=1&tz=Asia%2FShanghai")
+    suspend fun getUsageToday(
+        @Header("Authorization") authorization: String
+    ): UsageResponse
+
     /** 自定义日期范围（yyyy-MM-dd，含首尾两天），与官方客户端 custom 查询一致。 */
     @GET("/api/usage")
     suspend fun getUsageCustom(

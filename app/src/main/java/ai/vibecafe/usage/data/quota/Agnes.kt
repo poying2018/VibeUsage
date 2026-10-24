@@ -60,7 +60,8 @@ object Agnes {
         } ?: throw QuotaException(0, "Agnes 登录响应中没有 token")
 
         val fmt = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE
-        val today = java.time.LocalDate.now()
+        // 服务端口径是 Asia/Shanghai：按设备本地时区算「今天 / 本月」会差一天
+        val today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"))
         fun window(from: java.time.LocalDate): Pair<Double, Double> {
             val data = call("/api/usage/series?range=custom&start_date=${from.format(fmt)}&end_date=${today.format(fmt)}", jwt)
             var tokens = 0.0

@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,7 +89,8 @@ private fun AppRoot() {
     var apiKey by remember { mutableStateOf(ApiKeyStore.get(context)) }
 
     // 液态玻璃全局样式（LockScreen 配方，设置页可调）
-    remember { GlassStyleStore.init(context) }
+    // init() 返回 Unit，remember 不该返回 Unit —— 用 SideEffect 触发一次初始化
+    SideEffect { GlassStyleStore.init(context) }
 
     // 外观模式：跟随系统 / 浅色 / 深色 / 纯黑（持久化）
     var themeMode by remember { mutableStateOf(ThemeStore.get(context)) }
@@ -120,6 +122,8 @@ private fun AppRoot() {
                 onRefresh = { vm.loadData(apiKey) },
                 onLogout = {
                     ApiKeyStore.clear(context)
+                    // 连同上一个账号留在内存里的用量明细与设备筛选一起清掉
+                    vm.clearAccountData()
                     apiKey = ""
                 },
                 onShowToolDetail = vm::showToolDetail,
@@ -131,6 +135,7 @@ private fun AppRoot() {
                 onInstallUpdate = vm::installUpdate,
                 onSelectCustomRange = vm::setCustomRange,
                 onShareCard = vm::shareCard,
+                onSelectDevices = vm::setDevices,
                 themeMode = themeMode,
                 onThemeModeChange = { mode ->
                     themeMode = mode
@@ -162,7 +167,19 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                     ai.vibecafe.usage.data.RetrofitClient.api.getUsageDaily("Bearer $k")
                     true
                 } catch (e: Exception) {
-                    error = "API Key 验证失败，请检查后重试"
+                    // 网络异常与「Key 无效」要分开说：弱网用户看到「API Key 验证失败」
+                    // 会以为自己抄错了，反复重输同一个正确的 Key
+                    error = when (e) {
+                        is retrofit2.HttpException -> when (e.code()) {
+                            401, 403 -> "API Key 无效或已过期，请重新输入"
+                            else -> "验证失败（HTTP ${e.code()}），请稍后重试"
+                        }
+                        is java.net.SocketTimeoutException -> "连接超时，请检查网络后重试"
+                        is java.net.UnknownHostException -> "无法连接服务器，请检查网络后重试"
+                        is java.net.ConnectException -> "连接失败，请检查网络后重试"
+                        is java.io.IOException -> "网络错误，请检查网络后重试"
+                        else -> "验证失败：${e.message?.take(60) ?: "未知错误"}"
+                    }
                     false
                 }
                 verifying = false

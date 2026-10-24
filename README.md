@@ -1,7 +1,7 @@
 # VibeUsage — 液态玻璃风格 Token 用量客户端
 
 一个 Android 原生 App：既统计 [vibecafe.ai](https://vibecafe.ai/usage) 的 Token 用量，
-也能在一个面板里聚合 **12 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
+也能在一个面板里聚合 **13 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
 基于 **Jetpack Compose** 与 **液态玻璃（Liquid Glass）** 设计语言。
 
 当前版本 **2.21.2**（versionCode 69）· MIT
@@ -18,22 +18,24 @@
 - 桌面小组件（Glance 2x2，每 30 分钟 + App 刷新时同步）
 - 玻璃风格总结分享卡（1080x1350）
 
-### 额度聚合（12 家供应商 + Antigravity）
+### 额度聚合（13 家供应商 + Antigravity）
 
 | 类别 | 供应商 |
 |---|---|
-| 凭据型 | 小米 MiMo、阿里百炼、火山方舟、豆包、智谱 GLM、Kimi、MiniMax、无问芯穹、DeepSeek、Agnes |
+| 凭据型 | 小米 MiMo、阿里百炼、火山方舟、豆包、智谱 GLM、Kimi、MiniMax、无问芯穹、DeepSeek、Agnes、CommandCode |
 | 一键授权 | GitHub Copilot（设备码）、OpenRouter（OAuth） |
 | 独立面板 | Antigravity（Google 反重力，OAuth refresh_token） |
 
 - 按时间窗口分组展示（5 小时滚动窗口 / 每周窗口），显示剩余百分比、已用比例、重置倒计时
 - 每个供应商附**接入指引文案**（去哪拿凭据、填什么），凭据类型不同（单 Key / AK-SK 双凭据 / Cookie / 账号密码）
 - 各家实际可用模型列表（走账号维度接口，拿不到则隐藏模型区，不影响额度展示）
-- 凭据加密备份/恢复
+- 凭据备份/恢复：**口令加密**（PBKDF2-HMAC-SHA256 派生密钥 + AES-256-GCM），口令不写入文件、不上传，备份文件离开设备也解不开；兼容旧版明文 / 内置密钥备份的导入
 
 ### 其他
 
-- 预算提醒：按日均预测整月消耗，超阈值发本地通知
+- 预算提醒：按日均预测整月消耗，超阈值发本地通知（阈值可配置）
+- 设备筛选、按 tokens / 费用 / 名称排序、最近会话列表
+- 用量卡分享 / 保存到系统相册（MediaStore，免权限）
 - 多设备筛选、暗色 / AMOLED 纯黑主题（跟随系统 / 浅色 / 深色 / 纯黑四种）
 - 自定义背景（相册选图，重启保留）
 - 液态玻璃参数可调：亮度 / 对比度 / 饱和度 / 模糊 / 白色叠加，实时全局生效
@@ -90,7 +92,7 @@ app/src/main/java/ai/vibecafe/usage/
 │   │   ├── QuotaHttp.kt            #   HTTP 底座（直连 ⇄ 中转，含中转熔断）—— 同文件内
 │   │   ├── MiniMax.kt / Glm.kt / Kimi.kt / DeepSeek.kt / Infini.kt /
 │   │   │ Bailian.kt / Ark.kt / GitHubCopilot.kt / OpenRouter.kt /
-│   │   │ Doubao.kt / Agnes.kt / Mimo.kt        #   每家供应商一个文件
+│   │   │ Doubao.kt / Agnes.kt / Mimo.kt / CommandCode.kt   #   每家供应商一个文件
 │   │   ├── OAuthFlow.kt            #   GitHub 设备码 / OpenRouter OAuth
 │   │   └── DnsResolver.kt          #   系统 DNS + DoH 兜底
 │   ├── ag/AgQuotaApi.kt            # Antigravity（Google 反重力）配额
@@ -112,7 +114,7 @@ app/src/main/java/ai/vibecafe/usage/
     └── theme/                      # 亮/暗/纯黑设计令牌 + 排版
 ```
 
-测试见 `app/src/test/`，覆盖统计引擎、GLM / MiMo / MiniMax 解析、host 兜底策略、图标匹配、分享卡与凭据加密。
+测试见 `app/src/test/`，覆盖统计引擎（时间窗口 / 趋势 / 设备筛选）、GLM / MiMo / MiniMax / CommandCode 解析、host 兜底策略、图标匹配、分享卡与凭据加密。
 
 ## 📄 许可证
 

@@ -30,18 +30,20 @@ $dist = Join-Path $root "dist"
 $tag = "v$Version"
 $apkName = "VibeUsage-v$Version-release.apk"
 $gradleFile = Join-Path $root "app\build.gradle.kts"
-$dashboardFile = Join-Path $root "app\src\main\java\ai\vibecafe\usage\ui\DashboardScreen.kt"
 
-# UTF-8 no BOM for file writes (gradle/dashboard sources)
+# UTF-8 no BOM for file writes (gradle sources)
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " VibeUsage publish v$Version" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-# 0. Auto bump version (versionCode +1, versionName, APP_VERSION)
+# 0. Auto bump version (versionCode +1, versionName)
 #    Skipped when versionName already equals -Version, so re-running after a
 #    failure cannot bump the versionCode twice.
+#    Note: the dashboard's APP_VERSION now derives from BuildConfig.VERSION_NAME,
+#    so there is nothing to rewrite there anymore (the old literal replace was a
+#    no-op that silently did nothing while the log still claimed it had bumped it).
 Write-Host "[0/7] Bump version -> v$Version ..." -ForegroundColor Yellow
 $gradleContent = [System.IO.File]::ReadAllText($gradleFile, $utf8)
 $currentCode = if ($gradleContent -match 'versionCode = (\d+)') { [int]$Matches[1] } else { throw "versionCode not found" }
@@ -53,9 +55,6 @@ if ($currentName -eq $Version) {
     $gradleContent = $gradleContent -replace 'versionCode = \d+', "versionCode = $newCode"
     $gradleContent = $gradleContent -replace 'versionName = "[^"]+"', "versionName = `"$Version`""
     [System.IO.File]::WriteAllText($gradleFile, $gradleContent, $utf8)
-    $dashContent = [System.IO.File]::ReadAllText($dashboardFile, $utf8)
-    $dashContent = $dashContent -replace 'APP_VERSION = "v[^"]+"', "APP_VERSION = `"v$Version`""
-    [System.IO.File]::WriteAllText($dashboardFile, $dashContent, $utf8)
     Write-Host "[0/7] versionCode $currentCode -> $newCode, versionName -> $Version" -ForegroundColor Green
 }
 

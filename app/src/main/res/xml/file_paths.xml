@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- FileProvider 路径映射：下载的 APK 位于私有 external files 的 downloads/
-     或 cache 目录（getExternalFilesDir 不可用时兜底）。 -->
+     或 cache 目录（getExternalFilesDir 不可用时兜底）；
+     分享卡片 PNG 位于 cache/share/。
+     cache-path 的 root 已是 getCacheDir()，path 必须是相对 root 的子路径，
+     写成 path="cache/" 时只有 cache/cache/** 可共享，写入点却不在其下 → getUriForFile 抛
+     "Failed to find configured root"，分享功能整体失效。故此处用 path="." 覆盖整个 cache 根。 -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-files-path name="downloads" path="downloads/" />
-    <cache-path name="cache" path="cache/" />
+    <cache-path name="cache" path="." />
 </paths>

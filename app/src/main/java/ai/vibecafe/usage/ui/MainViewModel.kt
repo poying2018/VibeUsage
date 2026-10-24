@@ -25,6 +25,7 @@ import ai.vibecafe.usage.stats.ToolDistribution
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +55,8 @@ data class UiState(
     /** 自定义范围的独立数据源（仅在 selectedTimeRange == CUSTOM 时使用）。 */
     val customData: UsageResponse? = null,
     val customRange: CustomRange? = null,
+    /** customData 对应的范围：换了范围但新数据还没到时，旧 customData 不能被误用。 */
+    val customDataRange: CustomRange? = null,
     val stats: DashboardStats? = null,
     val trendPercent: Float? = null,
     val monthProjection: MonthProjection? = null,
@@ -86,13 +89,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return s.hourlyData ?: s.dailyData
         }
         if (range == TimeRange.CUSTOM) {
-            return s.customData ?: s.dailyData
+            // customData 必须属于当前这个范围：换了范围但新数据还没拉到时，
+            // 拿旧范围的 customData 去算新范围就是错的
+            val s2 = _uiState.value
+            return if (s2.customDataRange == s2.customRange) s2.customData ?: s2.dailyData
+            else s2.dailyData
         }
         return s.dailyData
     }
 
     private fun customOf(range: TimeRange): CustomRange? =
         if (range == TimeRange.CUSTOM) _uiState.value.customRange else null
+
+    /**
+     * 进行中的 recompute 任务。
+     *
+     * 早先是 fire-and-forget：每次切档都新起一个协程，多个并发时「后完成者覆盖先完成者」，
+     * 与调用顺序无关——快速连点时间档时，90 天档可能显示 7 天档的统计。
+     * 改为显式持有 Job：新一次 recompute 取消上一次，且写回前校验"当前档位/自定义范围仍是发起时那一个"，
+     * 避免过期结果覆盖新状态。
+     */
+    private var recomputeJob: Job? = null
 
     /** 按当前范围/设备一次性重算全部派生数据（计算在后台线程，赋值回主线程）。 */
     private fun recompute(range: TimeRange, data: UsageResponse) {
@@ -104,11 +121,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // 上一周期窗口和整月消耗都会被截断
         val fullDaily = s.dailyData ?: data
         val trendSource = if (range == TimeRange.HOURS_24) (hourlyBase ?: data) else fullDaily
-        viewModelScope.launch {
+        // 发起时的上下文快照：写回前用它确认这次结果仍然对应当前选择
+        val requestedRange = range
+        val requestedCustom = custom
+        recomputeJob?.cancel()
+        recomputeJob = viewModelScope.launch {
             val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 Recomputed(
                     stats = StatsEngine.computeStats(data, range, devices, custom),
-                    trendPercent = StatsEngine.computeTrendPercent(trendSource, range, custom),
+                    trendPercent = StatsEngine.computeTrendPercent(trendSource, range, custom, devices),
                     toolDistribution = StatsEngine.computeToolDistribution(data, range, devices, custom),
                     modelCosts = StatsEngine.computeModelCosts(data, range, devices, custom),
                     dailyUsage = StatsEngine.computeDailyUsage(data, range, devices, custom),
@@ -118,7 +139,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     monthProjection = StatsEngine.computeMonthProjection(fullDaily, devices)
                 )
             }
-            _uiState.value = _uiState.value.copy(
+            // 期间用户又切了档/改了自定义范围：这次结果已经过期，丢弃
+            val cur = _uiState.value
+            if (cur.selectedTimeRange != requestedRange) return@launch
+            if (requestedRange == TimeRange.CUSTOM && cur.customRange != requestedCustom) return@launch
+            _uiState.value = cur.copy(
                 stats = r.stats,
                 trendPercent = r.trendPercent,
                 toolDistribution = r.toolDistribution,
@@ -178,27 +203,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (daily != null) {
                 val tr = _uiState.value.selectedTimeRange
 
-                // 自定义范围：顺带刷新自定义数据源（失败保留旧值）
+                // 自定义范围：顺带刷新自定义数据源（失败保留旧值，但归属标记不变）
                 var custom = _uiState.value.customData
+                var customRangeOf = _uiState.value.customDataRange
                 val cr = _uiState.value.customRange
                 if (tr == TimeRange.CUSTOM && cr != null) {
                     repository.fetchCustomRange(apiKey, cr.from, cr.to).getOrNull()
-                        ?.let { custom = StatsEngine.dedupResponse(it) }
+                        ?.let {
+                            custom = StatsEngine.dedupResponse(it)
+                            customRangeOf = cr
+                        }
                 }
 
-                val note = if (tr == TimeRange.HOURS_24 && hourly == null) {
+                // hourly 拉取失败时保留上一次的好数据：一次网络抖动不该把已有的
+                // 小时粒度数据清成 null（会让 24 小时档降级、今日趋势退化成单点）。
+                val effectiveHourly = hourly ?: _uiState.value.hourlyData
+                val note = if (tr == TimeRange.HOURS_24 && effectiveHourly == null) {
                     "24 小时粒度数据暂不可用，已自动降级为日粒度显示"
                 } else null
 
+                val devices = StatsEngine.availableDevices(daily)
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isRefreshing = false,
                     error = null,
                     granularityNote = note,
                     dailyData = daily,
-                    hourlyData = hourly,
+                    hourlyData = effectiveHourly,
                     customData = custom,
-                    availableDevices = StatsEngine.availableDevices(daily)
+                    customDataRange = customRangeOf,
+                    availableDevices = devices,
+                    // 设备筛选要跟着本账号的设备列表走：
+                    // 换账号后旧账号的 hostname 一个都不在新列表里，
+                    // 留着筛选 = 所有数据被过滤成空，页面全白，
+                    // 而设备按钮（只在多设备时显示）又打不开，用户没法自救。
+                    selectedDevices = _uiState.value.selectedDevices intersect devices.toSet()
                 )
                 recompute(tr, dataForRange(tr) ?: daily)
                 // 桌面小组件数据跟着这次刷新走（免等 30 分钟周期任务）
@@ -225,7 +264,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recompute(range, data)
     }
 
-    /** 选择自定义日期范围：先切档展示旧数据，再拉取范围数据并重算。 */
+    /** 选择自定义日期范围：先用全量数据本地过滤出结果，再拉取范围数据更精准。 */
     fun setCustomRange(from: String, to: String) {
         val apiKey = ApiKeyStore.get(getApplication())
         val range = CustomRange(from, to)
@@ -234,14 +273,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             customRange = range,
             granularityNote = null
         )
-        // 先用全量数据本地过滤，界面立即可用；拉到范围数据后更精准
-        dataForRange(TimeRange.CUSTOM)?.let { recompute(TimeRange.CUSTOM, it) }
+        // 用**全量** dailyData 本地过滤，而不是上一次 customData：
+        // customData 是上一个自定义范围的响应，直接拿来算会把旧范围的数据挂在新范围的标签下。
+        _uiState.value.dailyData?.let { recompute(TimeRange.CUSTOM, it) }
         if (apiKey.isEmpty()) return
         viewModelScope.launch {
             repository.fetchCustomRange(apiKey, from, to).onSuccess { resp ->
                 val deduped = StatsEngine.dedupResponse(resp)
+                // 期间用户可能又换了范围：只在范围仍是这次请求的那个时才写回
                 if (_uiState.value.customRange == range) {
-                    _uiState.value = _uiState.value.copy(customData = deduped)
+                    _uiState.value = _uiState.value.copy(customData = deduped, customDataRange = range)
                     recompute(TimeRange.CUSTOM, deduped)
                 }
             }
@@ -253,6 +294,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val data = dataForRange(tr) ?: return
         _uiState.value = _uiState.value.copy(selectedDevices = devices)
         recompute(tr, data)
+    }
+
+    /**
+     * 退出登录 / 换账号时清掉上一个账号的内存数据。
+     *
+     * ViewModel 跟着 Activity 活着，退出登录只是把 API Key 抹了，
+     * 上一个账号的用量明细、趋势、设备筛选还留在内存里：
+     * - 隐私：新账号登录前那一屏仍能翻到旧账号的明细；
+     * - 正确性：设备筛选是按 hostname 存的，旧账号的 hostname 在新账号里不存在，
+     *   留着筛选会把所有数据过滤成空，页面全白。
+     */
+    fun clearAccountData() {
+        recomputeJob?.cancel()
+        _uiState.value = UiState()
+    }
+
+    /**
+     * 把当前用量卡存进系统相册。
+     *
+     * 放在 ViewModel 里而不是 Composable 的 `rememberCoroutineScope()`：
+     * 组合作用域的 job 在离开页面时就被取消 —— 用户点了「保存」后立刻切到别的 Tab，
+     * 协程被取消，回调不执行，**一条 Toast 都没有**，但图可能已经存进相册了，
+     * 用户会以为没保存。viewModelScope 跟着 Activity 活着，结果一定回得来。
+     */
+    fun saveShareCardToGallery() {
+        val app = getApplication<Application>()
+        val payload = buildSharePayload(_uiState.value)
+        if (payload == null) {
+            Toast.makeText(app, "还没有用量数据，先刷新一下", Toast.LENGTH_SHORT).show()
+            return
+        }
+        viewModelScope.launch {
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val generated = ai.vibecafe.usage.share.ShareCard.generate(app, payload)
+                    ai.vibecafe.usage.share.ShareCard.saveToGallery(app, generated)
+                }
+            }
+            result.onSuccess { saved ->
+                Toast.makeText(
+                    app,
+                    if (saved.inGallery) {
+                        "已保存到系统相册「图库 / Pictures / VibeUsage」"
+                    } else {
+                        "已保存到应用目录（系统相册不可见）：${saved.path}"
+                    },
+                    Toast.LENGTH_LONG
+                ).show()
+            }.onFailure {
+                Toast.makeText(app, "保存失败：${it.message ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     /** 长按应用行：计算并展示该应用在当前时间范围的细分详情。 */
@@ -311,38 +404,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             runCatching {
-                val payload = ai.vibecafe.usage.share.ShareCard.Payload(
-                rangeLabel = when (s.selectedTimeRange) {
-                    TimeRange.CUSTOM -> s.customRange?.let { "总消耗 ${it.from} ~ ${it.to}" } ?: "总消耗（自定义范围）"
-                    else -> "总消耗 · " + mapOf(
-                        TimeRange.TODAY to "今日", TimeRange.HOURS_24 to "近 24 小时",
-                        TimeRange.DAYS_7 to "近 7 天", TimeRange.DAYS_30 to "近 30 天",
-                        TimeRange.DAYS_90 to "近 90 天", TimeRange.ALL to "全部"
-                    )[s.selectedTimeRange].orEmpty()
-                },
-                totalCost = stats.totalCost,
-                totalTokens = stats.totalTokens,
-                toolCount = stats.toolCount,
-                modelCount = stats.modelCount,
-                sessionCount = stats.sessionCount,
-                        monthProjected = s.monthProjection?.projected,
-                        trendPercent = s.trendPercent,
-                        topTools = s.toolDistribution.take(3).map {
-                            ai.vibecafe.usage.share.ShareCard.ShareItem(it.tool, it.cost, it.percentage / 100f)
-                        },
-                        topModels = s.modelCosts.take(3).map {
-                            ai.vibecafe.usage.share.ShareCard.ShareItem(
-                                it.model, it.cost,
-                                (if (stats.totalCost > 0.0) it.cost / stats.totalCost else 0.0).toFloat()
-                            )
-                        },
-                        deviceFilter = s.selectedDevices.takeIf { it.isNotEmpty() }?.sorted()?.joinToString("、"),
-                        inputTokens = stats.totalInputTokens,
-                        outputTokens = stats.totalOutputTokens
-                    )
-                    val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        ai.vibecafe.usage.share.ShareCard.generate(app, payload)
-                    }
+                // 载荷口径与「保存到相册」共用同一份 buildSharePayload
+                val payload = buildSharePayload(s)
+                    ?: error("还没有用量数据，先刷新一下")
+                val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    ai.vibecafe.usage.share.ShareCard.generate(app, payload)
+                }
                     ai.vibecafe.usage.share.ShareCard.share(app, file)
                 }.onFailure {
                     Toast.makeText(app, "分享卡片生成失败：${it.message}", Toast.LENGTH_SHORT).show()
@@ -422,10 +489,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val ok = UpdateChecker.downloadApk(st.apkUrl, file) { progress ->
                 setUpdate { it.copy(status = UpdateStatus.DOWNLOADING, progress = progress) }
             }
-            val verified = ok && UpdateChecker.verifyDownloadedApk(st.apkUrl, file)
+            val verified = if (ok) UpdateChecker.verifyDownloadedApk(st.apkUrl, file) else null
             when {
-                verified && file.length() > 0 ->
+                ok && file.length() > 0 && verified == UpdateChecker.VerifyStatus.VERIFIED ->
                     setUpdate { it.copy(status = UpdateStatus.DOWNLOADED, progress = 1f) }
+                ok && file.length() > 0 && verified == UpdateChecker.VerifyStatus.NO_BASELINE ->
+                    // 远端没有提供 .sha256 校验基准：无法验证，不放行安装，但给出明确提示
+                    setUpdate {
+                        it.copy(
+                            status = UpdateStatus.FAILED,
+                            message = "远端未提供安装包校验基准（.sha256），为安全起见已阻止安装"
+                        )
+                    }
+                ok && file.length() > 0 && verified == UpdateChecker.VerifyStatus.BASELINE_UNREACHABLE ->
+                    // 拉校验基准时网络失败：暂时无法验证，同样不放行安装，可重试
+                    setUpdate {
+                        it.copy(
+                            status = UpdateStatus.FAILED,
+                            message = "无法获取安装包校验基准（网络异常），已阻止安装，请重试"
+                        )
+                    }
                 ok && file.length() > 0 ->
                     setUpdate { it.copy(status = UpdateStatus.FAILED, message = "安装包校验失败，已阻止安装") }
                 else ->

@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -123,6 +124,10 @@ fun LiquidBottomTabs(
         var currentIndex by remember(selectedTabIndex) {
             mutableIntStateOf(selectedTabIndex())
         }
+        // 外部选中态同步时用来抑制重复回调（见下方 LaunchedEffect 注释）
+        var suppressSelectFor by remember { mutableIntStateOf(-1) }
+        // onTabSelected 会被收集协程长期持有，必须始终是最新引用
+        val currentOnTabSelected by rememberUpdatedState(onTabSelected)
         val dampedDragAnimation = remember(animationScope) {
             DampedDragAnimation(
                 animationScope = animationScope,
@@ -157,7 +162,14 @@ fun LiquidBottomTabs(
         LaunchedEffect(selectedTabIndex) {
             snapshotFlow { selectedTabIndex() }
                 .collectLatest { index ->
-                    currentIndex = index
+                    if (index != currentIndex) {
+                        // 外部（ViewModel）驱动的选中态变化：只挪滑块，不再回调 onTabSelected。
+                        // 否则点击路径是「onClick → 改外部状态 → 这里同步 currentIndex →
+                        // snapshotFlow 发射 → onTabSelected → 调用方再走一遍 onClick」，
+                        // 轻触一次会震两次、回调也跑两遍。
+                        suppressSelectFor = index
+                        currentIndex = index
+                    }
                 }
         }
         LaunchedEffect(dampedDragAnimation) {
@@ -165,7 +177,11 @@ fun LiquidBottomTabs(
                 .drop(1)
                 .collectLatest { index ->
                     dampedDragAnimation.animateToValue(index.toFloat())
-                    onTabSelected(index)
+                    if (index == suppressSelectFor) {
+                        suppressSelectFor = -1
+                    } else {
+                        currentOnTabSelected(index)
+                    }
                 }
         }
 

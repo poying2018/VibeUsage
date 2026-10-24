@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -102,6 +103,14 @@ fun LiquidSlider(
         )
     }
 
+    // 手势闭包里要用的 onValueChange 必须始终是**最新**的那一个：
+    // pointerInput 的 key 恒定（valueRange/isLtr 不变），手势协程只在首次组合时启动，
+    // 若直接捕获参数里的 onValueChange，它会冻结在首次组合的快照上——
+    // 而调用方（设置页）传进来的 lambda 捕获的是当时的 style 值副本，
+    // 结果是「调第二个滑杆会把第一个静默写回旧值」。
+    // 用 rememberUpdatedState 持有最新引用，闭包里每次读到的都是当前值。
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+
     val trackBackdrop = rememberLayerBackdrop()
 
     BoxWithConstraints(
@@ -120,7 +129,7 @@ fun LiquidSlider(
                     } else {
                         1f - (x / size.width).coerceIn(0f, 1f)
                     }
-                    onValueChange(
+                    currentOnValueChange(
                         valueRange.start + (valueRange.endInclusive - valueRange.start) * fraction
                     )
                 }
@@ -198,7 +207,9 @@ fun LiquidSlider(
                         val placeable = measurable.measure(constraints)
                         val width = (constraints.maxWidth * animatedProgress).fastRoundToInt()
                         layout(width, placeable.height) {
-                            placeable.place(0, 0)
+                            // RTL 下填充条要从**右端**向左生长，与拇指的移动方向一致；
+                            // 否则填充条永远从左生长，与拇指背向而行，读数完全错位。
+                            if (isLtr) placeable.place(0, 0) else placeable.place(constraints.maxWidth - width, 0)
                         }
                     }
             )

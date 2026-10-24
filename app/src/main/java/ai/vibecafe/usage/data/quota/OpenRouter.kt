@@ -72,16 +72,27 @@ object OpenRouter {
         val limit = jnum(data, "limit")
         val groups = linkedMapOf<String, MutableList<Bar>>()
         groups["Key 额度"] = mutableListOf(
-            if (limit != null && limit > 0) {
-                val pctUsed = (usage / limit * 100.0).coerceIn(0.0, 100.0)
-                Bar(
+            when {
+                // limit = 0 是「一点都不能用」，不是无限额
+                limit != null && limit <= 0 -> Bar(
                     label = label ?: "Default Key",
-                    percentRemaining = (100 - pctUsed).toInt().coerceIn(0, 100),
-                    usedPercent = pctUsed.toInt().coerceIn(0, 100),
-                    counts = String.format(Locale.US, "已用 $%.2f / 限额 $%.2f", usage, limit)
+                    percentRemaining = 0,
+                    usedPercent = 100,
+                    counts = String.format(
+                        Locale.US, "已用 $%.2f · 额度已用尽", usage
+                    )
                 )
-            } else {
-                Bar(
+                limit != null && limit > 0 -> {
+                    val pctUsed = (usage / limit * 100.0).coerceIn(0.0, 100.0)
+                    Bar(
+                        label = label ?: "Default Key",
+                        percentRemaining = (100 - pctUsed).toInt().coerceIn(0, 100),
+                        usedPercent = pctUsed.toInt().coerceIn(0, 100),
+                        counts = String.format(Locale.US, "已用 $%.2f / 限额 $%.2f", usage, limit)
+                    )
+                }
+                // limit 为 null = 服务端没下发限额 → 无限额
+                else -> Bar(
                     label = label ?: "Default Key",
                     percentRemaining = 100,
                     counts = String.format(

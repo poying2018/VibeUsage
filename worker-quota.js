@@ -28,6 +28,16 @@ const ALLOWED_HOSTS = new Set([
   // ── Agnes AI（平台后端 token 用量 + 网关模型列表，中转优先线路）──
   "platform-backend.agnes-ai.cn",
   "api.agnes-ai.cn",
+  // ── GitHub / Copilot（设备码授权 + copilot_internal 额度 + 模型列表）──
+  "github.com",
+  "api.github.com",
+  "api.githubcopilot.com",
+  // ── OpenRouter（额度查询线路，中转与直连互为兜底）──
+  "openrouter.ai",
+  // ── 智谱国际站 z.ai（国内 api.zhipuai.cn 不可达时的中转兜底线路）──
+  "api.z.ai",
+  // ── CommandCode（额度窗口 / 套餐 credits / 周期用量；国内直连不稳时的兜底线路）──
+  "api.commandcode.ai",
 ]);
 
 const ALLOWED = (u) => {
@@ -38,6 +48,9 @@ const ALLOWED = (u) => {
     return false;
   }
 };
+
+/** 手动跟随重定向的最大跳数，超过即放弃（防重定向环路）。 */
+const MAX_REDIRECTS = 5;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -54,19 +67,27 @@ export default {
 
     // ---- Google OAuth：服务端补 client_secret，透传 refresh_token / authorization_code 两种流程 ----
     if (url.pathname === "/token") {
-      const bodyText = await request.text();
-      const form = new URLSearchParams(bodyText);
-      if (!form.get("grant_type")) form.set("grant_type", "refresh_token");
-      form.set("client_id", "1071006060591" + "-tmhssin2h21lcre235vtolojh4g403ep" + ".apps.googleusercontent.com"); // Antigravity.Tools 公开内置凭据，拆分避开 push protection 误报
-      form.set("client_secret", "GOCSPX-" + "K58FWR486LdLJ1mLB8sXC4z6qDAf");
-      const resp = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: form.toString(),
-      });
-      const out = new Headers(resp.headers);
-      Object.entries(CORS).forEach(([k, v]) => out.set(k, v));
-      return new Response(resp.body, { status: resp.status, headers: out });
+      try {
+        const bodyText = await request.text();
+        const form = new URLSearchParams(bodyText);
+        if (!form.get("grant_type")) form.set("grant_type", "refresh_token");
+        form.set("client_id", "1071006060591" + "-tmhssin2h21lcre235vtolojh4g403ep" + ".apps.googleusercontent.com"); // Antigravity.Tools 公开内置凭据，拆分避开 push protection 误报
+        form.set("client_secret", "GOCSPX-" + "K58FWR486LdLJ1mLB8sXC4z6qDAf");
+        const resp = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: form.toString(),
+        });
+        const out = new Headers(resp.headers);
+        Object.entries(CORS).forEach(([k, v]) => out.set(k, v));
+        return new Response(resp.body, { status: resp.status, headers: out });
+      } catch (e) {
+        // 网络异常等失败：返回带 CORS 头的 502，避免客户端拿到无 CORS 头的裸 500
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 502,
+          headers: { "Content-Type": "application/json", ...CORS },
+        });
+      }
     }
 
     // ---- 通用透传 ----
@@ -96,7 +117,53 @@ export default {
     );
     try {
       const body = request.method === "POST" ? await request.arrayBuffer() : undefined;
-      const resp = await fetch(target, { method: request.method, headers, body });
+      // 手动跟随重定向：每一跳都用 ALLOWED 复检目标主机，防止白名单主机上的
+      // 开放重定向把请求带到任意主机（SSRF）。超过 MAX_REDIRECTS 跳直接放弃。
+      let currentUrl = target;
+      let currentMethod = request.method;
+      let currentBody = body;
+      let resp = null;
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        resp = await fetch(currentUrl, {
+          method: currentMethod,
+          headers,
+          body: currentBody,
+          redirect: "manual",
+        });
+        const loc = resp.headers.get("Location");
+        const isRedirect = resp.status >= 300 && resp.status < 400 && loc;
+        if (!isRedirect) break;
+        if (hop === MAX_REDIRECTS) {
+          // 重定向跳数过多，直接放弃
+          return new Response(JSON.stringify({ error: "too many redirects" }), {
+            status: 502,
+            headers: { "Content-Type": "application/json", ...CORS },
+          });
+        }
+        let nextUrl;
+        try {
+          nextUrl = new URL(loc, currentUrl).toString();
+        } catch (_) {
+          return new Response(JSON.stringify({ error: "invalid redirect target" }), {
+            status: 502,
+            headers: { "Content-Type": "application/json", ...CORS },
+          });
+        }
+        // 每一跳都重新校验白名单，非白名单目标直接 403
+        if (!ALLOWED(nextUrl)) {
+          return new Response(JSON.stringify({ error: "missing or not allowed" }), {
+            status: 403,
+            headers: { "Content-Type": "application/json", ...CORS },
+          });
+        }
+        // 303（含部分 301/302）按浏览器语义转 GET，其余保留原方法与请求体
+        if (resp.status === 303 || ((resp.status === 301 || resp.status === 302) && currentMethod === "POST")) {
+          currentMethod = "GET";
+          currentBody = undefined;
+          headers.delete("Content-Type");
+        }
+        currentUrl = nextUrl;
+      }
       const out = new Headers(resp.headers);
       Object.entries(CORS).forEach(([k, v]) => out.set(k, v));
       return new Response(resp.body, { status: resp.status, headers: out });

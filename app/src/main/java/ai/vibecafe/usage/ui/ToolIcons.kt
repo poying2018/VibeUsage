@@ -32,7 +32,9 @@ private data class IconRule(
     val drawable: Int? = null,
     val vector: ImageVector? = null,
     val colorful: Boolean = false,
-    val priority: Int = 0
+    val priority: Int = 0,
+    /** true = 别名只做精确匹配（token 完全相等），不参与前缀/子串/编辑距离匹配。 */
+    val exactOnly: Boolean = false
 )
 
 private val iconRules = listOf(
@@ -63,6 +65,11 @@ private val iconRules = listOf(
     IconRule("Alibaba", listOf("alibaba", "aliyun"), Color(0xFFFF6A00), drawable = R.drawable.ic_tool_alibaba, priority = 20),
     IconRule("Hugging Face", listOf("huggingface", "hf"), Color(0xFFFFD21E), drawable = R.drawable.ic_tool_huggingface, priority = 20),
     IconRule("Qoder", listOf("qoder"), Color(0xFF7C3AED), vector = Icons.Filled.Terminal, priority = 20),
+    // CommandCode（AI 编程 CLI / 工作站）：品牌色取其官方深色标识。
+    // 别名覆盖 CLI 在用量数据里的来源名。短别名 "cmc" 只做**精确**匹配
+    // （3 字母的短别名若参与前缀命中，"cmc-turbo" 之类无关工具会被误配）。
+    IconRule("CommandCode", listOf("commandcode", "command-code"), Color(0xFF1F2937), vector = Icons.Filled.Terminal, priority = 20),
+    IconRule("CommandCode", listOf("cmc"), Color(0xFF1F2937), vector = Icons.Filled.Terminal, priority = 20, exactOnly = true),
     IconRule("Windsurf", listOf("windsurf", "codeium"), Color(0xFF32B86C), vector = Icons.Filled.AutoAwesome, priority = 18),
     IconRule("Image", listOf("dall", "flux", "midjourney", "sora", "stable", "imagen", "ideogram"), Color(0xFFF472B6), vector = Icons.Filled.Palette, priority = 20),
     IconRule("Kiro", listOf("kiro"), Color(0xFFFBBF24), vector = Icons.Filled.Edit, priority = 15)
@@ -100,6 +107,10 @@ private fun computeToolIconFor(name: String): ToolIcon {
     }
     val n = sb.toString()
     val tokens = n.split(TOKEN_SPLIT).filter { it.isNotBlank() }
+    // 去掉分隔符的紧凑名：分隔符只是书写差异（command-code / commandcode / command_code
+    // 是同一个工具）。不分隔符时，"code" 这种短 token 会同时命中 codex / codebuddy 的
+    // 反向前缀规则，把品牌认错，所以紧凑名相也要算作精确命中。
+    val compact = n.filter { it.isLetterOrDigit() }
     var best: IconRule? = null
     var bestScore = 0
     for (rule in iconRules) {
@@ -107,13 +118,22 @@ private fun computeToolIconFor(name: String): ToolIcon {
         for (alias in rule.aliases) {
             val cjk = alias.any { it.code > 0x2E80 }
             val hit = when {
+                // exactOnly 的别名只认 token 完全相等（紧凑名也认），
+                // 不参与前缀/子串/编辑距离匹配——短别名（cmc）走模糊匹配会误伤无关工具。
+                rule.exactOnly && (tokens.any { it == alias } || compact == alias) -> 100
+                rule.exactOnly -> 0
                 tokens.any { it == alias } -> 100
+                // 紧凑名相等 = 同一个品牌的不同书写（≥3 位，与其它短别名防护一致）
+                alias.length >= 3 && compact == alias -> 100
                 // 前缀命中：≥3 位别名任意后缀（gpt53）；数字结尾的 2 位别名（o1/o3/o4）允许胶连
                 // 后缀（o4mini/o3pro），字母结尾的 2 位别名（hy/hf）不允许，避免误吃无关词
                 tokens.any {
                     it.startsWith(alias) && (alias.length >= 3 || alias.last().isDigit())
                 } -> 60
-                alias.length >= 3 && tokens.any { it.length >= 2 && alias.startsWith(it) } -> 60
+                // 反向前缀：名称里的 token 是别名的前缀（minimax-m2 → 命中 minimax）。
+                // 这里必须要求 token 足够长（≥3），否则 2 字 token 会命中大批别名：
+                // 「Mi Home」的 token "mi" 会同时命中 minimax 与 mimo，拿到错误的品牌 Logo 和配色。
+                alias.length >= 3 && tokens.any { it.length >= 3 && alias.startsWith(it) } -> 60
                 alias.length >= 3 && n.contains(alias) -> 50
                 cjk && alias.length == 2 && n.contains(alias) -> 50
                 alias.length >= 3 && tokens.any { it.length >= 3 && levenshtein(it, alias) <= 1 } -> 40

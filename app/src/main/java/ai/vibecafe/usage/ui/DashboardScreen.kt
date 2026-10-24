@@ -4,16 +4,20 @@ import ai.vibecafe.usage.BuildConfig
 import ai.vibecafe.usage.R
 import ai.vibecafe.usage.core.BackgroundStore
 import ai.vibecafe.usage.core.ThemeMode
+import ai.vibecafe.usage.stats.ModelCost
 import ai.vibecafe.usage.stats.ModelDetail
 import ai.vibecafe.usage.stats.StatsEngine
 import ai.vibecafe.usage.stats.TimeRange
 import ai.vibecafe.usage.stats.ToolDetail
+import ai.vibecafe.usage.stats.ToolDistribution
 import ai.vibecafe.usage.ui.anim.AnimatedCounter
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
 import ai.vibecafe.usage.ui.ag.AgPanelScreen
 import ai.vibecafe.usage.ui.ag.ExtraProvider
+import ai.vibecafe.usage.ui.ag.ExtraQuotaViewModel
 import ai.vibecafe.usage.ui.ag.ProviderPage
 import ai.vibecafe.usage.ui.ag.QuotaOption
+import ai.vibecafe.usage.ui.ag.QuotaOverviewSection
 import ai.vibecafe.usage.ui.ag.QuotaSwitcher
 import ai.vibecafe.usage.ui.ag.AgPanelViewModel
 import ai.vibecafe.usage.ui.charts.DonutChart
@@ -77,8 +81,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.Refresh
@@ -122,6 +128,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
@@ -143,6 +150,54 @@ private val RangeValues = listOf(
 )
 /** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
 private val MetricLabels = listOf("金额", "Tokens")
+
+/** 应用/模型列表的排序口径。 */
+private enum class ListSort(val label: String) {
+    TOKENS("Tokens"),
+    COST("消耗"),
+    NAME("名称")
+}
+
+/** 应用（工具）列表排序：按 Tokens / 消耗 / 名称。 */
+private fun toolComparator(sort: ListSort): Comparator<ToolDistribution> =
+    when (sort) {
+        ListSort.TOKENS -> compareByDescending { it.tokens }
+        ListSort.COST -> compareByDescending { it.cost }
+        ListSort.NAME -> compareBy { it.tool }
+    }
+
+/** 模型列表排序：按 Tokens / 消耗 / 名称。 */
+private fun modelComparator(sort: ListSort): Comparator<ModelCost> =
+    when (sort) {
+        ListSort.TOKENS -> compareByDescending { it.tokens }
+        ListSort.COST -> compareByDescending { it.cost }
+        ListSort.NAME -> compareBy { it.model }
+    }
+
+/** 排序用的小胶囊按钮（液态玻璃底 + 选中态品牌色）。 */
+@Composable
+private fun SortChip(
+    text: String,
+    active: Boolean,
+    backdrop: com.kyant.backdrop.Backdrop,
+    onClick: () -> Unit
+) {
+    val palette = LocalGlassPalette.current
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (active) palette.Accent.copy(alpha = 0.16f) else palette.InkHi.copy(alpha = 0.06f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text,
+            style = GlassText.ChartAxis.copy(fontSize = 11.sp),
+            color = if (active) palette.Accent else palette.InkMid,
+            maxLines = 1
+        )
+    }
+}
 
 /** 额度页供应商下拉选项：反重力 + 凭据型平台（同为稳定引用） */
 private val QuotaOptions: List<QuotaOption> =
@@ -167,6 +222,7 @@ fun DashboardScreen(
     onInstallUpdate: () -> Unit = {},
     onSelectCustomRange: (from: String, to: String) -> Unit = { _, _ -> },
     onShareCard: () -> Unit = {},
+    onSelectDevices: (Set<String>) -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     onThemeModeChange: (ThemeMode) -> Unit = {}
 ) {
@@ -188,9 +244,51 @@ fun DashboardScreen(
     var switcherExpanded by remember { mutableStateOf(false) }  // 平台下拉展开态（提升到页面级：空白处点击收起用）
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
+    var showDevicePicker by rememberSaveable { mutableStateOf(false) }  // 设备筛选对话框
+    // 应用/模型列表的排序方式：默认按 Tokens（消耗口径）
+    var listSort by rememberSaveable { mutableStateOf(ListSort.TOKENS) }
+    // 是否展开全部条目（默认只列前几个）
+    var showAllTools by rememberSaveable { mutableStateOf(false) }
+    var showAllModels by rememberSaveable { mutableStateOf(false) }
     val agPanelViewModel: AgPanelViewModel = viewModel()  // 与 AgPanelScreen 共享同一实例
+    val agPanelState by agPanelViewModel.state.collectAsStateWithLifecycle()
+    // 凭据型供应商的额度 ViewModel：与 ProviderPage 内部的是同一实例（同一 Activity 作用域 + 同默认 key），
+    // 额度页的下拉刷新/头部刷新按钮要能刷到**当前选中的供应商**，而不是永远刷反重力。
+    val extraQuotaViewModel: ExtraQuotaViewModel = viewModel()
+    val extraQuotaState by extraQuotaViewModel.state.collectAsStateWithLifecycle()
     val wide = isWideScreen()
     val pullState = rememberPullToRefreshState()
+
+    // 排序后的应用/模型列表。
+    // 必须在 composable 作用域算：LazyColumn 的内容 lambda 是 LazyListScope（不是 @Composable），
+    // 里面不能调 remember。
+    val sortedTools = remember(state.toolDistribution, listSort) {
+        state.toolDistribution.sortedWith(toolComparator(listSort))
+    }
+    val sortedModels = remember(state.modelCosts, listSort) {
+        state.modelCosts.sortedWith(modelComparator(listSort))
+    }
+    val canExpand = state.toolDistribution.size > 8 || state.modelCosts.size > 10
+
+    // 当前额度页选中的平台：0 反重力，1+ 对应 ExtraProvider
+    val currentQuotaTab = quotaTab.coerceIn(0, QuotaOptions.lastIndex)
+    val currentProvider: ExtraProvider? =
+        if (currentQuotaTab == 0) null else ExtraProvider.entries.getOrNull(currentQuotaTab - 1)
+
+    /** 额度页的刷新：按当前选中的平台刷，而不是固定刷反重力。 */
+    val refreshQuotaTarget: () -> Unit = {
+        val p = currentProvider
+        if (p != null) extraQuotaViewModel.refresh(p.id)
+        else agPanelViewModel.refresh()
+    }
+
+    /** 额度页是否正在刷新（供下拉刷新的指示器用）。 */
+    val quotaRefreshing: Boolean = if (showAgPanel) {
+        if (currentProvider != null) extraQuotaState[currentProvider.id]?.isLoading == true
+        else agPanelState.isLoading
+    } else {
+        state.isRefreshing
+    }
 
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -215,9 +313,9 @@ fun DashboardScreen(
         // 顶部下滑即可触发刷新，刷新圈顶部留出状态栏空间
         PullToRefreshBox(
             state = pullState,
-            isRefreshing = state.isRefreshing,
+            isRefreshing = quotaRefreshing,
             onRefresh = {
-                if (showAgPanel) agPanelViewModel.refresh()
+                if (showAgPanel) refreshQuotaTarget()
                 else onRefresh()
             },
             modifier = Modifier.fillMaxSize(),
@@ -228,7 +326,7 @@ fun DashboardScreen(
                         .padding(top = insets.calculateTopPadding() + 4.dp)
                 ) {
                     PullToRefreshDefaults.Indicator(
-                        isRefreshing = state.isRefreshing,
+                        isRefreshing = quotaRefreshing,
                         state = pullState
                     )
                 }
@@ -265,17 +363,35 @@ fun DashboardScreen(
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Header(
                 onRefresh = {
-                    if (showAgPanel) agPanelViewModel.refresh()
+                    if (showAgPanel) refreshQuotaTarget()
                     else onRefresh()
                 },
                 backdrop = backdrop,
                 wide = wide,
-                refreshing = state.isRefreshing
+                refreshing = quotaRefreshing,
+                deviceCount = state.availableDevices.size,
+                deviceFilterActive = state.selectedDevices.isNotEmpty(),
+                onOpenDevicePicker = { showDevicePicker = true }
             )
+
+            // ---- 设备筛选生效提示：告诉用户当前只统计了哪几台设备 ----
+            if (state.selectedDevices.isNotEmpty()) {
+                GranularityNote(
+                    "仅统计 ${state.selectedDevices.size}/${state.availableDevices.size} 台设备：" +
+                        state.selectedDevices.joinToString("、"),
+                    backdrop
+                )
+            }
 
             // ---- 降级提示：24 小时粒度不可用时友好告知（不影响主内容展示）----
             state.granularityNote?.let { note ->
                 GranularityNote(note, backdrop)
+            }
+
+            // ---- 刷新失败提示：已有数据时保留旧内容，但要把失败原因说出来 ----
+            // （此前只处理了「失败且没有任何数据」的情况，失败但有旧数据时用户毫无感知）
+            if (state.error != null && state.stats != null) {
+                ErrorNote("刷新失败：${state.error}（当前显示的是上次的数据）", backdrop)
             }
 
             // ---- 设置页 / DS+ Milky 面板 / 主内容切换 ----
@@ -300,12 +416,18 @@ fun DashboardScreen(
                 )
             } else if (showAgPanel) {
                 Column {
+                    // 已接入平台总览：一眼看到各平台额度摘要 / 近 7 天趋势 / 失败状态，
+                    // 并支持「刷新全部」一次把 13 家都拉一遍（原先要逐个点下拉才知道谁失效了）
+                    QuotaOverviewSection(
+                        backdrop = backdrop,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     // 平台切换器：液态玻璃下拉。菜单只能用页面 backdrop——
                     // scrimBackdrop 含 contentBackdrop 捕获层，而本切换器就在捕获子树内，
                     // 自己画自己会让 RenderNode prepare 无限递归（RenderThread 栈溢出闪退）
                     QuotaSwitcher(
                         options = QuotaOptions,
-                        selectedIndex = quotaTab.coerceAtMost(QuotaOptions.lastIndex),
+                        selectedIndex = currentQuotaTab,
                         onSelect = { idx ->
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             quotaTab = idx
@@ -315,9 +437,12 @@ fun DashboardScreen(
                         expanded = switcherExpanded,
                         onExpandedChange = { switcherExpanded = it }
                     ) {
-                        when (val tab = quotaTab.coerceAtMost(QuotaOptions.lastIndex)) {
+                        when (val tab = currentQuotaTab) {
                             0 -> AgPanelScreen(backdrop = backdrop)
-                            else -> ProviderPage(ExtraProvider.entries[tab - 1], backdrop = backdrop)
+                            // 供应商列表可能随版本增删，旧存档里的下标可能越界 → 取不到就回落到第一个
+                            else -> ExtraProvider.entries.getOrNull(tab - 1)
+                                ?.let { ProviderPage(it, backdrop = backdrop, viewModel = extraQuotaViewModel) }
+                                ?: StatusCard("该平台已下线，请选择其它平台", backdrop)
                         }
                     }
                 }
@@ -396,6 +521,26 @@ fun DashboardScreen(
                     TimeRange.TODAY -> state.todayHourlyUsage
                     else -> state.dailyUsage
                 }
+                // 粒度说明：24 小时档在小时粒度不可用时会降级成日粒度，
+                // 光看图分不清是「24 个点」还是「2 个点」，这里直接说清楚
+                if (series.size >= 2) {
+                    val granularity = when (state.selectedTimeRange) {
+                        TimeRange.HOURS_24 -> "按小时"
+                        TimeRange.TODAY -> "今日按小时"
+                        else -> "按天"
+                    }
+                    val pointLabel = when (state.selectedTimeRange) {
+                        TimeRange.HOURS_24 -> "${series.size} 个小时点"
+                        TimeRange.TODAY -> "${series.size} 个小时点"
+                        else -> "${series.size} 天"
+                    }
+                    Text(
+                        "$granularity · $pointLabel",
+                        style = GlassText.ChartAxis,
+                        color = palette.InkLo,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
                 if (series.size < 2) {
                     Box(
                         Modifier
@@ -435,18 +580,41 @@ fun DashboardScreen(
                     val hasModels = state.modelCosts.isNotEmpty()
                     if (wide && (hasTools || hasModels)) {
                         // 平板/宽屏：应用分布与模型消耗并排双列
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(20.dp)
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                if (hasTools) {
-                                    ToolDistributionSection(state, backdrop, onShowToolDetail)
-                                }
+                        Column(Modifier.fillMaxWidth()) {
+                            // 排序芯片宽屏也要有：否则平板上的模型列表固定按消耗排序，
+                            // 跟手机上默认按 Tokens 排对不上，同一份数据两种顺序
+                            Box(Modifier.padding(top = 9.dp)) {
+                                SortControlBar(
+                                    listSort = listSort,
+                                    onSortChange = { listSort = it },
+                                    canExpand = false,
+                                    expanded = showAllTools || showAllModels,
+                                    onToggleExpand = {
+                                        val expanding = !(showAllTools || showAllModels)
+                                        showAllTools = expanding
+                                        showAllModels = expanding
+                                    },
+                                    backdrop = backdrop
+                                )
                             }
-                            Column(Modifier.weight(1f)) {
-                                if (hasModels) {
-                                    ModelCostSection(state, backdrop, onShowModelDetail)
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(20.dp)
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    if (hasTools) {
+                                        ToolDistributionSection(state, backdrop, onShowToolDetail)
+                                    }
+                                }
+                                Column(Modifier.weight(1f)) {
+                                    if (hasModels) {
+                                        ModelCostSection(
+                                            state,
+                                            backdrop,
+                                            onShowModelDetail,
+                                            rows = sortedModels.take(10)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -470,10 +638,33 @@ fun DashboardScreen(
         // 行是各自独立的玻璃面，放进 itemsIndexed 后滚出视口就不再绘制/录制图层。
         // 间距逐项复刻改造前：行间 11dp（LazyColumn arrangement），
         // 与上方内容、以及模型标题前后的 20dp 由 9dp 补齐（11 + 9 = 20）。
+        //
+        // 条件里**不再要求 error == null**：刷新失败时 stats 仍然保留旧数据，
+        // 之前一并把 error 判空会让应用行/模型行整段消失（同页上半部分的环形图还在），
+        // 看起来像数据被清空。失败信息改由上方的错误条单独提示。
         if (!showSettings && !showAgPanel && !wide &&
-            !state.isLoading && state.error == null && state.stats != null
+            !state.isLoading && state.stats != null
         ) {
-            val toolRows = state.toolDistribution.take(8)
+            // ---- 排序 / 展开控制条：应用与模型列表共用 ----
+            // 默认只列前几个，靠排序 + 「显示全部」才能看到长尾（原先完全看不到）
+            item {
+                Box(Modifier.padding(top = 9.dp)) {
+                    SortControlBar(
+                        listSort = listSort,
+                        onSortChange = { listSort = it },
+                        canExpand = canExpand,
+                        expanded = showAllTools || showAllModels,
+                        onToggleExpand = {
+                            val expanding = !(showAllTools || showAllModels)
+                            showAllTools = expanding
+                            showAllModels = expanding
+                        },
+                        backdrop = backdrop
+                    )
+                }
+            }
+
+            val toolRows = if (showAllTools) sortedTools else sortedTools.take(8)
             if (toolRows.isNotEmpty()) {
                 itemsIndexed(toolRows, key = { _, it -> "tool-${it.tool}" }) { index, item ->
                     Box(Modifier.padding(top = if (index == 0) 9.dp else 0.dp)) {
@@ -494,7 +685,7 @@ fun DashboardScreen(
                     }
                 }
             }
-            val modelRows = state.modelCosts.take(10)
+            val modelRows = if (showAllModels) sortedModels else sortedModels.take(10)
             if (modelRows.isNotEmpty()) {
                 val maxCost = modelRows.maxOfOrNull { it.cost } ?: 0.0
                 item {
@@ -525,6 +716,42 @@ fun DashboardScreen(
                     }
                 }
             }
+
+            // ---- 最近会话：数据层已算好分摊后的会话，之前只显示「会话 N」这个数字 ----
+            val sessionRows = state.sessions.take(if (showAllTools || showAllModels) 30 else 8)
+            if (sessionRows.isNotEmpty()) {
+                item {
+                    Box(Modifier.padding(top = 9.dp)) {
+                        SectionTitle("最近会话", modifier = Modifier.fadeSlideIn(180))
+                    }
+                }
+                // key 必须带 hostname，还要带下标兜底：
+                // 同一台机器上先后开的两次会话（同 source、同 project、同一条消息时间戳）
+                // 会撞成同一个 key，LazyColumn 直接抛「Key was already used」把概览页搞崩。
+                // 下标保证唯一，内容字段保证同一次刷新内顺序稳定。
+                itemsIndexed(sessionRows, key = { index, s ->
+                    "session-$index-${s.source}-${s.project}-${s.hostname}-${s.lastMessageAt}"
+                }) { index, s ->
+                    Box(Modifier.padding(top = if (index == 0) 9.dp else 0.dp)) {
+                        // 标题用「项目 · 来源」：同名项目（同一目录开多个工具）光看项目名分不出来
+                        val title = if (s.project.isBlank() || s.project == s.source) s.source
+                        else "${s.project} · ${s.source}"
+                        GlassListRow(
+                            backdrop = backdrop,
+                            icon = toolIconFor(s.source),
+                            name = title,
+                            meta = "${s.messageCount} 条消息 · " +
+                                formatDuration(s.durationSeconds) + " · " +
+                                formatTokens(s.tokens) + " tokens",
+                            value = formatCost(s.cost),
+                            // 金额放到标题行：会话的 meta（消息数 · 时长 · tokens）本来就长，
+                            // 金额再占一列的话 tokens 会被截成「75⋯」
+                            valueInline = true,
+                            delayMs = 200 + index * 35
+                        )
+                    }
+                }
+            }
         }
         } // LazyColumn 结束
         } // PullToRefreshBox 结束
@@ -534,13 +761,25 @@ fun DashboardScreen(
         // 与底部导航栏同用 scrimBackdrop：滚动内容实时进入玻璃模糊，
         // Q 弹滑动效果与金额/Tokens 切换器观感一致
         if (!showAgPanel && !showSettings) {
-            Box(
+            Column(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .widthIn(max = 720.dp)
                     .fillMaxWidth()
                     .padding(start = 18.dp, end = 18.dp, bottom = insets.calculateBottomPadding() + 88.dp)
             ) {
+                // 自定义范围档：滑块会隐藏（selectedIndex=-1），不提示的话用户不知道
+                // 还能点下面的档位切回预设范围
+                if (state.selectedTimeRange == TimeRange.CUSTOM) {
+                    val from = state.customRange?.from?.replace("-", "/") ?: ""
+                    val to = state.customRange?.to?.replace("-", "/") ?: ""
+                    Text(
+                        "自定义范围 $from ~ $to · 点下方档位可切回",
+                        style = GlassText.ChartAxis,
+                        color = palette.Accent,
+                        modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
+                    )
+                }
                 LiquidGlassSegmentedControl(
                     items = RangeLabels,
                     // 自定义范围档不属于任何段：滑块隐藏，选中态由独立按钮承载
@@ -641,8 +880,6 @@ fun DashboardScreen(
                 val pickerHeight = (maxHeight - 100.dp).coerceIn(200.dp, 400.dp)
                 CustomRangePanel(
                     backdrop = scrimBackdrop,
-                    initialFromMillis = System.currentTimeMillis() - 6L * 86_400_000L,
-                    initialToMillis = System.currentTimeMillis(),
                     pickerHeight = pickerHeight,
                     onConfirm = { from, to ->
                         showCustomPicker = false
@@ -652,6 +889,20 @@ fun DashboardScreen(
                     onDismiss = { showCustomPicker = false }
                 )
             }
+        }
+
+        // 设备筛选对话框（与自定义范围同层：scrim + 液态玻璃面板）
+        if (showDevicePicker) {
+            DevicePickerDialog(
+                devices = state.availableDevices,
+                selected = state.selectedDevices,
+                backdrop = scrimBackdrop,
+                onDismiss = { showDevicePicker = false },
+                onConfirm = { picked ->
+                    showDevicePicker = false
+                    onSelectDevices(picked)
+                }
+            )
         }
 
         // 长按应用详情（3D Touch 风格）
@@ -681,12 +932,15 @@ private fun Header(
     onRefresh: () -> Unit,
     backdrop: com.kyant.backdrop.Backdrop,
     wide: Boolean = false,
-    refreshing: Boolean = false
+    refreshing: Boolean = false,
+    deviceCount: Int = 0,
+    deviceFilterActive: Boolean = false,
+    onOpenDevicePicker: () -> Unit = {}
 ) {
     val palette = LocalGlassPalette.current
-    val today = remember {
-        SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(Date())
-    }
+    // 表头日期每次重组现算：`remember` 缓存的话，App 常驻不杀、跨过零点后
+    // 组合不销毁，这里就一直显示昨天的日期。
+    val today = currentDateLabel()
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -744,6 +998,16 @@ private fun Header(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // 设备筛选：只有一台设备时没有意义，隐藏以免占位
+            if (deviceCount > 1) {
+                IconGlassButton(
+                    imageVector = Icons.Filled.Devices,
+                    contentDescription = "设备筛选",
+                    backdrop = backdrop,
+                    onClick = onOpenDevicePicker,
+                    active = deviceFilterActive
+                )
+            }
             IconGlassButton(
                 imageVector = Icons.Filled.Refresh,
                 contentDescription = "刷新",
@@ -762,7 +1026,8 @@ private fun IconGlassButton(
     contentDescription: String,
     backdrop: com.kyant.backdrop.Backdrop,
     onClick: () -> Unit,
-    spinning: Boolean = false
+    spinning: Boolean = false,
+    active: Boolean = false
 ) {
     val palette = LocalGlassPalette.current
     val interaction = remember { MutableInteractionSource() }
@@ -782,13 +1047,21 @@ private fun IconGlassButton(
         Modifier
             .size(40.dp)
             .glassTile(backdrop, cornerRadius = 20.dp)
+            // 选中态（设备筛选生效时）用品牌色描边 + 品牌色图标区分
+            .then(
+                if (active) {
+                    Modifier.border(1.5.dp, palette.Accent, RoundedCornerShape(20.dp))
+                } else {
+                    Modifier
+                }
+            )
             .clickable(interaction, null, enabled = !spinning, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = imageVector,
             contentDescription = contentDescription,
-            tint = palette.InkHi,
+            tint = if (active) palette.Accent else palette.InkHi,
             modifier = Modifier
                 .size(21.dp)
                 .graphicsLayer { rotationZ = rotation }
@@ -992,6 +1265,117 @@ private fun MiniStat(label: String, value: String, palette: GlassPalette) {
     }
 }
 
+/**
+ * 设备筛选对话框：多选设备，限定统计范围。
+ *
+ * 语义约定：全不选 = 不筛选（统计所有设备），而不是「统计 0 台」——
+ * 这样用户取消筛选时不需要额外操作。
+ */
+@Composable
+private fun DevicePickerDialog(
+    devices: List<String>,
+    selected: Set<String>,
+    backdrop: com.kyant.backdrop.Backdrop,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<String>) -> Unit
+) {
+    val palette = LocalGlassPalette.current
+    // 本地草稿：改动先落在这里，点「应用」才提交。
+    // key 只能是 selected：devices 进了 key 的话，后台刷新把设备列表更新一下，
+    // 草稿就被重建，用户已经勾上的复选框被静默清空。
+    // 弹窗关闭时这个组合被销毁，下次打开自然重新取当前选中项。
+    var draft by remember(selected) { mutableStateOf(selected) }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0D1520).copy(alpha = 0.45f))
+            .clickable(interactionSource = null, indication = null) { onDismiss() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier
+                .widthIn(max = 380.dp)
+                .fillMaxWidth(0.9f)
+                .clip(RoundedCornerShape(24.dp))
+                .glassCard(backdrop, cornerRadius = 24.dp)
+                .padding(horizontal = 18.dp, vertical = 16.dp)
+                // 吞掉面板内的点击，避免冒泡到遮罩把面板关掉
+                .clickable(interactionSource = null, indication = null) { }
+        ) {
+            Text("设备筛选", style = GlassText.Title, color = palette.InkHi)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "选择要统计的设备；不选则统计全部",
+                style = GlassText.Meta,
+                color = palette.InkMid
+            )
+            Spacer(Modifier.height(12.dp))
+
+            devices.forEach { device ->
+                val checked = device in draft
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { draft = if (checked) draft - device else draft + device }
+                        .padding(vertical = 9.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .size(20.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (checked) palette.Accent else Color.Transparent)
+                            .border(
+                                1.5.dp,
+                                if (checked) palette.Accent else palette.InkLo,
+                                RoundedCornerShape(6.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (checked) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        device,
+                        style = GlassText.Body,
+                        color = palette.InkHi,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = { draft = emptySet() }) {
+                    Text("清除", style = GlassText.Label, color = palette.InkMid)
+                }
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = onDismiss) {
+                    Text("取消", style = GlassText.Label, color = palette.InkMid)
+                }
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = { onConfirm(draft) }) {
+                    Text("应用", style = GlassText.Label, color = palette.Accent)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     val palette = LocalGlassPalette.current
@@ -1019,16 +1403,39 @@ private fun SectionTitle(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun CustomRangePanel(
     backdrop: com.kyant.backdrop.Backdrop,
-    initialFromMillis: Long,
-    initialToMillis: Long,
     pickerHeight: Dp,
     onConfirm: (from: String, to: String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val palette = LocalGlassPalette.current
+    // Material3 的 DateRangePicker 内部按 **UTC 天** 组织日历：
+    // 直接传 System.currentTimeMillis()，北京时间 0~8 点（UTC 还是前一天）时，
+    // 「今天」的标记会落在昨天，默认范围整体差一天。
+    // 所以：先按北京时间算出今天，再映射到该日的 UTC 零点 —— 日历上显示的
+    // 第 N 格就是北京时间的第 N 天。
+    val beijingZone = remember { java.time.ZoneId.of("Asia/Shanghai") }
+    val todayLocal = remember { java.time.LocalDate.now(beijingZone) }
+    val initialFromMillis = remember(todayLocal) {
+        todayLocal.minusDays(6).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+    }
+    val initialToMillis = remember(todayLocal) {
+        todayLocal.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+    }
+    // 未来日期没有用量，选了只会得到一个空范围 —— 直接禁掉
+    val lastSelectableMillis = remember(todayLocal) {
+        todayLocal.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+    }
     val pickerState = rememberDateRangePickerState(
         initialSelectedStartDateMillis = initialFromMillis,
-        initialSelectedEndDateMillis = initialToMillis
+        initialSelectedEndDateMillis = initialToMillis,
+        // 未来日期没有用量，选了只会得到一个空范围 —— 直接禁掉
+        selectableDates = remember(lastSelectableMillis) {
+            object : androidx.compose.material3.SelectableDates {
+                // 参数是候选日的 UTC 零点；晚于今天的一律不可选
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+                    utcTimeMillis <= lastSelectableMillis
+            }
+        }
     )
     // millis -> yyyy-MM-dd（北京时间）
     val fmt = remember {
@@ -1285,10 +1692,11 @@ private fun ToolDistributionSection(
 private fun ModelCostSection(
     state: UiState,
     backdrop: com.kyant.backdrop.Backdrop,
-    onShowModelDetail: (String) -> Unit
+    onShowModelDetail: (String) -> Unit,
+    rows: List<ModelCost> = state.modelCosts.take(10)
 ) {
     val haptic = LocalHapticFeedback.current
-    val list = state.modelCosts.take(10)
+    val list = rows
     val maxCost = list.maxOfOrNull { it.cost } ?: 0.0
 
     SectionTitle("模型消耗", modifier = Modifier.fadeSlideIn(140))
@@ -1307,6 +1715,57 @@ private fun ModelCostSection(
                     onShowModelDetail(item.model)
                 },
                 delayMs = 180 + index * 45
+            )
+        }
+    }
+}
+
+/**
+ * 排序 / 展开控制条：应用与模型列表共用。
+ *
+ * 手机单列和平板双列都要用它 —— 之前只有手机有排序芯片，
+ * 平板上的模型列表固定按消耗排序，同一份数据两种顺序，用户没法统一预期。
+ */
+@Composable
+private fun SortControlBar(
+    listSort: ListSort,
+    onSortChange: (ListSort) -> Unit,
+    canExpand: Boolean,
+    expanded: Boolean,
+    onToggleExpand: () -> Unit,
+    backdrop: com.kyant.backdrop.Backdrop
+) {
+    val palette = LocalGlassPalette.current
+    val haptic = LocalHapticFeedback.current
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "排序",
+            style = GlassText.Meta,
+            color = palette.InkMid
+        )
+        Spacer(Modifier.width(8.dp))
+        ListSort.entries.forEach { mode ->
+            SortChip(
+                text = mode.label,
+                active = listSort == mode,
+                backdrop = backdrop,
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onSortChange(mode)
+                }
+            )
+            Spacer(Modifier.width(6.dp))
+        }
+        Spacer(Modifier.weight(1f))
+        if (canExpand) {
+            Text(
+                text = if (expanded) "收起" else "显示全部",
+                style = GlassText.Meta,
+                color = palette.Accent,
+                modifier = Modifier.clickable { onToggleExpand() }
             )
         }
     }
@@ -1366,6 +1825,8 @@ private fun GlassListRow(
     active: Boolean = false,
     progress: Float? = null,
     delayMs: Int = 0,
+    /** 金额内联到标题行右侧（会话行用：让下方那行 meta 拿到整行宽度不被截断）。 */
+    valueInline: Boolean = false,
     onLongPress: (() -> Unit)? = null
 ) {
     val palette = LocalGlassPalette.current
@@ -1431,14 +1892,29 @@ private fun GlassListRow(
             Column(Modifier.weight(1f, fill = false)) {
                 // 模型 id 常带「供应商/型号」长前缀，单行会把区分度最高的尾巴吃掉；
                 // 允许折两行，只有真的放不下时卡片才会变高。
-                Text(
-                    name,
-                    // Heading 的断行策略不拆词：否则长 id 会被切成「Flash-Pre / view」
-                    style = GlassText.Body.copy(lineBreak = LineBreak.Heading),
-                    color = palette.InkHi,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (valueInline) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            name,
+                            style = GlassText.Body.copy(lineBreak = LineBreak.Heading),
+                            color = palette.InkHi,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(value, style = GlassText.Numeric, color = palette.InkHi, maxLines = 1)
+                    }
+                } else {
+                    Text(
+                        name,
+                        // Heading 的断行策略不拆词：否则长 id 会被切成「Flash-Pre / view」
+                        style = GlassText.Body.copy(lineBreak = LineBreak.Heading),
+                        color = palette.InkHi,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Spacer(Modifier.height(2.dp))
                 Text(
                     meta,
@@ -1470,8 +1946,10 @@ private fun GlassListRow(
                 }
             }
         }
-        Spacer(Modifier.width(12.dp))
-        Text(value, style = GlassText.Numeric, color = palette.InkHi)
+        if (!valueInline) {
+            Spacer(Modifier.width(12.dp))
+            Text(value, style = GlassText.Numeric, color = palette.InkHi)
+        }
     }
 }
 
@@ -1512,6 +1990,34 @@ private fun GranularityNote(text: String, backdrop: com.kyant.backdrop.Backdrop)
             text,
             style = GlassText.Meta,
             color = palette.InkMid,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** 刷新失败提示条：与降级提示同构，但用警示色。 */
+@Composable
+private fun ErrorNote(text: String, backdrop: com.kyant.backdrop.Backdrop) {
+    val palette = LocalGlassPalette.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .glassRow(backdrop, cornerRadius = 14.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Cloud,
+            contentDescription = null,
+            tint = palette.Down,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(9.dp))
+        Text(
+            text,
+            style = GlassText.Meta,
+            color = palette.Down,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
@@ -1939,4 +2445,28 @@ internal fun formatTokens(value: Long): String = when {
     value >= 1_000_000L -> String.format(Locale.US, "%.1fM", value / 1_000_000.0)
     value >= 1_000L -> String.format(Locale.US, "%.1fk", value / 1_000.0)
     else -> value.toString()
+}
+
+/**
+ * 表头日期（「10月24日 星期五」）。
+ *
+ * 每次调用现算：`remember` 缓存的话，App 常驻不杀、跨过零点后组合不销毁，
+ * 表头就一直显示昨天的日期。用系统时区 —— 表头是给用户看的「今天」，
+ * 跟用户本地日历一致（额度窗口那些内部口径才用北京时间）。
+ */
+private val headerDateFormatter = java.time.format.DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINA)
+
+internal fun currentDateLabel(): String =
+    headerDateFormatter.format(java.time.LocalDate.now(java.time.ZoneId.systemDefault()))
+
+/** 时长（秒）→ 「1时23分」/「23分」/「45秒」。 */
+internal fun formatDuration(seconds: Long): String {
+    if (seconds <= 0) return "—"
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    return when {
+        h > 0 -> "${h}时${m}分"
+        m > 0 -> "${m}分"
+        else -> "${seconds}秒"
+    }
 }

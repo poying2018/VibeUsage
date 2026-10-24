@@ -110,7 +110,16 @@ data class GlassPalette(
     val OrbBlend: BlendMode,   // 光斑混合模式：亮色 Multiply / 暗色 Plus(发光)
     val VeilEdge: Color,       // 页面边缘晕罩（亮色提亮 / 暗色压暗）
     val VeilImage: Color       // 自定义背景图上的纱罩（保证玻璃可折射且文字可读）
-)
+) {
+    /**
+     * 当前是不是深色底。
+     *
+     * 前景色（品牌色 / 额度色）在深浅底上的可读方向是相反的：
+     * 深底要提亮、浅底要压暗。调色板里没有单独的标志位，
+     * 直接看页面底色亮度最省事 —— 页面底色跟着主题走，不会和实际渲染脱节。
+     */
+    val isDark: Boolean get() = Page.luminance() < 0.5f
+}
 
 /** 亮色液态玻璃（默认，与 Web 原型逐项对齐）。 */
 val LightGlassPalette = GlassPalette(

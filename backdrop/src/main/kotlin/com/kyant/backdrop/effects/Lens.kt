@@ -20,14 +20,21 @@ fun BackdropEffectScope.lens(
 ) {
     if (!isRuntimeShaderSupported()) return
     if (refractionHeight <= 0f || refractionAmount <= 0f) return
+    // 尺寸为 0（首次测量前 / 塌陷布局）时 shader 里的 centeredCoord / halfSize 会算出 NaN，
+    // 产出未定义像素——此时直接跳过效果
+    if (size.width <= 0f || size.height <= 0f) return
 
     if (padding > 0f) {
         padding = (padding - refractionHeight).fastCoerceAtLeast(0f)
     }
 
     val cornerRadii = cornerRadii
+    // 本地补丁（非上游行为）：形状不是圆角类时，原实现会在绘制路径上抛
+    // UnsupportedOperationException 直接崩掉。折射只是装饰效果，拿不到圆角半径时
+    // 退化为「不折射」比崩溃好。
+    if (cornerRadii == null) return
     val effect =
-        if (cornerRadii != null) {
+        run {
             val shader =
                 if (!chromaticAberration) {
                     obtainRuntimeShader(
@@ -52,8 +59,6 @@ fun BackdropEffectScope.lens(
                 }
             }
             RuntimeShaderEffect(shader, "content")
-        } else {
-            throwUnsupportedSDFException()
         }
     effect(effect)
 }
@@ -101,9 +106,3 @@ private val BackdropEffectScope.cornerRadii: FloatArray?
 
         else -> null
     }
-
-private fun throwUnsupportedSDFException(): Nothing {
-    throw UnsupportedOperationException(
-        "Only AbsoluteRoundedCornerShape or CornerBasedShape is supported in lens effects."
-    )
-}

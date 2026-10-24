@@ -12,6 +12,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import ai.vibecafe.usage.ui.theme.cardBackground
+import ai.vibecafe.usage.ui.theme.ensureContrast
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -45,7 +48,9 @@ internal fun quotaGaugeColor(percentRemaining: Int): Color {
  */
 @Composable
 internal fun QuotaBarFill(percent: Int, height: Dp, trackColor: Color) {
-    val color = quotaGaugeColor(percent)
+    val palette = LocalGlassPalette.current
+    // 填充色按对比度调一次：浅色主题下原本的高饱和亮绿压在浅轨道上几乎看不出边界
+    val color = quotaGaugeColor(percent).ensureContrast(palette.cardBackground())
     val pct = percent.coerceIn(0, 100)
     val shape = RoundedCornerShape(50)
 

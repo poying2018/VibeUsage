@@ -28,6 +28,24 @@ object ShareCard {
     private const val W = 1080
     private const val H = 1350
 
+    /**
+     * 旧分享图保留多久（毫秒）再删。
+     *
+     * 系统分享面板弹出来后，目标 App 什么时候把图读完是不确定的；
+     * 留 30 分钟足够覆盖「打开面板 → 选目标 → 发送」的整个过程，
+     * 同时又不会让 cache 里堆太多图。
+     */
+    private const val SHARE_KEEP_MS = 30 * 60 * 1000L
+
+    /**
+     * 分享图文件名的序号后缀。
+     *
+     * 只用毫秒时间戳不够：连点两次「分享」可能落在同一毫秒，
+     * 两个线程会算出同一个文件名，后写的把先写的覆盖掉，
+     * 先发出去的那张图就变了内容。
+     */
+    private val shareSeq = java.util.concurrent.atomic.AtomicLong(0)
+
     // 暗色液态玻璃令牌（与 GlassTokens.DarkGlassPalette 一致）
     private val Page = 0xFF0B1019.toInt()
     private val InkHi = 0xFFE8EDF6.toInt()
@@ -147,9 +165,20 @@ object ShareCard {
         // 模型列字号小一档：模型 id 比应用名长得多（`MiniMax-M3.1-Flash-Preview`），
         // 同字号下尾巴被砍掉一大截看不出是哪个变体。仍按尾部截断——
         // 中间截断会切在词中间（`MiniMax-M…sh-Preview`），比原来还碎。
-        drawTopList(c, scale, "Top 应用", payload.topTools, 72f * scale, payload.topModels.isEmpty(), body, black)
+        //
+        // 整栏布局：一列为空时另一列要占满整行，此时**起点也必须回到左边距**，
+        // 否则 colW 变宽而 x 不变，右边界会冲出画布（内容被裁掉）。
+        val toolsEmpty = payload.topTools.isEmpty()
+        val modelsEmpty = payload.topModels.isEmpty()
         drawTopList(
-            c, scale, "Top 模型", payload.topModels, 560f * scale, payload.topTools.isEmpty(), body, black,
+            c, scale, "Top 应用", payload.topTools,
+            x = if (toolsEmpty) 560f * scale else 72f * scale,
+            fullWidth = modelsEmpty, body, black
+        )
+        drawTopList(
+            c, scale, "Top 模型", payload.topModels,
+            x = if (toolsEmpty) 72f * scale else 560f * scale,
+            fullWidth = toolsEmpty, body, black,
             nameSize = 25f
         )
 
@@ -167,22 +196,95 @@ object ShareCard {
 
         // ---- 落盘并返回 ----
         val dir = File(context.cacheDir, "share").apply { mkdirs() }
-        val out = File(dir, "vibeusage-share-${System.currentTimeMillis()}.png")
-        out.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bmp.recycle()
+        // 只清理**过期**的旧分享图，不能每次生成就把上一次的删掉：
+        // 系统分享面板打开后目标 App 可能还没读完那张图，
+        // 删了对方收到的就是一张裂图；连点两次「保存到相册」也会把上一次的文件删没。
+        val cutoff = System.currentTimeMillis() - SHARE_KEEP_MS
+        runCatching {
+            dir.listFiles { f -> f.isFile && f.name.startsWith("vibeusage-share-") }
+                ?.forEach { f -> if (f.lastModified() < cutoff) runCatching { f.delete() } }
+        }
+        val out = File(dir, "vibeusage-share-${System.currentTimeMillis()}-${shareSeq.incrementAndGet()}.png")
+        try {
+            out.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        } finally {
+            // 压缩失败（OOM 等）时也要回收，否则 1080x1350 的位图会一直占着内存
+            bmp.recycle()
+        }
         return out
     }
 
     /** 系统分享（PNG 经 FileProvider 暴露）。 */
     fun share(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val intent = Intent(Intent.ACTION_SEND).apply {
+        val send = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        context.startActivity(Intent.createChooser(intent, "分享用量卡片"))
+        // 从 Application 上下文发起时，chooser 必须带 NEW_TASK：
+        // 否则系统直接抛 "Calling startActivity() from outside of an Activity context"，
+        // 分享卡片永远弹不出来（内层 send intent 加不加这个 flag 都没用，
+        // 真正被 startActivity 的是 chooser）。
+        val chooser = Intent.createChooser(send, "分享用量卡片")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(chooser)
     }
+
+    /**
+     * 保存结果：给用户看的绝对路径 + 是否进了系统相册。
+     *
+     * @param path 用户能自己找到的文件位置（相册里能翻到时给「图库/相册」文案更直观）
+     * @param inGallery true = 已写入 MediaStore，系统相册可见
+     */
+    data class SavedCard(val path: String, val inGallery: Boolean)
+
+    /**
+     * 把生成的卡片存进系统相册。
+     *
+     * Android 10（API 29）起用 MediaStore.Images 插入，**不需要任何权限**，
+     * 图片会真的出现在系统相册里。API 26~28 没有 RELATIVE_PATH，
+     * 写公共 Pictures 要 WRITE_EXTERNAL_STORAGE 运行时权限 —— 那得改
+     * AndroidManifest 并在 UI 里引导授权，不划算；这几台机器退到应用专属
+     * 外部目录（同样无需权限），只是相册里看不到，所以把 inGallery 置 false，
+     * 让 UI 如实说明「已保存到应用目录，系统相册不可见」。
+     */
+    fun saveToGallery(context: Context, file: File): SavedCard {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            saveViaMediaStore(context, file)?.let { return SavedCard(it, true) }
+            // MediaStore 失败（存储满 / 服务端异常）不该让功能整个失效：
+            // 退到应用专属目录，至少图还在。
+        }
+        val dir = context.getExternalFilesDir("Pictures") ?: File(context.filesDir, "Pictures")
+        if (!dir.exists()) dir.mkdirs()
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val target = File(dir, "vibeusage-card-$stamp.png")
+        file.copyTo(target, overwrite = true)
+        return SavedCard(target.absolutePath, false)
+    }
+
+    /** 写入 MediaStore 的 Pictures/VibeUsage 相册，返回可见路径。失败返回 null。 */
+    private fun saveViaMediaStore(context: Context, file: File): String? = runCatching {
+        val resolver = context.contentResolver
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "vibeusage-card-$stamp.png")
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/VibeUsage")
+            put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(
+            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
+        ) ?: return null
+        resolver.openOutputStream(uri)?.use { out ->
+            file.inputStream().use { input -> input.copyTo(out) }
+        } ?: return null
+        // IS_PENDING=1 时条目对外不可见，写完必须清掉，否则相册里是个空壳
+        values.clear()
+        values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        uri.toString()
+    }.getOrNull()
 
     /** 单栏 Top 榜单：标题 + 最多 3 行（名称 / 占比 / 渐变条）。空列表不画。 */
     private fun drawTopList(
@@ -232,6 +334,8 @@ object ShareCard {
 
     /** 与 App 内 TrendChip 一致：升 ↗ / 降 ↘，trend 为小数比例。 */
     internal fun trendText(trend: Float): String = when {
+        // NaN/Infinity 会格式化成 "+Infinity%" 这类溢出文案，统一按持平处理
+        trend.isNaN() || trend.isInfinite() -> "→ 持平"
         trend >= 0.005f -> String.format(Locale.US, "↗ %+.0f%%", trend * 100f)
         trend <= -0.005f -> String.format(Locale.US, "↘ %+.0f%%", trend * 100f)
         else -> "→ 持平"

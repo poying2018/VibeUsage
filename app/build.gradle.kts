@@ -14,14 +14,15 @@ val keystoreProps = Properties().apply {
     if (f.exists()) FileInputStream(f).use { load(it) }
 }
 
-// 强制签名：发布版本必须签名，缺少签名配置直接构建失败，绝不产出未签名 APK
-if (keystoreProps.isEmpty()) {
-    throw GradleException(
-        "缺少签名配置 keystore.properties！\n" +
-        "发布版本必须签名。请确认 vibecafe-release.jks 与 keystore.properties 存在，\n" +
-        "参考 keystore.properties.example 配置后再执行 assembleRelease。"
-    )
-}
+// 强制签名：发布版本必须签名。
+// 注意：**不能**在配置期无条件抛异常——那会让 fresh clone / 只跑单测 / IDE sync 全部失败，
+// 而签名只跟 release 构建有关。改成：配置期只解析（缺失时留空），
+// 在 assembleRelease 真正执行前再校验并失败。
+val hasSigningConfig = keystoreProps.isNotEmpty() &&
+    keystoreProps.getProperty("storeFile") != null &&
+    keystoreProps.getProperty("storePassword") != null &&
+    keystoreProps.getProperty("keyAlias") != null &&
+    keystoreProps.getProperty("keyPassword") != null
 
 android {
     namespace = "ai.vibecafe.usage"
@@ -34,17 +35,19 @@ android {
         // 低版本会自动降级为无折射/无模糊的半透明玻璃，不会崩溃。
         minSdk = 26
         targetSdk = 34
-        versionCode = 73
-        versionName = "2.21.6"
+        versionCode = 74
+        versionName = "2.22.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file(keystoreProps["storeFile"] as String)
-            storePassword = keystoreProps["storePassword"] as String
-            keyAlias = keystoreProps["keyAlias"] as String
-            keyPassword = keystoreProps["keyPassword"] as String
+        if (hasSigningConfig) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
         }
     }
 
@@ -54,7 +57,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
+            if (hasSigningConfig) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     testOptions {
@@ -83,6 +88,21 @@ kotlin {
 // 项目路径含非 ASCII（F:\项目）时测试 worker 类加载会乱码，强制 UTF-8
 tasks.withType<Test>().configureEach {
     jvmArgs("-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8")
+}
+
+// 发布构建必须在**执行前**校验签名配置：
+// 缺少 keystore.properties 就直接失败，绝不产出未签名 APK。
+// 放在这里而不是配置期，是为了让单测 / IDE sync / assembleDebug 在没有密钥时也能跑。
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    doFirst {
+        if (!hasSigningConfig) {
+            throw GradleException(
+                "缺少签名配置 keystore.properties！\n" +
+                "发布版本必须签名。请确认 vibecafe-release.jks 与 keystore.properties 存在，\n" +
+                "参考 keystore.properties.example 配置后再执行 assembleRelease。"
+            )
+        }
+    }
 }
 
 dependencies {

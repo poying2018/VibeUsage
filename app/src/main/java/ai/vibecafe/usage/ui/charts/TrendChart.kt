@@ -53,12 +53,16 @@ enum class TrendMetric { COST, TOKENS }
 private val CanvasSidePad = 10.dp
 
 private fun niceAxisMax(v: Double): Double {
+    // NaN/Infinity 会让 log10 产出 NaN，ladder.first { m <= it } 一个都不匹配 → NoSuchElementException 崩溃
+    if (v.isNaN() || v.isInfinite()) return 1.0
     if (v <= 0.0) return 1.0
     val base = Math.pow(10.0, Math.floor(Math.log10(v)))
     val m = v / base
     val ladder = doubleArrayOf(1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0)
-    val nice = ladder.first { m <= it }
-    return nice * base
+    // firstOrNull 兜底：浮点误差下 m 可能略大于 10.0（如 9.9999999e0 缩放后）
+    val nice = ladder.firstOrNull { m <= it } ?: ladder.last()
+    val result = nice * base
+    return if (result.isNaN() || result.isInfinite()) 1.0 else result
 }
 
 /** 轴标签：与数据气泡同源格式化，但去掉无意义的 ".0"（800.0M -> 800M / $4.00 -> $4）。 */
@@ -146,7 +150,9 @@ fun TrendChart(
     val peakIndex = remember(animValues) { animValues.indices.maxByOrNull { animValues[it] } ?: -1 }
 
     // ---- 组合期缓存全部静态文字布局（draw 阶段零测量）----
-    val texts = remember(data, metric, p, axisMax, avgV, peakIndex) {
+    // key 必须包含 secondary：均值线/峰值标签用 secondary 上色，
+    // 少了它，secondary 变化而数据不变时标签会保留旧颜色
+    val texts = remember(data, metric, p, secondary, axisMax, avgV, peakIndex) {
         if (data.isEmpty()) null
         else run {
             val n = data.size
@@ -198,6 +204,8 @@ fun TrendChart(
                 // 仅响应横向拖动，不与外层纵向滚动手势冲突
                 detectHorizontalDragGestures { change, _ ->
                     change.consume()
+                    // 空数据时 data.size-1 = -1，coerceIn(0, -1) 会抛异常，必须先挡掉
+                    if (data.isEmpty()) return@detectHorizontalDragGestures
                     val pad = CanvasSidePad.toPx()
                     val plotW = (size.width - pad * 2).coerceAtLeast(1f)
                     selected = (((change.position.x - pad) / plotW) * (data.size - 1))

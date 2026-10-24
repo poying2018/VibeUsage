@@ -108,6 +108,28 @@ class ToolIconsTest {
         assertEquals("Windsurf", label("Windsurf"))
     }
 
+    // ── CommandCode：分隔符写法必须命中同一品牌 ──
+
+    @Test
+    fun commandCodeFamily() {
+        assertEquals("CommandCode", label("commandcode"))
+        // 分隔符只是书写差异：不分隔符时 "code" 会同时命中 codex / codebuddy 的
+        // 反向前缀规则，把品牌认错
+        assertEquals("CommandCode", label("command-code"))
+        assertEquals("CommandCode", label("command_code"))
+        assertEquals("CommandCode", label("Command Code"))
+        assertEquals("CommandCode", label("cmc"))
+    }
+
+    @Test
+    fun `short alias cmc only matches exactly`() {
+        // "cmc" 是 3 字母短别名：exactOnly 让它只认 token 完全相等，
+        // 不参与前缀/子串/编辑距离匹配 —— 否则 "cmcx"、"cmcode" 这类无关名会被误配。
+        assertNotEquals("CommandCode", label("cmcx"))
+        assertNotEquals("CommandCode", label("cmcode"))
+        assertNotEquals("CommandCode", label("mycmc"))
+    }
+
     // ── 原有品牌回归 ──
 
     @Test

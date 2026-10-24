@@ -31,6 +31,7 @@ import com.kyant.backdrop.RuntimeShader
 import com.kyant.backdrop.asComposeShader
 import com.kyant.backdrop.isRuntimeShaderSupported
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -159,6 +160,9 @@ internal class DampedDragAnimation(
 
     private val velocityTracker = VelocityTracker()
 
+    /** 在途的 release 作业：新 press/release 时取消旧的，避免两者互相覆盖按压态。 */
+    private var releaseJob: Job? = null
+
     val value: Float get() = valueAnimation.value
     val progress: Float get() = (value - valueRange.start) / (valueRange.endInclusive - valueRange.start)
     val targetValue: Float get() = valueAnimation.targetValue
@@ -188,6 +192,9 @@ internal class DampedDragAnimation(
 
     fun press() {
         velocityTracker.resetTracking()
+        // 取消上一次未完成的 release：否则旧的 release 作业苏醒后会把刚按下的
+        // 按压态（pressProgress/scale）拉回 0，出现「按下后高光立刻熄灭」。
+        releaseJob?.cancel()
         animationScope.launch {
             launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
             launch { scaleXAnimation.animateTo(pressedScale, scaleXAnimationSpec) }
@@ -196,7 +203,8 @@ internal class DampedDragAnimation(
     }
 
     fun release() {
-        animationScope.launch {
+        releaseJob?.cancel()
+        releaseJob = animationScope.launch {
             awaitFrame()
             if (value != targetValue) {
                 val threshold = (valueRange.endInclusive - valueRange.start) * 0.025f

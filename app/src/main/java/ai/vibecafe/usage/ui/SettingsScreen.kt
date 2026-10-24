@@ -1,8 +1,9 @@
 package ai.vibecafe.usage.ui
-
+import ai.vibecafe.usage.budget.BudgetNotify
 import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.core.ThemeMode
 import ai.vibecafe.usage.data.CredentialBackup
+import ai.vibecafe.usage.share.ShareCard
 import ai.vibecafe.usage.ui.ag.ExtraQuotaViewModel
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
 import ai.vibecafe.usage.ui.glass.LiquidButton
@@ -25,10 +26,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -37,15 +41,23 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.SaveAlt
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,14 +67,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import android.widget.Toast
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import java.util.Locale
 
 /**
  * 独立设置页（底部导航第 3 个 Tab）。
@@ -88,7 +103,66 @@ fun SettingsScreen(
     appVersion: String
 ) {
     val p = LocalGlassPalette.current
-
+    // 设置页要读写 prefs / 落文件，用自己的 Context 引用（与下面卡片内的局部 context 区分开）
+    val appContext = LocalContext.current
+    // 与 DashboardScreen 同一个 MainViewModel 实例（同一 Activity 作用域 + 同默认 key），
+    // 用它的当前统计数据来生成「保存到相册」用的分享卡
+    val vm: MainViewModel = viewModel()
+    // 预算提醒阈值：与 BudgetNotify 共用同一份 prefs，改完立即生效
+    var threshold by remember { mutableStateOf(BudgetNotify.threshold(appContext)) }
+    var thresholdCustom by remember { mutableStateOf(BudgetNotify.hasCustomThreshold(appContext)) }
+    var showThresholdDialog by remember { mutableStateOf(false) }
+    // —— 凭据备份：状态挂在页面级，口令弹窗在 Column 之外也要用 ——
+    val extraVm: ExtraQuotaViewModel = viewModel()
+    // 口令只在流程进行中暂存：导出时用户输入一次，导入时输入一次。
+    // 备份文件本身不含口令，导出成功后口令就只留在用户脑子里了。
+    var exportPassphrase by remember { mutableStateOf<String?>(null) }
+    var pendingImportText by remember { mutableStateOf<String?>(null) }
+    var passphraseMode by remember { mutableStateOf<PassphraseMode?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) runCatching {
+            val text = CredentialBackup.export(appContext, exportPassphrase)
+                ?: throw IllegalStateException("还没有已接入的凭据")
+            appContext.contentResolver.openOutputStream(uri)?.use {
+                it.write(text.toByteArray())
+            } ?: throw IllegalStateException("写不进所选位置")
+        }.onSuccess {
+            Toast.makeText(
+                appContext,
+                "已导出加密备份（口令请自行保管，遗失将无法恢复）",
+                Toast.LENGTH_LONG
+            ).show()
+        }.onFailure {
+            Toast.makeText(appContext, "导出失败：${it.message}", Toast.LENGTH_SHORT).show()
+        }
+        exportPassphrase = null
+    }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) runCatching {
+            val text = appContext.contentResolver.openInputStream(uri)?.use {
+                it.readBytes().decodeToString()
+            } ?: throw IllegalStateException("读不到所选文件")
+            // 口令加密的备份要问口令；老备份直接还原
+            if (CredentialBackup.needsPassphrase(text)) {
+                pendingImportText = text
+                passphraseMode = PassphraseMode.IMPORT
+                return@runCatching 0
+            }
+            val restored = CredentialBackup.import(appContext, text)
+            extraVm.onCredsImported()
+            restored
+        }.onSuccess {
+            if (it > 0) {
+                Toast.makeText(appContext, "已恢复 $it 项凭据，正在刷新额度", Toast.LENGTH_LONG).show()
+            }
+        }.onFailure {
+            Toast.makeText(appContext, "导入失败：${it.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
     Column(
         Modifier
             .fillMaxWidth()
@@ -111,7 +185,6 @@ fun SettingsScreen(
                 color = p.InkMid
             )
         }
-
         // —— 外观 ——
         SectionLabel("外观")
         // 卡片把纯玻璃表面导出为 backdrop；卡内玻璃芯片取样「页面 + 卡片表面」组合层，
@@ -150,7 +223,6 @@ fun SettingsScreen(
                 }
             }
         }
-
         // —— 背景 ——
         SectionLabel("背景")
         Column(
@@ -177,7 +249,6 @@ fun SettingsScreen(
                 )
             }
         }
-
         // —— 液态玻璃（catalog 完整配方，全局实时生效）——
         SectionLabel("液态玻璃")
         // 滑杆/滑块是卡内嵌套玻璃：取样「页面 + 卡片表面」组合层（同外观卡）
@@ -208,7 +279,7 @@ fun SettingsScreen(
             GlassStyleSliderRow(
                 backdrop = sliderBackdrop,
                 label = "亮度",
-                valueText = String.format("%.2f", style.brightness),
+                valueText = String.format(Locale.US, "%.2f", style.brightness),
                 value = style.brightness,
                 valueRange = -0.5f..0.5f,
                 onChange = { GlassStyleStore.set(context, style.copy(brightness = it)) }
@@ -216,7 +287,7 @@ fun SettingsScreen(
             GlassStyleSliderRow(
                 backdrop = sliderBackdrop,
                 label = "对比度",
-                valueText = String.format("%.2f", style.contrast),
+                valueText = String.format(Locale.US, "%.2f", style.contrast),
                 value = style.contrast,
                 valueRange = 0.5f..1.5f,
                 onChange = { GlassStyleStore.set(context, style.copy(contrast = it)) }
@@ -224,7 +295,7 @@ fun SettingsScreen(
             GlassStyleSliderRow(
                 backdrop = sliderBackdrop,
                 label = "饱和度",
-                valueText = String.format("%.2f", style.saturation),
+                valueText = String.format(Locale.US, "%.2f", style.saturation),
                 value = style.saturation,
                 valueRange = 0f..2f,
                 onChange = { GlassStyleStore.set(context, style.copy(saturation = it)) }
@@ -261,7 +332,6 @@ fun SettingsScreen(
                 onClick = { GlassStyleStore.set(context, GlassStyleStore.Default) }
             )
         }
-
         // —— 通用 ——
         SectionLabel("通用")
         Column(
@@ -289,23 +359,18 @@ fun SettingsScreen(
                         )
                     }
                 }
-
                 when (update.status) {
                     UpdateStatus.IDLE -> {}
-
                     UpdateStatus.CHECKING -> UpdateHint("正在检查更新…", p.InkMid)
-
                     UpdateStatus.UP_TO_DATE -> {
                         UpdateHint(update.message ?: "已是最新版本", p.AccentInk)
                     }
-
                     UpdateStatus.AVAILABLE -> {
                         UpdateHint(
                             "发现新版本 ${update.version?.removePrefix("v")}",
                             p.InkHi
                         )
                     }
-
                     UpdateStatus.DOWNLOADING -> {
                         UpdateHint("正在下载… ${(update.progress * 100).toInt()}%", p.InkMid)
                         LinearProgressIndicator(
@@ -318,14 +383,12 @@ fun SettingsScreen(
                             trackColor = p.InkLo.copy(alpha = 0.5f)
                         )
                     }
-
                     UpdateStatus.DOWNLOADED -> {
                         UpdateHint(
                             "${update.version?.removePrefix("v")} 已下载",
                             p.AccentInk
                         )
                     }
-
                     // 发现新版本但该版本尚未发布带 APK 的 Release（只打了 tag）
                     UpdateStatus.NO_APK -> {
                         Text(
@@ -336,12 +399,10 @@ fun SettingsScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-
                     UpdateStatus.FAILED -> {
                         update.message?.let { UpdateHint(it, p.Down) }
                     }
                 }
-
                 when (update.status) {
                     UpdateStatus.IDLE,
                     UpdateStatus.UP_TO_DATE,
@@ -356,19 +417,14 @@ fun SettingsScreen(
                             },
                             onClick = onCheckUpdate
                         )
-
                     UpdateStatus.AVAILABLE ->
                         UpdateButton(backdrop = backdrop, label = "下载更新", onClick = onDownloadUpdate, emphasis = true)
-
                     UpdateStatus.DOWNLOADED ->
                         UpdateButton(backdrop = backdrop, label = "安装更新", onClick = onInstallUpdate, emphasis = true)
-
                     else -> {}
                 }
             }
-
             CardDivider()
-
             SettingRow(
                 backdrop = backdrop,
                 icon = Icons.Filled.Share,
@@ -376,43 +432,31 @@ fun SettingsScreen(
                 subtitle = "生成并分享当前用量卡片",
                 onClick = onShareCard
             )
+            CardDivider()
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.SaveAlt,
+                title = "保存用量卡到相册",
+                subtitle = "把用量卡图片存进系统相册",
+                // 交给 ViewModel 执行：组合作用域的协程会在离开本页时被取消，
+                // 那样用户点了保存立刻切 Tab，就什么提示都收不到
+                onClick = { vm.saveShareCardToGallery() }
+            )
+            CardDivider()
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.Savings,
+                title = "预算提醒阈值",
+                subtitle = if (thresholdCustom) {
+                    "超 ${formatThreshold(threshold)} 提醒"
+                } else {
+                    "未设置（默认 ${formatThreshold(BudgetNotify.DEFAULT_BUDGET_USD)}）"
+                },
+                onClick = { showThresholdDialog = true }
+            )
         }
-
         // —— 凭据备份 ——
         SectionLabel("凭据备份")
-        val backupContext = LocalContext.current
-        val extraVm: ExtraQuotaViewModel = viewModel()
-        val exportLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument("application/json")
-        ) { uri ->
-            if (uri != null) runCatching {
-                val text = CredentialBackup.export(backupContext)
-                    ?: throw IllegalStateException("还没有已接入的凭据")
-                backupContext.contentResolver.openOutputStream(uri)?.use {
-                    it.write(text.toByteArray())
-                } ?: throw IllegalStateException("写不进所选位置")
-            }.onSuccess {
-                Toast.makeText(backupContext, "已导出加密备份（凭据已 AES-256-GCM 加密，仅 VibeUsage 可解密）", Toast.LENGTH_LONG).show()
-            }.onFailure {
-                Toast.makeText(backupContext, "导出失败：${it.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-        val importLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.OpenDocument()
-        ) { uri ->
-            if (uri != null) runCatching {
-                val text = backupContext.contentResolver.openInputStream(uri)?.use {
-                    it.readBytes().decodeToString()
-                } ?: throw IllegalStateException("读不到所选文件")
-                val restored = CredentialBackup.import(backupContext, text)
-                extraVm.onCredsImported()
-                restored
-            }.onSuccess {
-                Toast.makeText(backupContext, "已恢复 $it 项凭据，正在刷新额度", Toast.LENGTH_LONG).show()
-            }.onFailure {
-                Toast.makeText(backupContext, "导入失败：${it.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
         Column(
             Modifier
                 .fillMaxWidth()
@@ -423,12 +467,10 @@ fun SettingsScreen(
                 backdrop = backdrop,
                 icon = Icons.Filled.FileDownload,
                 title = "导出接入凭据",
-                subtitle = "扩展供应商 + 反重力凭据加密存为 JSON，仅 VibeUsage 可解密",
+                subtitle = "扩展供应商 + 反重力凭据用口令加密存为 JSON",
                 showChevron = false,
                 onClick = {
-                    val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
-                        .format(java.util.Date())
-                    exportLauncher.launch("vibeusage-backup-$stamp.json")
+                    passphraseMode = PassphraseMode.EXPORT
                 }
             )
             CardDivider()
@@ -441,9 +483,7 @@ fun SettingsScreen(
                 onClick = {
                     importLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
                 }
-            )
-        }
-
+            )        }
         // —— 账号 ——
         SectionLabel("账号")
         Column(
@@ -462,7 +502,6 @@ fun SettingsScreen(
                 onClick = onLogout
             )
         }
-
         // —— 页脚 ——
         Text(
             "VibeUsage $appVersion · API 用量统计",
@@ -476,6 +515,313 @@ fun SettingsScreen(
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
+    // 预算提醒阈值编辑框（独立窗口，盖在设置页之上）
+    if (showThresholdDialog) {
+        ThresholdDialog(
+            initial = threshold,
+            onDismiss = { showThresholdDialog = false },
+            onSave = { value ->
+                BudgetNotify.setThreshold(appContext, value)
+                threshold = value
+                thresholdCustom = true
+                showThresholdDialog = false
+            },
+            onResetDefault = {
+                BudgetNotify.resetThreshold(appContext)
+                threshold = BudgetNotify.DEFAULT_BUDGET_USD
+                thresholdCustom = false
+                showThresholdDialog = false
+            }
+        )
+    }
+    // 备份口令弹窗（导出时设置、导入时输入）
+    passphraseMode?.let { mode ->
+        PassphraseDialog(
+            mode = mode,
+            onDismiss = {
+                passphraseMode = null
+                pendingImportText = null
+            },
+            onConfirm = { pass ->
+                passphraseMode = null
+                when (mode) {
+                    PassphraseMode.EXPORT -> {
+                        exportPassphrase = pass
+                        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
+                            .format(java.util.Date())
+                        exportLauncher.launch("vibeusage-backup-$stamp.json")
+                    }
+                    PassphraseMode.IMPORT -> {
+                        val text = pendingImportText
+                        pendingImportText = null
+                        if (text != null) {
+                            runCatching {
+                                val restored = CredentialBackup.import(appContext, text, pass)
+                                extraVm.onCredsImported()
+                                restored
+                            }.onSuccess {
+                                Toast.makeText(
+                                    appContext,
+                                    "已恢复 $it 项凭据，正在刷新额度",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }.onFailure {
+                                Toast.makeText(
+                                    appContext,
+                                    "导入失败：${it.message}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    }
+}
+
+/** 备份口令弹窗的两种用途。 */
+private enum class PassphraseMode { EXPORT, IMPORT }
+
+/**
+ * 预算提醒阈值输入弹窗。
+ *
+ * 沿用设置页的玻璃卡片语言（圆角 + 半透明表面 + 细描边），底部「取消 / 恢复默认 / 确定」。
+ * 金额两位小数；非法输入（<= 0 或 > 1,000,000）只提示、不保存。
+ */
+@Composable
+private fun ThresholdDialog(
+    initial: Double,
+    onDismiss: () -> Unit,
+    onSave: (Double) -> Unit,
+    onResetDefault: () -> Unit
+) {
+    val p = LocalGlassPalette.current
+    var text by remember { mutableStateOf(String.format(Locale.US, "%.2f", initial)) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val errText = error
+    Dialog(
+        onDismissRequest = onDismiss
+    ) {
+        Column(
+            Modifier
+                // 键盘弹出时把卡片顶上去（SDK 31+ 的 Dialog 窗口不会为 IME 自动 resize）
+                .imePadding()
+                .widthIn(max = 420.dp)
+                .fillMaxWidth(0.9f)
+                .clip(RoundedCornerShape(26.dp))
+                .background(p.Page.copy(alpha = 0.98f))
+                .border(1.dp, p.Rim, RoundedCornerShape(26.dp))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("预算提醒阈值", style = GlassText.Title, color = p.InkHi)
+            Text(
+                "月度消耗预测超过该金额时发提醒",
+                style = GlassText.Meta,
+                color = p.InkMid
+            )
+            OutlinedTextField(
+                value = text,
+                onValueChange = {
+                    text = filterAmountInput(it)
+                    error = null
+                },
+                label = { Text("金额（USD）") },
+                prefix = { Text("$", color = p.InkMid) },
+                singleLine = true,
+                isError = errText != null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = p.Accent,
+                    unfocusedBorderColor = p.Rim,
+                    cursorColor = p.Accent,
+                    focusedLabelColor = p.Accent,
+                    unfocusedLabelColor = p.InkMid,
+                    focusedTextColor = p.InkHi,
+                    unfocusedTextColor = p.InkHi
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (errText != null) {
+                Text(errText, style = GlassText.Meta, color = p.Down)
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onResetDefault) {
+                    Text(
+                        "恢复默认 ${formatThreshold(BudgetNotify.DEFAULT_BUDGET_USD)}",
+                        style = GlassText.Label,
+                        color = p.InkMid
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDismiss) {
+                    Text("取消", style = GlassText.Label, color = p.InkMid)
+                }
+                TextButton(onClick = {
+                    val value = text.trim().toDoubleOrNull()
+                    when {
+                        value == null -> error = "请输入有效金额"
+                        value <= 0.0 -> error = "阈值必须大于 0"
+                        value > BudgetNotify.MAX_BUDGET_USD -> error = "阈值不能超过 1,000,000"
+                        else -> onSave(value)
+                    }
+                }) {
+                    Text("确定", style = GlassText.Label, color = p.AccentInk)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 备份口令弹窗。
+ *
+ * 导出时要设口令（并再输一遍确认 —— 口令打错一个字符，这份备份就永远解不开了），
+ * 导入时只要输一次。
+ */
+@Composable
+private fun PassphraseDialog(
+    mode: PassphraseMode,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val p = LocalGlassPalette.current
+    var text by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val errText = error
+    val exporting = mode == PassphraseMode.EXPORT
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .imePadding()
+                .widthIn(max = 420.dp)
+                .fillMaxWidth(0.9f)
+                .clip(RoundedCornerShape(26.dp))
+                .background(p.Page.copy(alpha = 0.98f))
+                .border(1.dp, p.Rim, RoundedCornerShape(26.dp))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                if (exporting) "设置备份口令" else "输入备份口令",
+                style = GlassText.Title,
+                color = p.InkHi
+            )
+            Text(
+                if (exporting) {
+                    "口令用于加密备份文件，不写入文件、也不会上传。遗失后备份无法恢复，请自行记牢。"
+                } else {
+                    "该备份由口令加密，请输入导出时设置的口令。"
+                },
+                style = GlassText.Meta,
+                color = p.InkMid
+            )
+            OutlinedTextField(
+                value = text,
+                onValueChange = {
+                    text = it
+                    error = null
+                },
+                label = { Text("口令") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                isError = errText != null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = p.Accent,
+                    unfocusedBorderColor = p.Rim,
+                    cursorColor = p.Accent,
+                    focusedLabelColor = p.Accent,
+                    unfocusedLabelColor = p.InkMid,
+                    focusedTextColor = p.InkHi,
+                    unfocusedTextColor = p.InkHi
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (exporting) {
+                OutlinedTextField(
+                    value = confirm,
+                    onValueChange = {
+                        confirm = it
+                        error = null
+                    },
+                    label = { Text("再输一遍") },
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    isError = errText != null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = p.Accent,
+                        unfocusedBorderColor = p.Rim,
+                        cursorColor = p.Accent,
+                        focusedLabelColor = p.Accent,
+                        unfocusedLabelColor = p.InkMid,
+                        focusedTextColor = p.InkHi,
+                        unfocusedTextColor = p.InkHi
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            if (errText != null) {
+                Text(errText, style = GlassText.Meta, color = p.Down)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDismiss) {
+                    Text("取消", style = GlassText.Label, color = p.InkMid)
+                }
+                TextButton(onClick = {
+                    val pass = text
+                    when {
+                        pass.length < CredentialBackup.MIN_PASSPHRASE_LEN ->
+                            error = "口令至少 ${CredentialBackup.MIN_PASSPHRASE_LEN} 位"
+                        exporting && pass != confirm -> error = "两次输入不一致"
+                        else -> onConfirm(pass)
+                    }
+                }) {
+                    Text("确定", style = GlassText.Label, color = p.AccentInk)
+                }
+            }
+        }
+    }
+}
+
+/** 金额展示：整数不带小数（$500），非整数保留两位（$12.50）。 */
+
+private fun formatThreshold(value: Double): String =
+    if (value.isFinite() && value == Math.floor(value)) {
+        "$" + value.toLong()
+    } else {
+        "$" + String.format(Locale.US, "%.2f", value)
+    }
+
+/** 输入过滤：只留数字与一个小数点，小数点后最多两位。 */
+
+private fun filterAmountInput(raw: String): String {
+    val sb = StringBuilder()
+    var dotSeen = false
+    var decimals = 0
+    for (ch in raw) {
+        if (ch.isDigit()) {
+            if (dotSeen) {
+                if (decimals >= 2) continue
+                decimals++
+            }
+            sb.append(ch)
+        } else if (ch == '.' && !dotSeen) {
+            dotSeen = true
+            sb.append(ch)
+        }
+    }
+    return sb.toString()
 }
 
 /**

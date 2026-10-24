@@ -87,7 +87,7 @@ object Bailian {
         val root = gson.fromJson(resp, JsonElement::class.java)
             ?: throw QuotaException(0, "响应为空")
         val expanded = expandJson(root)
-        findNumDeep(listOf("statusCode", "status_code", "code"), expanded)?.let { code ->
+        findStatusCode(expanded)?.let { code ->
             val c = code.toInt()
             if (c != 0 && c != 200) throw QuotaException(c, "百炼错误 $c")
         }
@@ -177,12 +177,24 @@ object Bailian {
         return null
     }
 
-    private fun findNumDeep(keys: List<String>, el: JsonElement): Double? {
-        if (el.isJsonObject) {
-            for (k in keys) jnum(el.asJsonObject, k)?.let { return it }
-            for ((_, v) in el.asJsonObject.entrySet()) findNumDeep(keys, v)?.let { return it }
-        } else if (el.isJsonArray) {
-            for (v in el.asJsonArray) findNumDeep(keys, v)?.let { return it }
+    /**
+     * 状态码只在**顶层对象**与明确的业务字段路径（data / result）上找。
+     *
+     * 之前是全树递归找 statusCode/status_code/code，会命中额度明细里的无关数值字段
+     * （如窗口配额里的 code），把正常响应误判成错误。现在找不到就认为成功。
+     */
+    private fun findStatusCode(el: JsonElement): Double? {
+        val root = el as? JsonObject ?: return null
+        for (k in listOf("statusCode", "status_code", "code")) {
+            jnum(root, k)?.let { return it }
+        }
+        // 明确的业务字段路径：只下钻一层（data / result 这类包装对象），不碰任意子对象。
+        // 额度明细（codingPlanQuotaInfo 里的 quota / code 之类）在更深一层，不会被误读
+        for (path in listOf("data", "result")) {
+            val sub = root.optObject(path) ?: continue
+            for (k in listOf("statusCode", "status_code", "code")) {
+                jnum(sub, k)?.let { return it }
+            }
         }
         return null
     }

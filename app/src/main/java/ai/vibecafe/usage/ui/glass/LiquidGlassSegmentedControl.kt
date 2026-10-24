@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -107,6 +108,9 @@ fun LiquidGlassSegmentedControl(
         if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f)
         else Color(0xFF121212).copy(0.4f)
 
+    // onSelect 会被收集协程长期持有，必须始终是最新引用（调用方的 lambda 可能捕获了旧状态）
+    val currentOnSelect by rememberUpdatedState(onSelect)
+
     val tabsBackdrop = rememberLayerBackdrop()
 
     BoxWithConstraints(
@@ -188,19 +192,28 @@ fun LiquidGlassSegmentedControl(
                 }
             )
         }
-        // 外部选择同步（ViewModel 驱动）；-1（自定义档）只隐藏滑块，不动滑块位置
-        LaunchedEffect(Unit) {
-            snapshotFlow { selectedIndex }
-                .collectLatest { idx ->
-                    if (idx in 0 until count && idx != currentIndex) currentIndex = idx
-                }
+        // 外部选择同步（ViewModel 驱动）；-1（自定义档）只隐藏滑块，不动滑块位置。
+        // 这里用 LaunchedEffect(selectedIndex) 而不是 snapshotFlow { selectedIndex }：
+        // selectedIndex 是普通 Int 参数、不是 snapshot state，snapshotFlow 只会在首次
+        // 组合时发射一次，之后外部再改档位都不会同步，滑块与业务状态就此脱节。
+        // 外部同步只挪滑块、不回调 onSelect（否则会形成「同步→回调→再同步」的回环）。
+        var suppressSelectFor by remember { mutableIntStateOf(-1) }
+        LaunchedEffect(selectedIndex) {
+            if (selectedIndex in 0 until count && selectedIndex != currentIndex) {
+                suppressSelectFor = selectedIndex
+                currentIndex = selectedIndex
+            }
         }
         LaunchedEffect(dampedDragAnimation) {
             snapshotFlow { currentIndex }
                 .drop(1)
                 .collectLatest { idx ->
                     dampedDragAnimation.animateToValue(idx.toFloat())
-                    onSelect(idx)
+                    if (idx == suppressSelectFor) {
+                        suppressSelectFor = -1
+                    } else {
+                        currentOnSelect(idx)
+                    }
                 }
         }
 
@@ -251,7 +264,14 @@ fun LiquidGlassSegmentedControl(
                             interactionSource = null,
                             indication = null,
                             role = Role.Tab
-                        ) { currentIndex = index },
+                        ) {
+                            // 点到「当前所在的那一段」时 currentIndex 不变 → snapshotFlow 不发射
+                            // → onSelect 不会被调用，形成一个隐形死区
+                            // （自定义档把滑块藏起来后，用户点回原档位毫无反应）。
+                            // 这里显式补一次回调。
+                            if (index == currentIndex) currentOnSelect(index)
+                            else currentIndex = index
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     val fit = fitScales[index]

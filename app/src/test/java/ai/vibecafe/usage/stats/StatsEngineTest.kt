@@ -142,6 +142,89 @@ class StatsEngineTest {
         assertNull(StatsEngine.computeTrendPercent(data, TimeRange.TODAY))
     }
 
+    @Test
+    fun `trend percent respects the device filter`() {
+        // 机器 A：今天 $2、昨天 $1 → +100%
+        // 机器 B：今天 $100、昨天 $1 → +9900%
+        // 不筛设备时是 (102-2)/2 = +5000%；筛成 A 必须是 +100% ——
+        // 页面上的金额是按设备筛过的，趋势百分比却用全量算的话，
+        // 用户看到的百分比和金额完全对不上。
+        val data = resp(
+            bucket(0, cost = 2.0, hostname = "A"),
+            bucket(-1, cost = 1.0, hostname = "A"),
+            bucket(0, cost = 100.0, hostname = "B"),
+            bucket(-1, cost = 1.0, hostname = "B")
+        )
+        val all = StatsEngine.computeTrendPercent(data, TimeRange.TODAY)
+        assertNotNull(all)
+        assertEquals(50.0f, all!!, 0.001f)
+
+        val onlyA = StatsEngine.computeTrendPercent(data, TimeRange.TODAY, null, setOf("A"))
+        assertNotNull(onlyA)
+        assertEquals(1.0f, onlyA!!, 0.001f)
+    }
+
+    @Test
+    fun `trend percent is null when the selected device had no previous usage`() {
+        // 机器 B 只有今天的消耗：上一周期（对它）为空 → 没有趋势可言
+        val data = resp(
+            bucket(0, cost = 2.0, hostname = "A"),
+            bucket(-1, cost = 1.0, hostname = "A"),
+            bucket(0, cost = 100.0, hostname = "B")
+        )
+        assertNull(StatsEngine.computeTrendPercent(data, TimeRange.TODAY, null, setOf("B")))
+    }
+
+    @Test
+    fun `custom range trend is capped at the range end`() {
+        // 自定义 3 天（-3..-1），当前周期 $3、上一周期（-6..-4）$1 → +200%。
+        // to 之后（今天）的消耗**不能**算进当前周期：
+        // 早先的实现只设了 curStart 不设 curEnd，今天的 bucket 会把趋势算成 +2900%。
+        val from = dayFmt.format(Calendar.getInstance(bjTz).apply { add(Calendar.DAY_OF_YEAR, -3) }.time)
+        val to = dayFmt.format(Calendar.getInstance(bjTz).apply { add(Calendar.DAY_OF_YEAR, -1) }.time)
+        val data = resp(
+            bucket(-6, cost = 1.0),   // 上一周期
+            bucket(-3, cost = 1.0),
+            bucket(-2, cost = 1.0),
+            bucket(-1, cost = 1.0),
+            bucket(0, cost = 100.0)   // 今天：在范围之外，必须被排除
+        )
+        val trend = StatsEngine.computeTrendPercent(data, TimeRange.CUSTOM, CustomRange(from, to))
+        assertNotNull(trend)
+        assertEquals(2.0f, trend!!, 0.001f)
+    }
+
+    @Test
+    fun `days7 and hours24 windows pick the right buckets`() {
+        val data = resp(
+            bucket(0, cost = 1.0),
+            bucket(-6, cost = 2.0),
+            bucket(-7, cost = 100.0)   // 7 天窗口外
+        )
+        val stats = StatsEngine.computeStats(data, TimeRange.DAYS_7)
+        assertEquals(2 * 110L, stats.totalTokens)   // 今天 + 6 天前
+
+        // 24 小时窗口：endHour 按小时取整，startHour = endHour - 24h
+        val hourly = StatsEngine.computeStats(data, TimeRange.HOURS_24)
+        assertTrue("24 小时窗口至少应包含今天的 bucket", hourly.totalTokens >= 110L)
+    }
+
+    @Test
+    fun `device filter applies to session counts as well`() {
+        // 设备筛选必须同时作用在会话上：否则会话数会把别的设备也算进来
+        val data = resp(
+            bucket(0, hostname = "A"),
+            sessions = listOf(
+                session(0, hostname = "A"),
+                session(0, hostname = "B")
+            )
+        )
+        val all = StatsEngine.computeStats(data, TimeRange.ALL)
+        assertEquals(2, all.sessionCount)
+        val onlyA = StatsEngine.computeStats(data, TimeRange.ALL, devices = setOf("A"))
+        assertEquals(1, onlyA.sessionCount)
+    }
+
     // ---- dedup ----
 
     @Test

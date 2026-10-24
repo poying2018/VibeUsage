@@ -158,12 +158,21 @@ object Mimo {
         }
     }
 
-    /** 已用百分比（0–100，按仓库惯例截断取整）：有绝对量就以量折算，没量才放大比例字段。 */
+    /**
+     * 已用百分比（0–100，按仓库惯例截断取整）。
+     *
+     * 有绝对量（used/limit）就一律按绝对量折算：比例字段在 1.0 附近有 0–1 与 0–100 两种
+     * 口径（满额套餐可能显示成「已用 1%」），绝对量没有这种歧义。
+     * 只有完全没有绝对量时才用比例字段：> 1 视为已是 0–100，否则视为 0–1 放大 100 倍。
+     */
     private fun percentOf(used: Double?, limit: Double?, raw: Double?): Int? {
-        if (used != null && limit != null && limit > 0)
-            return (used / limit * 100).toInt().coerceIn(0, 100)
+        if (used != null && limit != null) {
+            if (limit > 0) return (used / limit * 100).toInt().coerceIn(0, 100)
+            // 没有额度上限：已消耗即视为用尽
+            return if (used > 0) 100 else 0
+        }
         val r = raw ?: return null
-        return (if (r <= 1.0) r * 100 else r).toInt().coerceIn(0, 100)
+        return (if (r > 1.0) r else r * 100).toInt().coerceIn(0, 100)
     }
 
     /** detail.currentPeriodEnd 实测是「2026-10-22 23:59:59」北京时间且不带时区标记。 */

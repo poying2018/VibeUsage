@@ -6,6 +6,10 @@
 -keep class ai.vibecafe.usage.data.** { <fields>; }
 -keepattributes Signature, InnerClasses, EnclosingMethod
 
+# 小组件快照：跨版本落盘的 JSON 依赖字段名（costToday/tokensToday/updatedAt），
+# 改名后新包读旧快照会全部落默认值，桌面显示 $0.00
+-keep class ai.vibecafe.usage.widget.WidgetSnapshot { <fields>; }
+
 # Gson TypeToken 泛型擦除防护
 -keep class com.google.gson.reflect.TypeToken { *; }
 -keep class * extends com.google.gson.reflect.TypeToken

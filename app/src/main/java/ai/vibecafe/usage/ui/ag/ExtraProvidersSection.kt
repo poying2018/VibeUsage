@@ -38,6 +38,8 @@ import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import ai.vibecafe.usage.ui.theme.cardBackground
+import ai.vibecafe.usage.ui.theme.ensureContrast
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -70,6 +72,8 @@ fun QuotaSwitcher(
     var menuVisible by remember { mutableStateOf(false) }
     val current = options[selectedIndex.coerceIn(0, options.lastIndex)]
     val palette = LocalGlassPalette.current
+    // 玻璃卡片实际呈现的颜色（半透明面叠在页面底上）—— 前景色要对着它算对比度
+    val cardBg = palette.cardBackground()
     // 形变锚点：胶囊与菜单的实际尺寸（菜单左上角与胶囊左上角同源，缩放原点取 (0,0) 即可对位）
     var chipSize by remember { mutableStateOf(IntSize.Zero) }
     var menuSize by remember { mutableStateOf(IntSize.Zero) }
@@ -113,7 +117,7 @@ fun QuotaSwitcher(
                     Modifier
                         .size(9.dp)
                         .clip(CircleShape)
-                        .background(current.color)
+                        .background(readableBrandColor(current.color, cardBg))
                 )
                 Spacer(Modifier.width(9.dp))
                 Text(
@@ -209,7 +213,7 @@ fun QuotaSwitcher(
                                 Modifier
                                     .size(9.dp)
                                     .clip(CircleShape)
-                                    .background(opt.color)
+                                    .background(readableBrandColor(opt.color, cardBg))
                             )
                             Spacer(Modifier.width(11.dp))
                             Text(
@@ -284,7 +288,7 @@ private fun LoginArea(
 ) {
     var inputs by remember(provider.id) { mutableStateOf(List(provider.credLabels.size) { "" }) }
     val palette = LocalGlassPalette.current
-
+    val cardBg = palette.cardBackground()
     Column {
         if (provider.oauth != null) {
             LiquidButton(
@@ -298,7 +302,13 @@ private fun LoginArea(
                     CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        if (ps.oauthCode != null) "等待浏览器授权…" else "正在发起授权…",
+                        when {
+                            ps.oauthCode != null -> "等待浏览器授权…"
+                            // CommandCode 是网页登录后回传凭据，没有设备码可复制
+                            provider.oauth == ai.vibecafe.usage.ui.ag.OAuthKind.COMMANDCODE ->
+                                "等待浏览器完成登录…"
+                            else -> "正在发起授权…"
+                        },
                         fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White
                     )
                 } else {
@@ -370,10 +380,10 @@ private fun LoginArea(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = provider.color,
+                focusedBorderColor = readableBrandColor(provider.color, cardBg),
                 unfocusedBorderColor = palette.Rim,
-                cursorColor = provider.color,
-                focusedLabelColor = provider.color,
+                cursorColor = readableBrandColor(provider.color, cardBg),
+                focusedLabelColor = readableBrandColor(provider.color, cardBg),
                 unfocusedLabelColor = palette.InkMid,
                 focusedTextColor = palette.InkHi,
                 unfocusedTextColor = palette.InkHi
@@ -424,6 +434,7 @@ private val ExtraProvider.credPlaceholders: List<String>
         ExtraProvider.DOUBAO -> listOf("粘贴 sessionid 的值或整条 Cookie")
         ExtraProvider.AGNES -> listOf("登录邮箱或用户名", "登录密码")
         ExtraProvider.MIMO -> listOf("userId（纯数字）", "api-platform_serviceToken 的值")
+        ExtraProvider.COMMANDCODE -> listOf("user_…（CLI 的 API Key）")
     }
 
 // ─── 已接入：状态行 + 分组明细 ───
@@ -436,6 +447,7 @@ private fun LoggedArea(
     viewModel: ExtraQuotaViewModel
 ) {
     val palette = LocalGlassPalette.current
+    val cardBg = palette.cardBackground()
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -444,7 +456,7 @@ private fun LoggedArea(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                 if (ps.isLoading) {
-                    CircularProgressIndicator(Modifier.size(14.dp), color = provider.color, strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(14.dp), color = readableBrandColor(provider.color, cardBg), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
                 // 状态胶囊：以前只在有账号名时才渲染。API Key 型供应商 ps.account 为 null，
@@ -453,7 +465,7 @@ private fun LoggedArea(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
-                        .background(provider.color.copy(alpha = 0.16f))
+                        .background(readableBrandColor(provider.color, cardBg).copy(alpha = 0.16f))
                         .padding(horizontal = 9.dp, vertical = 4.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -461,13 +473,13 @@ private fun LoggedArea(
                             Modifier
                                 .size(6.dp)
                                 .clip(CircleShape)
-                                .background(provider.color)
+                                .background(readableBrandColor(provider.color, cardBg))
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
                             ps.account ?: "凭据已生效",
                             fontSize = 10.sp,
-                            color = provider.color,
+                            color = readableBrandColor(provider.color, cardBg),
                             maxLines = 1
                         )
                     }
@@ -605,7 +617,13 @@ private fun SectionHeader(text: String, color: Color, icon: ImageVector) {
             color = palette.InkHi
         )
         Spacer(Modifier.width(8.dp))
-        Icon(icon, null, Modifier.size(13.dp), tint = color)
+        // 图标是细前景：品牌色按对比度调整后再用，否则近黑品牌色在深底上直接隐形
+        Icon(
+            icon,
+            null,
+            Modifier.size(13.dp),
+            tint = readableBrandColor(color, palette.cardBackground())
+        )
     }
 }
 
@@ -613,7 +631,7 @@ private fun SectionHeader(text: String, color: Color, icon: ImageVector) {
 private fun BarRow(bar: Bar) {
     val palette = LocalGlassPalette.current
     val percent = bar.percentRemaining.coerceIn(0, 100)
-    val barColor = quotaGaugeColor(percent)
+    val barColor = quotaGaugeColor(percent).ensureContrast(palette.cardBackground())
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),

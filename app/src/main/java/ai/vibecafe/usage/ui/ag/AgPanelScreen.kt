@@ -22,12 +22,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ai.vibecafe.usage.data.ag.AgQuotaApi
 import ai.vibecafe.usage.data.ag.AgQuotaApi.QuotaBucket
-import ai.vibecafe.usage.data.quota.AgGoogleOAuth
 import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import ai.vibecafe.usage.ui.theme.cardBackground
+import ai.vibecafe.usage.ui.theme.ensureContrast
 import com.kyant.backdrop.Backdrop
-import kotlinx.coroutines.launch
 
 /** 反重力主题色（蓝紫渐变）。 */
 private val AgBlue = Color(0xFF4A7DFF)
@@ -44,6 +44,7 @@ fun AgPanelScreen(
     viewModel: AgPanelViewModel = viewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -56,7 +57,7 @@ fun AgPanelScreen(
                 error = state.error,
                 onLogin = { viewModel.login(it) },
                 onClearError = { viewModel.clearError() },
-                onOAuthError = { viewModel.setOAuthError(it) }
+                onOAuthStart = { viewModel.loginOAuthGoogle(context) }
             )
         } else {
             AgLoggedInContent(state, backdrop, onRefresh = { viewModel.refresh() }, onLogout = { viewModel.logout() })
@@ -74,13 +75,10 @@ private fun AgLoginCard(
     error: String?,
     onLogin: (String) -> Unit,
     onClearError: () -> Unit,
-    onOAuthError: (String) -> Unit
+    onOAuthStart: () -> Unit
 ) {
     var input by remember { mutableStateOf("") }
-    var oauthBusy by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    val context = androidx.compose.ui.platform.LocalContext.current
     val palette = LocalGlassPalette.current
 
     Box(
@@ -158,30 +156,17 @@ private fun AgLoginCard(
             }
             Spacer(Modifier.height(20.dp))
 
-            // 一键授权：浏览器 Google 登录，loopback 捕获授权码，凭据自动保存
+            // 一键授权：浏览器 Google 登录，loopback 捕获授权码，凭据自动保存。
+            // 授权流程跑在 ViewModel 里（onOAuthStart），不在组合作用域：
+            // 组合作用域在用户切 Tab 时会被取消，浏览器里完成的登录就白费了。
             LiquidButton(
                 onClick = {
-                    if (oauthBusy || isLoading) return@LiquidButton
-                    oauthBusy = true
+                    if (isLoading) return@LiquidButton
                     onClearError()
-                    scope.launch {
-                        try {
-                            val l = AgGoogleOAuth.login(context)
-                            onLogin(
-                                org.json.JSONObject().apply {
-                                    put("refresh_token", l.refreshToken)
-                                    l.email?.let { put("email", it) }
-                                }.toString()
-                            )
-                        } catch (e: Exception) {
-                            onOAuthError("授权失败：${e.message?.take(140) ?: "未知错误"}")
-                        } finally {
-                            oauthBusy = false
-                        }
-                    }
+                    onOAuthStart()
                 },
                 backdrop = backdrop,
-                enabled = !oauthBusy && !isLoading,
+                enabled = !isLoading,
                 surfaceBrush = Brush.horizontalGradient(
                     listOf(AgBlue, AgPurple),
                     startX = 0f,
@@ -189,7 +174,7 @@ private fun AgLoginCard(
                 ),
                 modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth()
             ) {
-                if (oauthBusy) {
+                if (isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
                         color = Color.White,
@@ -489,8 +474,9 @@ private fun BucketsCard(
 @Composable
 private fun BucketRow(bucket: QuotaBucket) {
     val palette = LocalGlassPalette.current
-    val percent = bucket.percentRemaining
-    val barColor = quotaGaugeColor(percent)
+    // 百分比钳到 0..100：进度条本身已钳制，文案不钳就会与条不一致（出现 120%）
+    val percent = bucket.percentRemaining.coerceIn(0, 100)
+    val barColor = quotaGaugeColor(percent).ensureContrast(palette.cardBackground())
     Column {
         Row(
             modifier = Modifier.fillMaxWidth(),

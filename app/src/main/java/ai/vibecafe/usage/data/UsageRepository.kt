@@ -11,6 +11,11 @@ class UsageRepository {
         api.getUsageHourly("Bearer $apiKey")
     }
 
+    /** 今日数据（小组件用，避免为了一句「今日消耗」拉全量历史）。 */
+    suspend fun fetchTodayData(apiKey: String): Result<UsageResponse> = runCatching {
+        api.getUsageToday("Bearer $apiKey")
+    }
+
     suspend fun fetchCustomRange(apiKey: String, from: String, to: String): Result<UsageResponse> = runCatching {
         api.getUsageCustom("Bearer $apiKey", from, to)
     }

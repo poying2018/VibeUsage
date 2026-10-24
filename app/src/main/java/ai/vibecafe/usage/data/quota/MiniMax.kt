@@ -104,7 +104,9 @@ object MiniMax {
         val obj = gson.fromJson(text, JsonObject::class.java)
             ?: throw QuotaException(0, "MiniMax 返回了空响应")
         val base = obj.optObject("base_resp")
-        val code = base?.get("status_code")?.takeIf { it.isJsonPrimitive }?.asInt
+        // status_code 可能不是数字（如 "success"）：安全取整数，取不到就按成功处理，
+        // 别让 NumberFormatException 的原文直接抛给用户
+        val code = jnum(base, "status_code")?.toInt()
         if (code != null && code != 0) {
             throw QuotaException(
                 code,
@@ -174,8 +176,12 @@ object MiniMax {
 
         val endMs = jnum(m, endKey)?.toLong()
         val remainsMs = jnum(m, remainsMsKey)?.toLong()
+        // 固定按北京时间显示（各家额度口径都是 Asia/Shanghai），
+        // 不跟随设备默认时区，否则同一时刻不同设备显示的「重置」时刻不同
         val at = if (endMs != null && endMs > 0)
-            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(endMs)) + " 重置"
+            SimpleDateFormat("HH:mm", Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+            }.format(Date(endMs)) + " 重置"
         else null
         val reset = when {
             at != null && remainsMs != null && remainsMs > 0 -> "$at · ${formatCountdown(remainsMs)}后"
