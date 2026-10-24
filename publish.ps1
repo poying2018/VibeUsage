@@ -65,14 +65,15 @@ if (-not (Test-Path (Join-Path $root "keystore.properties"))) {
 Write-Host "[1/7] Signing config OK" -ForegroundColor Green
 
 # 2. Build signed release
+# Retry on transient failures (see publish/lib.ps1 for the details):
+# R8 can fail with "classes.dex is being used by another process" when a
+# Gradle daemon still holds the previous output; stopping the daemons and
+# clearing the stale dex intermediates fixes it.
 Write-Host "[2/7] Building signed release APK..." -ForegroundColor Yellow
-Push-Location $root
-try {
-    $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot"
-    $env:GRADLE_USER_HOME = Join-Path $root ".gradle-home"
-    .\gradlew.bat assembleRelease --no-daemon
-    if ($LASTEXITCODE -ne 0) { throw "Gradle build failed" }
-} finally { Pop-Location }
+. (Join-Path $root "publish\lib.ps1")
+$built = Invoke-BuildWithRetry -Root $root -Attempts 3
+if (-not $built) { throw "Gradle build failed after 3 attempts" }
+if (-not (Test-Path $apk)) { throw "Build reported success but the APK is missing: $apk" }
 Write-Host "[2/7] Build done" -ForegroundColor Green
 
 # 3. Verify APK signature
