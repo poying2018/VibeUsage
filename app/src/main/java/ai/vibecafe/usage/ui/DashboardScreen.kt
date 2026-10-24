@@ -114,6 +114,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -148,8 +149,6 @@ private val RangeValues = listOf(
     TimeRange.DAYS_90,
     TimeRange.ALL
 )
-/** 趋势图指标切换标签：必须是稳定引用，否则玻璃选择器的 remember(items) 每帧失效导致掉帧 */
-private val MetricLabels = listOf("金额", "Tokens")
 
 /** 应用/模型列表的排序口径。 */
 private enum class ListSort(val label: String) {
@@ -485,30 +484,24 @@ fun DashboardScreen(
                 }
             }
 
-            // ---- 用量趋势 ----
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .fadeSlideIn(50),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SectionTitle("用量趋势")
-                // 与底部时间选择器同款的液态玻璃滑块（量体裁衣 + Q 弹折射）。
-                // 注意：必须采样页面 backdrop 而非 scrimBackdrop——本控件在内容层内，
-                // 采样含内容层的 backdrop 会形成 RenderNode 自引用循环导致 RenderThread 栈溢出
-                LiquidGlassSegmentedControl(
-                    items = MetricLabels,
-                    selectedIndex = if (trendMetric == TrendMetric.COST) 0 else 1,
-                    onSelect = { idx ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        trendMetric = if (idx == 0) TrendMetric.COST else TrendMetric.TOKENS
-                    },
-                    backdrop = backdrop,
-                    modifier = Modifier.width(150.dp),
-                    height = 36.dp
-                )
-            }
+            // ---- 时间范围选择（原来浮在屏幕底部）----
+            // 浮在底部时它直接压住趋势图的 X 轴；而且底部已经有导航条，
+            // 两条全宽玻璃药丸上下叠着，页面显得杂乱、图也看不全。
+            // 范围是全局口径，放在总览卡下面、趋势图上面：
+            // 既不挡图，顺序也符合「先选范围，再看数」。
+            RangeSelectorRow(
+                state = state,
+                selectedIndex = selectedIndex,
+                onSelect = { idx ->
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onSelectRange(RangeValues[idx])
+                },
+                backdrop = backdrop
+            )
+
+            // ---- 用量趋势：标题与切换器并进图表卡内 ----
+            // 原来标题在卡外、图在卡里，看着像两块不相干的东西；
+            // 并成一张卡后，趋势区是「一个区块」而不是「一个标题 + 一张卡」。
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -516,6 +509,21 @@ fun DashboardScreen(
                     .glassCard(backdrop)
                     .padding(horizontal = 18.dp, vertical = 16.dp)
             ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SectionTitle("用量趋势")
+                    MetricToggle(
+                        selected = trendMetric,
+                        onSelect = { m ->
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            trendMetric = m
+                        }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
                 val series = when (state.selectedTimeRange) {
                     TimeRange.HOURS_24 -> state.hourlyUsage
                     TimeRange.TODAY -> state.todayHourlyUsage
@@ -757,41 +765,8 @@ fun DashboardScreen(
         } // PullToRefreshBox 结束
         } // 内容导出 Box 结束
 
-        // ---- 底部悬浮时间选择器（DS+ 面板时不显示；不贴边，留出呼吸空间）----
-        // 与底部导航栏同用 scrimBackdrop：滚动内容实时进入玻璃模糊，
-        // Q 弹滑动效果与金额/Tokens 切换器观感一致
-        if (!showAgPanel && !showSettings) {
-            Column(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .widthIn(max = 720.dp)
-                    .fillMaxWidth()
-                    .padding(start = 18.dp, end = 18.dp, bottom = insets.calculateBottomPadding() + 88.dp)
-            ) {
-                // 自定义范围档：滑块会隐藏（selectedIndex=-1），不提示的话用户不知道
-                // 还能点下面的档位切回预设范围
-                if (state.selectedTimeRange == TimeRange.CUSTOM) {
-                    val from = state.customRange?.from?.replace("-", "/") ?: ""
-                    val to = state.customRange?.to?.replace("-", "/") ?: ""
-                    Text(
-                        "自定义范围 $from ~ $to · 点下方档位可切回",
-                        style = GlassText.ChartAxis,
-                        color = palette.Accent,
-                        modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
-                    )
-                }
-                LiquidGlassSegmentedControl(
-                    items = RangeLabels,
-                    // 自定义范围档不属于任何段：滑块隐藏，选中态由独立按钮承载
-                    selectedIndex = if (state.selectedTimeRange == TimeRange.CUSTOM) -1 else selectedIndex,
-                    onSelect = { idx ->
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelectRange(RangeValues[idx])
-                    },
-                    backdrop = scrimBackdrop,  // 实时模糊背后滚动内容（酷安同款）
-                )
-            }
-        }
+        // 时间范围选择器已挪进内容流（总览卡下方）—— 底部只留导航条，
+        // 不再有两条全宽玻璃药丸上下叠着、挡住趋势图 X 轴的情况。
 
         // ---- 底部液态玻璃导航栏（酷安同款 LiquidBottomTabs）：概览 / 额度 / 设置 ----
         // 三层结构：胶囊玻璃壳(64dp, blur8+lens24) -> 隐藏的 Accent 色内容层(供滑块折射) ->
@@ -954,8 +929,8 @@ private fun Header(
         ) {
             Box(
                 Modifier
-                    .size(if (wide) 52.dp else 46.dp)
-                    .clip(RoundedCornerShape(if (wide) 17.dp else 15.dp))
+                    .size(if (wide) 48.dp else 40.dp)
+                    .clip(RoundedCornerShape(if (wide) 16.dp else 13.dp))
                     .background(
                         Brush.linearGradient(
                             listOf(Color(0xFF7EE8DF), Color(0xFF7C6BFF)),
@@ -969,27 +944,29 @@ private fun Header(
                     painter = painterResource(R.drawable.ic_logo_v),
                     contentDescription = "VibeUsage",
                     tint = Color.Unspecified,
-                    modifier = Modifier.size(if (wide) 31.dp else 28.dp)
+                    modifier = Modifier.size(if (wide) 28.dp else 24.dp)
                 )
             }
-            Spacer(Modifier.width(if (wide) 15.dp else 13.dp))
+            Spacer(Modifier.width(if (wide) 14.dp else 12.dp))
             Column {
                 Text(
                     "VibeUsage",
                     style = GlassText.Title,
-                    fontSize = if (wide) 27.sp else 23.sp,
+                    // 标题原来 23sp + 46dp logo，占掉首屏近四分之一屏，
+                    // 真正的数据被挤到下一屏。收紧到 20sp/40dp。
+                    fontSize = if (wide) 25.sp else 20.sp,
                     color = palette.InkHi,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(1.dp))
                 // 窄屏(竖屏)下省略日期，保证「用量概览 · 版本号」完整显示；
                 // 宽屏空间充足时保留完整信息
                 Text(
                     if (wide) "用量概览 · $APP_VERSION · $today"
                     else "用量概览 · $APP_VERSION",
                     style = GlassText.Label,
-                    fontSize = if (wide) 13.sp else 11.5.sp,
+                    fontSize = if (wide) 12.5.sp else 11.sp,
                     color = palette.InkMid,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1145,17 +1122,19 @@ private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: ()
                 AnimatedCounter(
                     value = cost.toFloat(),
                     format = { formatCost(it.toDouble()) },
-                    style = GlassText.Hero.copy(fontSize = if (wide) 56.sp else 44.sp),
+                    style = GlassText.Hero.copy(fontSize = if (wide) 54.sp else 42.sp),
                     color = palette.InkHi
                 )
                 Spacer(Modifier.width(5.dp))
+                // 「USD」原来 15sp ExtraBold 挂在数字右边，视觉重量接近数字本身，
+                // 看着像数字的一部分。降到 11sp 并用弱色，只做单位标注。
                 Text(
                     "USD",
                     fontFamily = HanSansFamily,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = if (wide) 18.sp else 15.sp,
-                    color = palette.InkMid,
-                    modifier = Modifier.padding(bottom = if (wide) 6.dp else 3.dp)
+                    fontWeight = FontWeight.Medium,
+                    fontSize = if (wide) 12.sp else 11.sp,
+                    color = palette.InkLo,
+                    modifier = Modifier.padding(bottom = if (wide) 6.dp else 4.dp)
                 )
             }
             if (trend != null) TrendChip(trend)
@@ -1194,22 +1173,24 @@ private fun TrendChip(trend: Float) {
             .clip(CircleShape)
             .background(bg)
             .border(1.dp, rim, CircleShape)
-            .padding(horizontal = 12.dp, vertical = 7.dp)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 if (up) "↗" else "↘",
                 fontFamily = HanSansFamily,
-                fontSize = 13.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = ink,
                 maxLines = 1,
                 softWrap = false
             )
-            Spacer(Modifier.width(5.dp))
+            Spacer(Modifier.width(4.dp))
             Text(
                 String.format(Locale.US, "%+.0f%%", trend * 100),
-                style = GlassText.Chip,
+                // 趋势是次要信息：原来 13sp Black + 大内边距，视觉重量逼近主数字，
+                // 抢掉了「$66.18」的注意力。降到 12sp 并收窄内边距。
+                style = GlassText.Chip.copy(fontSize = 12.sp),
                 color = ink,
                 maxLines = 1,
                 softWrap = false
@@ -1226,7 +1207,7 @@ private fun StatsStrip(state: UiState) {
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        MiniStat("Tokens", formatTokens(stats?.totalTokens ?: 0L), palette)
+        MiniStat("Tokens", formatTokens(stats?.totalTokens ?: 0L), palette, primary = true)
         MiniStat("模型", (stats?.modelCount ?: 0).toString(), palette)
         MiniStat("应用", (stats?.toolCount ?: 0).toString(), palette)
         MiniStat("会话", (stats?.sessionCount ?: 0).toString(), palette)
@@ -1243,7 +1224,7 @@ private fun StatsGrid(state: UiState) {
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            MiniStat("Tokens", formatTokens(stats?.totalTokens ?: 0L), palette)
+            MiniStat("Tokens", formatTokens(stats?.totalTokens ?: 0L), palette, primary = true)
             MiniStat("模型", (stats?.modelCount ?: 0).toString(), palette)
         }
         Row(
@@ -1256,12 +1237,26 @@ private fun StatsGrid(state: UiState) {
     }
 }
 
+/**
+ * 四格统计里的一格。
+ *
+ * Tokens 是首屏最该被读到的量，给它更大字号；其余三项是计数，
+ * 缩小一档并把标签压到最弱色，扫读时眼睛自然先落在 Tokens 上。
+ */
 @Composable
-private fun MiniStat(label: String, value: String, palette: GlassPalette) {
+private fun MiniStat(label: String, value: String, palette: GlassPalette, primary: Boolean = false) {
     Column(horizontalAlignment = Alignment.Start) {
-        Text(value, style = GlassText.NumericSmall, color = palette.InkHi)
-        Spacer(Modifier.height(3.dp))
-        Text(label, style = GlassText.Meta, color = palette.InkMid)
+        Text(
+            value,
+            style = GlassText.NumericSmall.copy(fontSize = if (primary) 23.sp else 19.sp),
+            color = palette.InkHi
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            label,
+            style = GlassText.Meta.copy(fontSize = 11.sp),
+            color = palette.InkLo
+        )
     }
 }
 
@@ -1949,6 +1944,95 @@ private fun GlassListRow(
         if (!valueInline) {
             Spacer(Modifier.width(12.dp))
             Text(value, style = GlassText.Numeric, color = palette.InkHi)
+        }
+    }
+}
+
+/**
+ * 时间范围选择行（内容流内，不是底部悬浮条）。
+ *
+ * 放在总览卡与趋势图之间：范围决定的是整页口径，先选再看数最顺；
+ * 悬浮在底部时它会压住趋势图的 X 轴，而且和底部导航条叠成两条药丸。
+ */
+@Composable
+private fun RangeSelectorRow(
+    state: UiState,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    backdrop: com.kyant.backdrop.Backdrop
+) {
+    val palette = LocalGlassPalette.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .fadeSlideIn(30)
+    ) {
+        // 自定义范围档：滑块会隐藏（selectedIndex=-1），不提示的话用户不知道
+        // 还能点下面的档位切回预设范围
+        if (state.selectedTimeRange == TimeRange.CUSTOM) {
+            val from = state.customRange?.from?.replace("-", "/") ?: ""
+            val to = state.customRange?.to?.replace("-", "/") ?: ""
+            Text(
+                "自定义范围 $from ~ $to · 点下方档位可切回",
+                style = GlassText.ChartAxis,
+                color = palette.Accent,
+                modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)
+            )
+        }
+        LiquidGlassSegmentedControl(
+            items = RangeLabels,
+            // 自定义范围档不属于任何段：滑块隐藏，选中态由独立按钮承载
+            selectedIndex = if (state.selectedTimeRange == TimeRange.CUSTOM) -1 else selectedIndex,
+            onSelect = onSelect,
+            // 采样页面 backdrop（不采样 scrimBackdrop）：本控件在内容层内，
+            // 采样含内容层的 backdrop 会形成 RenderNode 自引用循环导致 RenderThread 栈溢出
+            backdrop = backdrop,
+            // 放进内容流后不再是「贴在屏幕边缘的悬浮药丸」，
+            // 没必要占 64dp 那么高，压到 52dp 更像一条控件而不是一块板砖
+            height = 52.dp
+        )
+    }
+}
+
+/**
+ * 趋势图的指标切换（金额 / Tokens）。
+ *
+ * 不用 LiquidGlassSegmentedControl：那个是给「贴在页面上的主控件」设计的
+ * （整条玻璃壳 + 折射滑块），塞进卡片里就成了一块死黑的重物。
+ * 卡内的次要控件用轻量药丸：选中项填品牌色，未选中项只有极淡的底。
+ */
+@Composable
+private fun MetricToggle(
+    selected: TrendMetric,
+    onSelect: (TrendMetric) -> Unit
+) {
+    val palette = LocalGlassPalette.current
+    // 品牌色是亮青，填在色块上的文字必须用深色才看得清：
+    // 原来用 AccentInk（暗色主题下本身就是浅色）= 浅字压浅底，几乎读不出来。
+    val onAccent = if (palette.Accent.luminance() > 0.5f) {
+        androidx.compose.ui.graphics.Color(0xFF07131A)
+    } else {
+        androidx.compose.ui.graphics.Color.White
+    }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(palette.InkHi.copy(alpha = 0.06f))
+            .padding(3.dp)
+    ) {
+        TrendMetric.entries.forEach { m ->
+            val on = m == selected
+            Text(
+                text = if (m == TrendMetric.COST) "金额" else "Tokens",
+                style = GlassText.Meta.copy(fontSize = 12.sp),
+                color = if (on) onAccent else palette.InkMid,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(if (on) palette.Accent else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { onSelect(m) }
+                    .padding(horizontal = 12.dp, vertical = 5.dp)
+            )
         }
     }
 }

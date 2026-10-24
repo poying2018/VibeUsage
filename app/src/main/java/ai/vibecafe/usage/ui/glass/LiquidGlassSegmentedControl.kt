@@ -104,9 +104,12 @@ fun LiquidGlassSegmentedControl(
     val isLightTheme = !p.isDark
     val contentColor = if (isLightTheme) Color.Black else Color.White
     val accentColor = p.Accent
+    // 轨道底色要**透**：原来叠了 40% 的近黑/近白，玻璃的 vibrancy + 折射全被盖住，
+    // 整个控件在深色底上就是一条黑杠，选中段因为是纯折射反而比轨道更暗 ——
+    // 看着像个「洞」而不是「被选中的滑块」。压到 14%~20% 让玻璃感透出来。
     val containerColor =
-        if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f)
-        else Color(0xFF121212).copy(0.4f)
+        if (isLightTheme) Color(0xFFFAFAFA).copy(0.2f)
+        else Color(0xFF121212).copy(0.14f)
 
     // onSelect 会被收集协程长期持有，必须始终是最新引用（调用方的 lambda 可能捕获了旧状态）
     val currentOnSelect by rememberUpdatedState(onSelect)
@@ -321,7 +324,14 @@ fun LiquidGlassSegmentedControl(
                 .height(height - 8.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp)
-                .graphicsLayer { colorFilter = ColorFilter.tint(accentColor) },
+                // 这层是「隐藏的 Accent 内容层」：alpha=0，但内容会被写进 backdrop，
+                // 滑块折射它，选中段的文字颜色就来自这里。
+                // 浅色主题下不能用品牌色：品牌色是亮青，压在 22% 品牌色底的滑块上
+                // 就是青字压青底（对比度约 1.5，几乎读不出来）。
+                // 浅色下改用近黑 —— 亮青字压近黑底，对比度 10+。
+                .graphicsLayer {
+                    colorFilter = ColorFilter.tint(if (isLightTheme) Color.Black else accentColor)
+                },
             verticalAlignment = Alignment.CenterVertically
         ) {
             items.forEachIndexed { index, label ->
@@ -399,6 +409,10 @@ fun LiquidGlassSegmentedControl(
                     },
                     onDrawSurface = {
                         val progress = dampedDragAnimation.pressProgress
+                        // 选中段保持**纯透明玻璃**：不铺任何品牌色。
+                        // 铺了色就不是玻璃了，而「液态玻璃」这个卖点恰恰是
+                        // 选中段应该像一颗透镜，把底下的内容和背景折射进来。
+                        // 选中项的辨识度靠折射本身（边缘高光 + 内容变形），不靠填色。
                         drawRect(
                             if (isLightTheme) Color.Black.copy(0.1f)
                             else Color.White.copy(0.1f),

@@ -227,11 +227,15 @@ private fun DrawScope.orb(
     val r = diameter / 2f * scale
     if (r <= 0f) return
     val c = Offset(center.x + w * 0.05f * progress, center.y + h * 0.06f * progress)
+    // 透明度压到 0.34：四个光斑在暗色主题是 Plus（加色）混合，
+    // alpha 给高了会互相叠成一片奶紫色的雾，玻璃卡片压上去底色全被搅浑。
+    // 想要颜色就靠「饱和度」而不是「亮度」——加色叠出来的亮只会更脏。
+    val tint = color.copy(alpha = 0.34f)
     drawCircle(
         brush = Brush.radialGradient(
             colorStops = arrayOf(
-                0f to color.copy(alpha = 0.55f),
-                0.45f to color.copy(alpha = 0.42f),
+                0f to tint,
+                0.45f to tint.copy(alpha = 0.26f),
                 1f to Color.Transparent
             ),
             center = c,
