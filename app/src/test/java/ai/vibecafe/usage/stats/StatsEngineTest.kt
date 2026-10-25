@@ -250,4 +250,59 @@ class StatsEngineTest {
         assertEquals(100.0, mp!!.monthCost, 0.0001)
         assertEquals(100.0 / daysElapsed * daysInMonth, mp.projected, 0.0001)
     }
+
+    // ---- 脏数据容错 ----
+
+    @Test
+    fun `daily usage survives an unparseable bucket timestamp`() {
+        // 服务端某条 bucket 的 bucketStart 格式不对（少了毫秒 / 多余时区偏移 / 空串）。
+        // 之前它被归到 "" 这个 key，随后 dateFormat.parse("") 抛 ParseException
+        // （SimpleDateFormat.parse 失败是抛异常不是返回 null）—— 整份日粒度数据直接崩掉。
+        val bad = bucket(0).copy(bucketStart = "not-a-timestamp")
+        val data = resp(bad, bucket(-1))
+        val daily = StatsEngine.computeDailyUsage(data, TimeRange.DAYS_7)
+        // 坏的那条被丢掉，好的那条照常出现
+        assertEquals(1, daily.size)
+        assertEquals(110L, daily.first().tokens)
+    }
+
+    @Test
+    fun `hourly usage survives an unparseable bucket timestamp`() {
+        val bad = bucket(0).copy(bucketStart = "")
+        val data = resp(bad, bucket(-1))
+        val hourly = StatsEngine.computeHourlyUsage(data)
+        assertEquals(1, hourly.size)
+        assertEquals(110L, hourly.first().tokens)
+    }
+
+    // ---- 会话分摊 ----
+
+    @Test
+    fun `session token split keeps the total when counts are huge`() {
+        // 33 亿 token 分给两个会话。原来用 Long * Float 算：
+        // Long 先转 Float，3.3e9 量级的 Float 粒度已经是 256，
+        // 分摊结果会差几百 token，凑不齐总数（用户看到「会话加起来 ≠ 总览」）。
+        val huge = 33L * 100_000_000L
+        val big = bucket(0, cost = 10.0).copy(inputTokens = huge, totalTokens = huge)
+        val data = resp(big, sessions = listOf(session(0, messages = 3), session(0, messages = 1)))
+        val sessions = StatsEngine.computeDisplaySessions(data, TimeRange.DAYS_7)
+        assertEquals(2, sessions.size)
+        val expected = huge + 10   // fullTokens 还含 outputTokens=10
+        val sum = sessions.sumOf { it.tokens }
+        // 允许每条会话截断带来的 <1 token 误差，但不能是「几百」那种
+        assertTrue("分摊误差应 ≤ 每条会话 1 个 token，实际差 ${expected - sum}", kotlin.math.abs(expected - sum) <= sessions.size)
+    }
+
+    @Test
+    fun `sessions with zero message count still get their share`() {
+        // 服务端没给 messageCount（全是 0）时，原来 share 直接取 0，
+        // 这一组会话全部显示 0 tokens / $0.00，和总览金额对不上。
+        // 正确做法是按会话数平摊。
+        val b = bucket(0, cost = 8.0)
+        val data = resp(b, sessions = listOf(session(0, messages = 0), session(0, messages = 0)))
+        val sessions = StatsEngine.computeDisplaySessions(data, TimeRange.DAYS_7)
+        assertEquals(2, sessions.size)
+        assertTrue("会话不应全为 0", sessions.any { it.tokens > 0 })
+        assertEquals(110L, sessions.sumOf { it.tokens })
+    }
 }

@@ -19,8 +19,11 @@ object ThemeStore {
     private const val KEY_THEME = "theme_mode"
 
     fun get(context: Context): ThemeMode {
-        val name = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_THEME, null) ?: return ThemeMode.SYSTEM
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // getString 在「值被写成了别的类型」时会抛 ClassCastException（旧版本写过数字、
+        // 云备份恢复后类型对不上），那会直接崩在启动路径上，所以先兜一层。
+        val name = runCatching { prefs.getString(KEY_THEME, null) }.getOrNull()
+            ?: return ThemeMode.SYSTEM
         return runCatching { ThemeMode.valueOf(name) }.getOrDefault(ThemeMode.SYSTEM)
     }
 

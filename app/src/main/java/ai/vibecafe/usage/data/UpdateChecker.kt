@@ -295,8 +295,16 @@ object UpdateChecker {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful || response.body == null) return null
             val text = response.body!!.string().trim()
-            // 兼容 "abc123  filename.apk" 与纯 hash 两种格式；SHA-256 恒为 64 位 hex
-            return text.split(Regex("\\s+")).firstOrNull()?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+            // 在所有空白分隔的片段里找第一个 64 位 hex —— 只看第一段的话，
+            // 发布方用 `sha256sum`（hash + 文件名）能碰上，
+            // 但用带 BOM 的文件、或首行是 "SHA256 (file) = hash" 的格式就会失配，
+            // 结果是明明有合法基线却被判成「远端未提供校验基准」，永久挡住安装。
+            val hex = Regex("[0-9a-fA-F]{64}")
+            val tokens = text.split(Regex("\\s+"))
+            // 先找「整段就是一个 hash」的（sha256sum 的输出、以及纯 hash 文件），
+            // 找不到再在整段文本里扫第一个 64 位 hex
+            // （覆盖 "SHA256 (file) = hash" 这种带前缀的格式）。
+            return tokens.firstOrNull { hex.matches(it) } ?: hex.find(text)?.value
         }
     }
 

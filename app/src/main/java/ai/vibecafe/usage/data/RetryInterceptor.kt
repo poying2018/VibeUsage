@@ -33,8 +33,10 @@ class RetryInterceptor(private val maxRetries: Int = 3) : Interceptor {
                 response = newResponse
                 previous?.close()
 
-                // 不重试客户端鉴权等错误 (4xx), 但重试网关和服务器瞬断 (5xx)
-                if (newResponse.code in 400..499) {
+                // 不重试客户端鉴权等错误 (4xx), 但重试网关和服务器瞬断 (5xx)。
+                // 429 是例外：它明确表示「稍后重试」，还带 Retry-After，
+                // 当成不可重试的 4xx 会把一次限流直接变成失败。
+                if (newResponse.code in 400..499 && newResponse.code != 429) {
                     break
                 }
                 exception = null

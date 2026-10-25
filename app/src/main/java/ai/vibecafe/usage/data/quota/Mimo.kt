@@ -76,9 +76,20 @@ object Mimo {
         } catch (e: QuotaException) {
             throw if (e.code == 401) QuotaException(401, EXPIRED) else e
         }
-        val planText = get("/tokenPlan/usage")
-        val detailText = runCatching { get("/tokenPlan/detail") }.getOrNull()
-        val balanceText = runCatching { get("/balance") }.getOrNull()
+        // 单个接口失败只影响它自己那一块；401（Cookie 过期）是全局故障，必须冒泡。
+        fun getTolerant(path: String): String? = try {
+            get(path)
+        } catch (e: QuotaException) {
+            if (e.code == 401) throw e
+            null
+        }
+        // 三个接口互不牵连：任何一个挂掉都不该把另外两个的额度带走。
+        // 套餐接口之前没包保护，它一失败（5xx 等）整个面板报错，
+        // 连本来好好的账户余额都看不到。
+        // 但 401（Cookie 过期）是**全局**故障，要让用户看到明确提示，不能吞掉。
+        val planText = getTolerant("/tokenPlan/usage")
+        val detailText = getTolerant("/tokenPlan/detail")
+        val balanceText = getTolerant("/balance")
         val groups = linkedMapOf<String, MutableList<Bar>>()
         parsePlan(planText, detailText).let { if (it.isNotEmpty()) groups["套餐额度"] = it.toMutableList() }
         // 余额与套餐互不牵连：余额拉不到不该把额度区一起带走（Agnes 赠费余额同款处理）
@@ -123,8 +134,10 @@ object Mimo {
      * month_total_token），而 **percent 是 0–1 的小数**（0.033 就是 3.3%）。所以一律以
      * used/limit 折算百分比，比例字段只在拿不到绝对量时兜底——直接对 0.033 取整会永远显示 0%。
      */
-    internal fun parsePlan(resp: String, detailResp: String?): List<Bar> {
-        val data = envelope(resp).optObject("data") ?: return emptyList()
+    internal fun parsePlan(resp: String?, detailResp: String?): List<Bar> {
+        // 套餐接口拿不到时返回空列表，不抛异常 —— 余额那边还要显示
+        val data = resp?.let { runCatching { envelope(it) }.getOrNull() }?.optObject("data")
+            ?: return emptyList()
         val detail = detailResp?.let { runCatching { envelope(it).optObject("data") }.getOrNull() }
         val items = listOf(data.optObject("usage"), data.optObject("monthUsage")).flatMap { group ->
             (group?.optArray("items") ?: JsonArray()).mapNotNull { it as? JsonObject }

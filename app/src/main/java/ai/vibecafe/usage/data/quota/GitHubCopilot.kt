@@ -148,15 +148,16 @@ object GitHubCopilot {
             ?: throw QuotaException(0, "响应缺少 quota_snapshots（确认 Token 已开通 Copilot 权限）")
         val resetDate = listOf("quota_reset_date_utc", "quota_reset_date")
             .firstNotNullOfOrNull { jstr(obj, it) }?.let { r ->
-                try {
-                    val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(r.take(10))
-                    // 解析按 UTC、格式按北京时间，与其它额度口径一致
-                    d?.let {
-                        SimpleDateFormat("MM-dd", Locale.US).apply {
-                            timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
-                        }.format(it) + " 重置"
-                    }
-                } catch (_: Exception) { null }
+                // 服务器给的是**日期**（"2026-10-24"），不是时刻。
+                // 之前用 SimpleDateFormat.parse 解析再按北京时间格式化，
+                // 而 parse 默认按设备本地时区 —— UTC+13 的设备会算成 10-23（差一天）。
+                // 日期就按日期读：取前 10 位，验证格式后直接换成年月日，不做任何时区换算。
+                val md = r.trim().take(10)
+                if (md.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) {
+                    "${md.substring(5, 7)}-${md.substring(8, 10)} 重置"
+                } else {
+                    null
+                }
             }
         val groups = linkedMapOf<String, MutableList<Bar>>()
         fun snap(key: String, label: String) {

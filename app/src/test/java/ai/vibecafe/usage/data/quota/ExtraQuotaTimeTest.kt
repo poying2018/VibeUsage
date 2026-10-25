@@ -35,8 +35,28 @@ class ExtraQuotaTimeTest {
     }
 
     @Test
-    fun `compact uses dot decimal separator in every locale`() {
-        val saved = java.util.Locale.getDefault()
+    fun `epoch reset in the past does not read like a broken sentence`() {
+        // 重置时间已经过去：原来拼成「… 重置 · 已重置后」——「已重置」后面
+        // 又跟个「后」字，读起来是病句；ISO 版的 formatReset 早就收成「已重置」了。
+        val past = System.currentTimeMillis() - 3_600_000L
+        val text = ExtraQuotaApi.epochReset(past)
+        assertTrue("不应出现「已重置后」，实际=$text", !text.contains("已重置后"))
+        assertTrue("应带「已重置」，实际=$text", text.contains("已重置"))
+        assertTrue("应保留重置时刻，实际=$text", text.matches(Regex("^\\d{2}-\\d{2} \\d{2}:\\d{2} 重置 · 已重置$")))
+    }
+
+    @Test
+    fun `iso reset in the past keeps the timestamp`() {
+        // 与 epochReset 同一口径：带上「什么时候重置的」，而不是只丢一句「已重置」
+        val past = System.currentTimeMillis() - 3_600_000L
+        val iso = java.time.Instant.ofEpochMilli(past).toString()
+        val text = ExtraQuotaApi.formatReset(iso)
+        assertTrue("应带「已重置」，实际=$text", text != null && text.contains("已重置"))
+        assertTrue("应保留重置时刻，实际=$text", text != null && text.matches(Regex("^\\d{2}-\\d{2} \\d{2}:\\d{2} 重置 · 已重置$")))
+    }
+
+    @Test
+    fun `compact uses dot decimal separator in every locale`() {        val saved = java.util.Locale.getDefault()
         try {
             // 小数点为逗号的 locale（de/ru）会让 "%.1f" 输出 "123,4"
             java.util.Locale.setDefault(java.util.Locale.GERMANY)

@@ -202,10 +202,13 @@ object CommandCodeOAuth {
             val pending = async { server.await() }
             OAuthFlow.openBrowser(context, buildAuthorizeUrl(PORT, state))
             val cb = pending.await()
-            validateState(cb, state)
+            // 先看 error 再验 state：用户点「拒绝授权」时服务端只回 error、不带 state，
+            // 先验 state 会把真实原因（「授权失败：access_denied」）替换成
+            // 「state 校验失败，请重新发起授权」，用户完全看不懂发生了什么。
             if (cb.error != null) {
                 throw QuotaException(0, "授权失败：${cb.error}")
             }
+            validateState(cb, state)
             val key = cb.apiKey
                 ?: throw QuotaException(0, "授权未返回 API Key，请在网页完成登录后再试")
             Login(key, cb.userId, cb.userName)

@@ -416,6 +416,10 @@ object StatsEngine {
             val t = parseCached(bucket.bucketStart) ?: return@groupBy ""
             toBeijingDateOnly(t)
         }
+            // 解析失败的 bucket 被归到 "" 这个 key（上面的 ?: 兜底）。
+            // 留着它，dateFormat.parse("") 会抛 ParseException —— SimpleDateFormat.parse
+            // 解析失败是抛异常而不是返回 null —— 整份日粒度数据直接崩掉。
+            .filterKeys { it.isNotEmpty() }
             .map { (date, list) ->
                 DailyUsage(
                     date = date,
@@ -424,8 +428,10 @@ object StatsEngine {
                 )
             }
             .sortedBy { it.date }
-            .map { entry ->
-                val parsed = dateFormat.parse(entry.date) ?: return@map entry
+            .mapNotNull { entry ->
+                // 再兜一层：万一日期串格式也不对（服务端改了格式），
+                // 宁可丢掉这一条，也不要让整个图表算不出来。
+                val parsed = runCatching { dateFormat.parse(entry.date) }.getOrNull() ?: return@mapNotNull null
                 entry.copy(date = labelFormat.format(parsed))
             }
     }
@@ -440,6 +446,9 @@ object StatsEngine {
                 val t = parseCached(bucket.bucketStart) ?: return@groupBy ""
                 toBeijingHour(t)
             }
+            // 同上：解析失败的 bucket 归到 ""，那是个空小时标签，
+            // 留在图上会多出一个没有意义的点
+            .filterKeys { it.isNotEmpty() }
             .map { (hour, list) ->
                 DailyUsage(
                     date = hour,
@@ -499,13 +508,27 @@ object StatsEngine {
             val key = SessionKey(s.source, s.hostname)
             agg.getOrPut(key) { Agg(0.0, 0L, 0) }.messages += s.messageCount
         }
+        // 每组（工具+主机）有多少条会话：消息数全为 0 时要靠它做平摊
+        val sessionCount = HashMap<SessionKey, Int>()
+        for (s in sessions) {
+            val key = SessionKey(s.source, s.hostname)
+            sessionCount[key] = (sessionCount[key] ?: 0) + 1
+        }
         return sessions
             .sortedByDescending { it.lastMessageAt }
             .map { s ->
                 val key = SessionKey(s.source, s.hostname)
                 val a = agg[key] ?: Agg(0.0, 0L, 0)
-                // 按消息数占比分摊；无消息数信息时平摊
-                val share = if (a.messages > 0) s.messageCount.toFloat() / a.messages else 0f
+                // 按消息数占比分摊；这组会话的消息数全是 0（服务端没给消息数字段）时平摊，
+                // 不能直接归零 —— 归零会让这一组会话显示 0 tokens / $0.00，
+                // 和总览里的金额对不上。
+                val share = when {
+                    a.messages > 0 -> s.messageCount.toDouble() / a.messages.toDouble()
+                    else -> {
+                        val n = sessionCount[key] ?: 1
+                        1.0 / n.toDouble()
+                    }
+                }
                 DisplaySession(
                     source = s.source,
                     project = s.project,
@@ -513,7 +536,11 @@ object StatsEngine {
                     lastMessageAt = s.lastMessageAt,
                     durationSeconds = s.durationSeconds,
                     messageCount = s.messageCount,
-                    tokens = (a.tokens * share).toLong(),
+                    // 用 Double 算：Long * Float 会先把 Long 转成 Float，
+                    // 超过 2^24（约 1677 万）后精度就丢了 ——
+                    // 本账号 token 量级是十亿级，会话明细会出现几百万的误差，
+                    // 而且各会话加起来对不上总览。
+                    tokens = (a.tokens.toDouble() * share).toLong(),
                     cost = a.cost * share
                 )
             }

@@ -611,7 +611,12 @@ fun DashboardScreen(
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     if (hasTools) {
-                                        ToolDistributionSection(state, backdrop, onShowToolDetail)
+                                        ToolDistributionSection(
+                                            state,
+                                            backdrop,
+                                            onShowToolDetail,
+                                            rows = sortedTools.take(8)
+                                        )
                                     }
                                 }
                                 Column(Modifier.weight(1f)) {
@@ -1594,7 +1599,9 @@ private fun ToolDistributionSection(
     backdrop: com.kyant.backdrop.Backdrop,
     onShowToolDetail: (String) -> Unit,
     // 手机单列时由页面把列表行提升为惰性 item，这里只出标题 + 环形图卡
-    includeRows: Boolean = true
+    includeRows: Boolean = true,
+    // 列表行的顺序：平板双列时由页面按排序芯片给（手机单列的行是页面自己渲染的）
+    rows: List<ToolDistribution>? = null
 ) {
     val palette = LocalGlassPalette.current
     val haptic = LocalHapticFeedback.current
@@ -1661,8 +1668,13 @@ private fun ToolDistributionSection(
     // 正好复刻改造前「环形图卡 → 第一行」的 51dp
     Spacer(Modifier.height(11.dp))
     if (includeRows) {
+        // 行列表用排序芯片给的顺序（rows 为 null 时回落到自然顺序）：
+        // 平板双列里应用列和模型列必须听同一套排序，否则「按名称」排完
+        // 只有右边变了、左边不动，排序芯片看着像半坏的。
+        // 环形图与图例仍用自然顺序（按占比），那部分讲的是「份额」不是「排序」。
+        val list = rows ?: top
         Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            top.forEachIndexed { index, item ->
+            list.forEachIndexed { index, item ->
                 GlassListRow(
                     backdrop = backdrop,
                     icon = toolIconFor(item.tool),

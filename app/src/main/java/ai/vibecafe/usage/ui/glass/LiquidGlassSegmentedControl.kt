@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,6 +62,7 @@ import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import ai.vibecafe.usage.ui.theme.isDark
 import androidx.compose.material3.Text
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -363,6 +365,24 @@ fun LiquidGlassSegmentedControl(
             animationSpec = tween(220, easing = EaseOutQuint),
             label = "pillAlpha"
         )
+        // 滑块不可见时**必须不接收触摸**。
+        // alpha=0 只是「看不见」，它照样占位置、照样是命中测试里最靠上的那个节点，
+        // 于是它盖住的那一段的点击被整个吃掉 —— 自定义范围档下用户想点回
+        // 原来那一档（比如 30 天）却毫无反应，是个隐形死区。
+        // 不挂 gesture modifier 就没有 pointerInput，触摸自然穿透到下面的分段。
+        //
+        // 关闭时机比「有没有选中项」晚一点：淡出动画有 220ms，这段时间滑块还看得见，
+        // 此时按它却没反应会让人以为界面卡了。等淡出结束再关掉。
+        // （不用 pillAlpha > 0.01f 判定：那样会在组合期读动画值，220ms 里逐帧重组。）
+        var sliderInteractive by remember { mutableStateOf(true) }
+        LaunchedEffect(hasSelection) {
+            if (hasSelection) {
+                sliderInteractive = true
+            } else {
+                delay(260)
+                sliderInteractive = false
+            }
+        }
         Box(
             Modifier
                 .padding(horizontal = 4.dp)
@@ -372,8 +392,8 @@ fun LiquidGlassSegmentedControl(
                         else size.width - (dampedDragAnimation.value + 1f) * tabWidth + panelOffset
                     alpha = pillAlpha
                 }
-                .then(interactiveHighlight.gestureModifier)
-                .then(dampedDragAnimation.modifier)
+                .then(if (sliderInteractive) interactiveHighlight.gestureModifier else Modifier)
+                .then(if (sliderInteractive) dampedDragAnimation.modifier else Modifier)
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
                     shape = { Pill },

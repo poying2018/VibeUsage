@@ -68,13 +68,18 @@ object GlassStyleStore {
         synchronized(this) {
             if (initialized) return
             val prefs = context.getSharedPreferences("vibe_usage", Context.MODE_PRIVATE)
+            // getFloat/getString 在「值被写成了别的类型」时会抛 ClassCastException
+            // （旧版本写过字符串、或云备份恢复后类型对不上）。
+            // 那样会直接崩在启动路径上，所以每个读取都兜一层，坏值回落默认。
+            fun float(key: String, fallback: Float): Float =
+                runCatching { prefs.getFloat(key, fallback) }.getOrDefault(fallback)
             style = sanitize(
                 GlassStyle(
-                    brightness = prefs.getFloat(KEY_BRIGHTNESS, Default.brightness),
-                    contrast = prefs.getFloat(KEY_CONTRAST, Default.contrast),
-                    saturation = prefs.getFloat(KEY_SATURATION, Default.saturation),
-                    whiteOverlay = prefs.getFloat(KEY_WHITE, Default.whiteOverlay),
-                    blurCardDp = prefs.getFloat(KEY_BLUR, Default.blurCardDp)
+                    brightness = float(KEY_BRIGHTNESS, Default.brightness),
+                    contrast = float(KEY_CONTRAST, Default.contrast),
+                    saturation = float(KEY_SATURATION, Default.saturation),
+                    whiteOverlay = float(KEY_WHITE, Default.whiteOverlay),
+                    blurCardDp = float(KEY_BLUR, Default.blurCardDp)
                 )
             )
             initialized = true

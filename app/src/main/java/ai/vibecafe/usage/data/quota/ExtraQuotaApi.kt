@@ -109,10 +109,16 @@ object ExtraQuotaApi {
      * （Mimo 解析侧就显式用了 Asia/Shanghai），若这里跟随设备默认时区，
      * 非东八区设备显示的重置时刻会整体偏移，单测也会随机器时区而红。
      */
-    internal fun epochReset(ms: Long): String =
-        "${SimpleDateFormat("MM-dd HH:mm", Locale.US).apply {
+    internal fun epochReset(ms: Long): String {
+        val stamp = SimpleDateFormat("MM-dd HH:mm", Locale.US).apply {
             timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
-        }.format(Date(ms))} 重置 · ${formatCountdown(ms - System.currentTimeMillis())}后"
+        }.format(Date(ms))
+        val remaining = ms - System.currentTimeMillis()
+        // 重置时间已经过去时不能拼成「…重置 · 已重置后」这种病句。
+        // ISO 版的 formatReset 早就按「已重置」收尾了，两个口径要一致。
+        return if (remaining <= 0) "$stamp 重置 · 已重置"
+        else "$stamp 重置 · ${formatCountdown(remaining)}后"
+    }
 
     /** ISO8601 → 「MM-dd HH:mm · X后重置」；解析失败返回 null。 */
     internal fun formatReset(iso: String): String? {
@@ -123,7 +129,9 @@ object ExtraQuotaApi {
             }.format(Date(ms))
         }
         return when {
-            remaining <= 0 -> "已重置"
+            // 与 epochReset 保持同一口径：已经重置了就带上时刻 + 「已重置」，
+            // 而不是只丢一句「已重置」把用户最想看的「什么时候重置的」也吞掉。
+            remaining <= 0 -> if (abs != null) "$abs 重置 · 已重置" else "已重置"
             abs != null -> "$abs 重置 · ${formatCountdown(remaining)}后"
             else -> "重置：${formatCountdown(remaining)}后"
         }
