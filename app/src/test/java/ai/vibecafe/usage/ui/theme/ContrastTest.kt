@@ -1,7 +1,6 @@
 package ai.vibecafe.usage.ui.theme
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import ai.vibecafe.usage.ui.ag.readableBrandColor
 import org.junit.Assert.assertTrue
@@ -15,11 +14,19 @@ import org.junit.Test
  */
 class ContrastTest {
 
-    /** 玻璃卡片在深色主题下的实际底色（页面底 + 8% 白）。 */
-    private val darkCard = Color(0xFF0B1019).compositeOver(Color(0x14FFFFFF))
+    /**
+     * 玻璃卡片的实际底色，直接取生产代码的 [cardBackground]。
+     *
+     * 这里曾经写成 `Page.compositeOver(Surface)` —— 方向反了。
+     * `compositeOver` 的语义是「调用者叠在参数之上」，卡片是**半透明 Surface 叠在 Page 上**，
+     * 正确顺序是 `Surface.compositeOver(Page)`。反着算出来的是「页面底色叠在白玻璃上」，
+     * 暗色主题下会得到一块比真实卡片亮得多的底，于是「深底提亮品牌色」这条断言
+     * 即使实现错了也可能通过。共用同一个函数，就不会再和 UI 走偏。
+     */
+    private val darkCard = DarkGlassPalette.cardBackground()
 
-    /** 浅色主题下的卡片底（页面底 + 55% 白）。 */
-    private val lightCard = Color(0xFFEEF2F7).compositeOver(Color(0x8CFFFFFF))
+    /** 浅色主题下的卡片底。 */
+    private val lightCard = LightGlassPalette.cardBackground()
 
     @Test
     fun `contrast ratio of black on white is the maximum`() {

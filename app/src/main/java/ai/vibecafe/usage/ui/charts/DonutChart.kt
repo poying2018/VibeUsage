@@ -21,7 +21,6 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.min
 
 /** 环形图的一个扇区。 */
 data class DonutSlice(
@@ -114,7 +113,3 @@ fun DonutChart(
         drawText(bottomLayout, topLeft = Offset(center.x - bottomLayout.size.width / 2f, topY + topLayout.size.height + gapY))
     }
 }
-
-/** 供图例使用：把占比转成可读的百分比文案。 */
-fun percentText(percentage: Float): String =
-    "${min(percentage, 100f).let { String.format(java.util.Locale.US, "%.0f", it) }}%"

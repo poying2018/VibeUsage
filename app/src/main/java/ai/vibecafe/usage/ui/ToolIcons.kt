@@ -94,7 +94,11 @@ private const val ICON_CACHE_MAX = 512
 internal fun toolIconFor(name: String): ToolIcon {
     iconCache[name]?.let { return it }
     val icon = computeToolIconFor(name)
-    if (iconCache.size < ICON_CACHE_MAX) iconCache[name] = icon
+    // 满了就整体清空再收新值：以前是「满了就不再缓存」，于是超限之后
+    // 新出现的名字每次查找都要重跑 28 条规则 + 编辑距离，缓存等于失效。
+    // 名字集合本身有界（历史用量里的工具/模型名），清空后很快就会重新收敛。
+    if (iconCache.size >= ICON_CACHE_MAX) iconCache.clear()
+    iconCache[name] = icon
     return icon
 }
 

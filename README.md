@@ -102,7 +102,6 @@ app/src/main/java/ai/vibecafe/usage/
 ├── share/ShareCard.kt              # 玻璃风格分享卡
 ├── budget/BudgetNotify.kt          # 预算超支通知
 ├── widget/UsageWidget.kt           # Glance 小组件
-├── render/GlassEngine.kt           # 着色器
 └── ui/
     ├── DashboardScreen.kt          # 主面板
     ├── SettingsScreen.kt           # 设置
@@ -114,7 +113,7 @@ app/src/main/java/ai/vibecafe/usage/
     └── theme/                      # 亮/暗/纯黑设计令牌 + 排版
 ```
 
-测试见 `app/src/test/`，覆盖统计引擎（时间窗口 / 趋势 / 设备筛选）、GLM / MiMo / MiniMax / CommandCode 解析、host 兜底策略、图标匹配、分享卡与凭据加密。
+测试见 `app/src/test/`，覆盖统计引擎（时间窗口 / 趋势 / 设备筛选）、GLM / MiMo / MiniMax / CommandCode / OpenCode 解析、重试与 host 兜底策略、图标匹配、主题对比度、分享卡与凭据加密。
 
 ## 📄 许可证
 

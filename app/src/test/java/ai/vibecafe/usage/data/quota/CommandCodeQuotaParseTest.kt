@@ -51,10 +51,33 @@ class CommandCodeQuotaParseTest {
         assertEquals(70, weekly.percentRemaining)
         assertEquals(30, weekly.usedPercent)
         assertNotNull(weekly.counts)
-        // resetAt=1792977253808 是未来的重置时刻 → 应有倒计时文案
-        assertNotNull("每周窗口应有重置倒计时", weekly.reset)
+        // resetAt 是样本抓取当时的时刻，早就过去了 —— 这里只断言「有重置文案」，
+        // 不断言倒计时/已重置哪一种：拿写死的日期去断言具体分支，
+        // 样本一过期用例就会变成时炸弹。分支行为见下面单独构造时刻的用例。
+        assertNotNull("每周窗口应有重置文案", weekly.reset)
         // 5 小时窗口的 resetAt=0（服务端未下发）→ 不显示重置
         assertNull("resetAt 为 0 时不应显示重置", fiveHour.reset)
+    }
+
+    @Test
+    fun `reset text switches between countdown and already-reset by timestamp`() {
+        // 未来 90 分钟：应给倒计时
+        val future = System.currentTimeMillis() + 90 * 60_000L
+        val futureJson = CREDITS_LIVE.replace("1792977253808", future.toString())
+        val futureWeekly = CommandCode.buildGroups(obj(futureJson), null)["额度窗口"]!![1]
+        assertTrue(
+            "未来时刻应给倒计时：${futureWeekly.reset}",
+            futureWeekly.reset!!.endsWith("后")
+        )
+
+        // 一小时前：应给「已重置」，而不是拼成「已重置后」这种病句
+        val past = System.currentTimeMillis() - 3_600_000L
+        val pastJson = CREDITS_LIVE.replace("1792977253808", past.toString())
+        val pastWeekly = CommandCode.buildGroups(obj(pastJson), null)["额度窗口"]!![1]
+        assertTrue(
+            "过去的时刻应标已重置：${pastWeekly.reset}",
+            pastWeekly.reset!!.contains("已重置") && !pastWeekly.reset!!.endsWith("后")
+        )
     }
 
     @Test

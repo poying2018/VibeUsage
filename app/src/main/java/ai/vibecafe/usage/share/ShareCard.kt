@@ -296,8 +296,7 @@ object ShareCard {
         fullWidth: Boolean,
         body: Typeface?,
         black: Typeface?,
-        nameSize: Float = 30f,
-        nameTruncateAt: TextUtils.TruncateAt = TextUtils.TruncateAt.END
+        nameSize: Float = 30f
     ) {
         if (list.isEmpty()) return
         val colW = if (fullWidth) (W - 144f * scale) else 448f * scale
@@ -322,7 +321,7 @@ object ShareCard {
             val pt = paint(InkMid, 28f * scale, body)
             val pct = String.format(Locale.US, "%.0f%%", (item.share * 100f).coerceIn(0f, 999f))
             val pctW = pt.measureText(pct)
-            val name = ellipsize(item.name, np, colW - pctW - 24f * scale, nameTruncateAt)
+            val name = ellipsize(item.name, np, colW - pctW - 24f * scale)
             c.drawText(name, x, y, np)
             c.drawText(pct, x + colW - pctW, y, pt)
             val barY = y + 14f * scale
@@ -342,14 +341,15 @@ object ShareCard {
     }
 
     /**
-     * 名称截断。
+     * 名称截断：一律**尾部**截断。
      *
      * 模型 id 很长（`MiniMax-M3.1-Flash-Preview-…`、`wb/global:step-5-preview`），
-     * 尾部截断只剩前缀，看不出是哪个变体；改成**中间截断**，前后都留一段。
-     * 应用名本来就短，不受影响。
+     * 一度试过中间截断想让前后都留一段，但实际切在词中间
+     * （`MiniMax-M…sh-Preview`），比尾部截断更碎、更难认。
+     * 真正缓解长度的是 [drawTopList] 里模型列的小一号字号，不是截断策略。
      */
-    private fun ellipsize(text: String, p: Paint, max: Float, at: TextUtils.TruncateAt = TextUtils.TruncateAt.END): String =
-        TextUtils.ellipsize(text, TextPaint(p), max, at).toString()
+    private fun ellipsize(text: String, p: Paint, max: Float): String =
+        TextUtils.ellipsize(text, TextPaint(p), max, TextUtils.TruncateAt.END).toString()
 
     private fun typeface(context: Context, resId: Int): Typeface? =
         runCatching { ResourcesCompat.getFont(context, resId) }.getOrNull()
