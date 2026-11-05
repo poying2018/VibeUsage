@@ -41,6 +41,8 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -60,22 +62,59 @@ object UsageWidgetCache {
 
     fun file(context: Context): File = File(context.filesDir, FILE_NAME)
 
-    fun read(context: Context): WidgetSnapshot? = runCatching {
-        val f = file(context)
-        if (!f.exists()) return null
-        gson.fromJson(f.readText(), WidgetSnapshot::class.java)
-    }.getOrNull()
+    fun read(context: Context): WidgetSnapshot? = readFrom(file(context))
 
-    fun write(context: Context, snapshot: WidgetSnapshot) {
+    fun write(context: Context, snapshot: WidgetSnapshot) = writeTo(file(context), snapshot)
+
+    /**
+     * 读快照（纯文件实现，便于单测）。
+     *
+     * 解析失败只可能是撞上了写方的非原子退路（极少见）：
+     * 隔 30ms 再读一次，避免一次抖动就把桌面打成「—」/「等待同步」。
+     */
+    internal fun readFrom(f: File): WidgetSnapshot? {
+        if (!f.exists()) return null
+        repeat(2) { attempt ->
+            val text = runCatching { f.readText() }.getOrNull() ?: return null
+            val parsed = runCatching { gson.fromJson(text, WidgetSnapshot::class.java) }.getOrNull()
+            if (parsed != null) return parsed
+            if (attempt == 0) {
+                try {
+                    Thread.sleep(30)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * 写快照（纯文件实现，便于单测）。
+     *
+     * 原子写：先写临时文件、fsync 落盘，再改名。
+     * POSIX 的 rename 覆盖是原子的 —— 读方要么看到旧文件、要么看到完整的新文件，
+     * 不会读到半截 JSON（解析失败会被吞成 null，桌面就退化成「—」/「等待同步」）。
+     */
+    internal fun writeTo(f: File, snapshot: WidgetSnapshot) {
         runCatching {
-            val f = file(context)
-            // 原子写：先写临时文件再改名，避免读到写了一半的 JSON
-            // （读侧解析失败会被吞成 null，桌面就显示 $0.00）
+            val payload = gson.toJson(snapshot).toByteArray(Charsets.UTF_8)
             val tmp = File(f.parentFile, "${f.name}.tmp")
-            tmp.writeText(gson.toJson(snapshot))
+            java.io.FileOutputStream(tmp).use { out ->
+                out.write(payload)
+                out.flush()
+                out.fd.sync()
+            }
             if (!tmp.renameTo(f)) {
-                f.writeText(tmp.readText())
-                tmp.delete()
+                // 极少数文件系统上「rename 覆盖已存在的目标」会失败。
+                // 原来的退路是 f.writeText(...) 直接覆写目标 —— 那是**非原子**的，
+                // 读方正好撞上就会读到半截 JSON。改成先删目标再改名。
+                f.delete()
+                if (!tmp.renameTo(f)) {
+                    // 还是不行才直接写目标；内容是一整段字节，比逐字符写安全得多
+                    java.io.FileOutputStream(f).use { it.write(payload) }
+                    tmp.delete()
+                }
             }
         }
     }
@@ -135,6 +174,37 @@ object UsageWidgetSync {
                 ExistingWorkPolicy.REPLACE,
                 OneTimeWorkRequestBuilder<UsageWidgetSyncWorker>().build()
             )
+        }
+    }
+
+    /**
+     * 用 App **已经拿到**的响应直接刷新小组件快照，不再发第二次请求。
+     *
+     * App 主请求是 `days=3650`（含今天），而小组件原本为了显示「今日消耗」
+     * 还要单独拉一次 `days=1` —— 那是主响应的子集，纯属重复请求：
+     * 每打开一次 App 就多打一次网络，弱网下还平白多一份失败率。
+     *
+     * 直接从已有响应里算今天：省掉一次请求，且小组件数字和 App 里看到的
+     * 必然一致（同一个响应算出来的，不会出现两边数字对不上）。
+     *
+     * 注意算「今日」要**扫全量历史**（响应里是 3650 天的数据），
+     * 所以必须放后台线程 —— 放主线程就是一次可观的 UI 线程停顿。
+     */
+    suspend fun publishFromResponse(context: Context, resp: ai.vibecafe.usage.data.UsageResponse) {
+        withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val stats = ai.vibecafe.usage.stats.StatsEngine.computeStats(
+                resp,
+                ai.vibecafe.usage.stats.TimeRange.TODAY
+            )
+            val snapshot = WidgetSnapshot(
+                costToday = stats.totalCost,
+                tokensToday = stats.totalTokens,
+                updatedAt = System.currentTimeMillis()
+            )
+            runCatching {
+                UsageWidgetCache.write(context, snapshot)
+                UsageWidget().updateAll(context)
+            }
         }
     }
 }
@@ -229,8 +299,18 @@ private object DarkGlass {
     val InkLo = Color(0x59C7D2E6)
 }
 
-/** 两个时间戳是否同一天（按设备本地时区，与统计引擎的北京时间口径互不影响）。 */
-private fun isSameDay(t1: Long, t2: Long): Boolean {
-    val f = SimpleDateFormat("yyyyMMdd", Locale.US)
+/**
+ * 两个时间戳是否同一天（按**北京时间**）。
+ *
+ * 必须和统计引擎同口径：快照里的 costToday 是「北京时间今天」的消耗
+ * （StatsEngine.computeStats(resp, TimeRange.TODAY) 按 Asia/Shanghai 分日）。
+ * 如果这里按设备本地时区判断，UTC+13 的用户在本地跨过零点、
+ * 而北京还没跨日的那 8 小时里，刚同步的「北京昨天」的数据会被标成「今日消耗」——
+ * 数字和口径对不上。
+ */
+internal fun isSameDay(t1: Long, t2: Long): Boolean {
+    val f = SimpleDateFormat("yyyyMMdd", Locale.US).apply {
+        timeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
+    }
     return f.format(Date(t1)) == f.format(Date(t2))
 }

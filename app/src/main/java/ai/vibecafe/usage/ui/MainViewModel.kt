@@ -240,8 +240,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     selectedDevices = _uiState.value.selectedDevices intersect devices.toSet()
                 )
                 recompute(tr, dataForRange(tr) ?: daily)
-                // 桌面小组件数据跟着这次刷新走（免等 30 分钟周期任务）
-                ai.vibecafe.usage.widget.UsageWidgetSync.refreshNow(getApplication())
+                // 桌面小组件数据跟着这次刷新走：直接用**已经拿到的** daily 响应算今日消耗，
+                // 不再为小组件单独发一次 days=1 请求（那是本响应的子集，纯重复）。
+                // 算今日要扫全量历史，所以这步在后台线程跑。
+                ai.vibecafe.usage.widget.UsageWidgetSync.publishFromResponse(getApplication(), daily)
             } else {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
