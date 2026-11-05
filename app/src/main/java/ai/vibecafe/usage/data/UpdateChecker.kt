@@ -64,6 +64,10 @@ object UpdateChecker {
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
+            // 与 RetrofitClient 同款 DoH 兜底：这条链路是独立 client，
+            // 系统 DNS 间歇性整体失效时「检查更新」会直接 UnknownHostException，
+            // 而主数据链路因为有 DnsResolver 照常工作 —— 用户只会看到「检查更新失败」。
+            .dns(ai.vibecafe.usage.data.quota.DnsResolver)
             .build()
     }
 
