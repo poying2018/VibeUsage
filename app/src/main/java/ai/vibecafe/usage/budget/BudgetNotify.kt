@@ -40,8 +40,11 @@ object BudgetNotify {
     private const val WORK_NAME = "budget-daily-check"
 
     /** 阈值与主题/液态玻璃参数共用同一份 prefs。 */
-    private const val PREFS_NAME = "vibe_usage"
+    internal const val PREFS_NAME = "vibe_usage"
     private const val KEY_THRESHOLD = "budget_threshold_usd"
+
+    /** 与 MainViewModel.KEY_DEVICES 同一键：后台预算核对要按用户选的设备算，才能和页面同口径。 */
+    internal const val KEY_DEVICES = "selected_devices"
 
     /**
      * 当前预算阈值（USD）。
@@ -153,7 +156,12 @@ class BudgetCheckWorker(context: Context, params: WorkerParameters) : CoroutineW
         // 下一次要等满 24 小时，弱网日会系统性漏发超预算提醒。
         val resp = UsageRepository().fetchDailyData(key).getOrNull()
             ?: return if (runAttemptCount < 3) Result.retry() else Result.success()
-        val projection = StatsEngine.computeMonthProjection(resp)
+        // 必须带上用户在页面上选的设备筛选：不带的话预测按「全部设备」算，
+        // 通知可能说「将超预算」而屏幕上（筛选后）的数字还没到阈值，两边对不上。
+        // 筛选由 MainViewModel 落盘在同一个 prefs 里，重启后依然有效。
+        val devices = context.getSharedPreferences(BudgetNotify.PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(BudgetNotify.KEY_DEVICES, null)?.toSet() ?: emptySet()
+        val projection = StatsEngine.computeMonthProjection(resp, devices)
             ?: return if (runAttemptCount < 3) Result.retry() else Result.success()
         // 阈值由 notifyIfNeeded 内部从 prefs 现读，与设置页写入的是同一份
         BudgetNotify.notifyIfNeeded(context, projection.projected)

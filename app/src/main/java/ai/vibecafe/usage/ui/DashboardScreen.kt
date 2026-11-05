@@ -106,6 +106,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -134,6 +135,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -289,10 +291,15 @@ fun DashboardScreen(
         state.isRefreshing
     }
 
+    // 选图回主线程 → 复制到私有目录在 IO 线程做（见 BackgroundStore.set），
+    // 这里只负责在复制完成后把新路径切给背景层。
+    val bgScope = rememberCoroutineScope()
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        if (uri != null) bgPath = BackgroundStore.set(context, uri)
+        if (uri != null) {
+            bgScope.launch { bgPath = BackgroundStore.set(context, uri) }
+        }
     }
 
     Box(Modifier.fillMaxSize()) {

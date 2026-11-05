@@ -79,7 +79,13 @@ data class UiState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = UsageRepository()
-    private val _uiState = MutableStateFlow(UiState())
+    private val prefs = application.getSharedPreferences(PREFS_NAME, Application.MODE_PRIVATE)
+    private val _uiState = MutableStateFlow(
+        // 设备筛选要跨进程存活：原先只存在内存里，重启就丢；更关键的是后台的
+        // 预算核对 worker 读不到它，通知里的预测会按「全部设备」算，
+        // 比页面上（按用户筛选后）的数字大 —— 两边口径不一致。
+        UiState(selectedDevices = prefs.getStringSet(KEY_DEVICES, null)?.toSet() ?: emptySet())
+    )
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
     private fun dataForRange(range: TimeRange): UsageResponse? {
@@ -295,6 +301,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val tr = _uiState.value.selectedTimeRange
         val data = dataForRange(tr) ?: return
         _uiState.value = _uiState.value.copy(selectedDevices = devices)
+        // 落盘给后台预算核对用（getStringSet 返回的是内部副本，必须自己拷一份再改）
+        prefs.edit().putStringSet(KEY_DEVICES, devices.toSet()).apply()
         recompute(tr, data)
     }
 
@@ -309,6 +317,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun clearAccountData() {
         recomputeJob?.cancel()
+        // 持久化的设备筛选也要清：否则换账号后重启，旧账号的 hostname 又被读回来
+        prefs.edit().remove(KEY_DEVICES).apply()
         _uiState.value = UiState()
     }
 
@@ -519,10 +529,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 用系统安装器安装已下载的 APK；缺少「安装未知应用」权限时引导去开启。 */
+    /**
+     * 用系统安装器安装已下载的 APK；缺少「安装未知应用」权限时引导去开启。
+     *
+     * 安装前**重新校验一次 SHA-256**：下载完成到用户点安装之间，文件在外部私有目录里
+     * 是可变的事实（别的进程、adb pull/push、或被替换）。原先「校验通过」只是
+     * UI 状态机的一条约定（只有 DOWNLOADED 才显示安装按钮），不是代码不变量 ——
+     * 任何绕过状态机的调用都能装上一个未经验证的 APK。
+     */
     fun installUpdate() {
         val app = getApplication<Application>()
         val update = _uiState.value.update
+        val url = update.apkUrl
         val file = apkFile() ?: run {
             setUpdate { it.copy(status = UpdateStatus.FAILED, message = "安装包不存在") }
             return
@@ -542,16 +560,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        runCatching {
-            val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (url == null) {
+            setUpdate { it.copy(status = UpdateStatus.FAILED, message = "缺少下载地址，无法复验安装包，请重新下载") }
+            return
+        }
+        viewModelScope.launch {
+            setUpdate { it.copy(message = "正在校验安装包…") }
+            val verified = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                UpdateChecker.verifyDownloadedApk(url, file)
             }
-            app.startActivity(intent)
-        }.onFailure {
-            setUpdate { it.copy(status = UpdateStatus.FAILED, message = "无法启动安装程序") }
+            if (verified != UpdateChecker.VerifyStatus.VERIFIED) {
+                setUpdate {
+                    it.copy(
+                        status = UpdateStatus.FAILED,
+                        message = "安装包校验未通过（可能已被改动或无法获取校验基准），已阻止安装"
+                    )
+                }
+                return@launch
+            }
+            runCatching {
+                val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                app.startActivity(intent)
+            }.onFailure {
+                setUpdate { it.copy(status = UpdateStatus.FAILED, message = "无法启动安装程序") }
+            }
         }
     }
 
@@ -577,5 +614,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         is javax.net.ssl.SSLException -> "安全连接失败"
         is java.io.IOException -> "网络错误，请检查连接"
         else -> "加载失败"
+    }
+
+    private companion object {
+        /** 与主题/玻璃参数共用同一份 prefs，设备筛选也放这里。 */
+        const val PREFS_NAME = "vibe_usage"
+
+        /** 设备筛选集合；后台 BudgetCheckWorker 也读这个键，保证通知与页面同口径。 */
+        const val KEY_DEVICES = "selected_devices"
     }
 }

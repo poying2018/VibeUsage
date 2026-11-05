@@ -2,6 +2,8 @@ package ai.vibecafe.usage.core
 
 import android.content.Context
 import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -24,12 +26,17 @@ object BackgroundStore {
             ?.takeIf { File(it).exists() }
     }
 
-    /** 把 [uri] 指向的图片复制到私有目录并持久化，返回内部路径；失败返回 null。 */
-    fun set(context: Context, uri: Uri): String? {
+    /**
+     * 把 [uri] 指向的图片复制到私有目录并持久化，返回内部路径；失败返回 null。
+     *
+     * 复制在 IO 线程做：相册原图动辄 3~8MB，直接在点选回调（主线程）里 copyTo
+     * 会卡住一帧甚至数帧，用户看到的就是「点完选图界面，App 顿一下」。
+     */
+    suspend fun set(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
         val dir = context.getDir(DIR, Context.MODE_PRIVATE)
         if (!dir.exists()) dir.mkdirs()
         val out = File(dir, FILE)
-        return try {
+        try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 out.outputStream().use { output -> input.copyTo(output) }
             }
