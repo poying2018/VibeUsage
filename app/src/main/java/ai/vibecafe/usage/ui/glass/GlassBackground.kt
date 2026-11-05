@@ -3,25 +3,15 @@ package ai.vibecafe.usage.ui.glass
 import android.annotation.SuppressLint
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
 import android.graphics.BitmapFactory
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.StartOffset
-import androidx.compose.animation.core.StartOffsetType
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.BlendMode
@@ -67,11 +57,11 @@ fun GlassBackground(
             withFrameNanos { f ->
                 if (start < 0) start = f
                 val t = (f - start) / 1_000_000_000f
-                // 性能：极光各分量运动周期 7~32s（AGSL 相位速度 ≤0.9 rad/s、光斑 16~24s 往返），
-                // 逐帧更新会让全屏 Canvas 每帧重绘、backdrop 每帧失效、所有玻璃层每帧重新采样 ——
-                // GPU 被空闲动画打满。限流到 ~10fps：每步相位 ≤0.09rad（柔焦光斑位移 2~3px），
-                // 肉眼无差别，空闲 GPU 负载降 ~85%。
-                if (t - lastEmitted >= 0.1f) {
+                // 时钟推进到 ~20fps（每 50ms 一步）：极光光斑 16~24s 往返，
+                // 10fps 时单步位移约 2~3px，在大屏上仍能看出轻微台阶感；
+                // 20fps 把它压到 1px 级，肉眼完全连续，同时仍是「重绘」而非「重组」。
+                // 视觉优先：这里刻意不追求最低 GPU 占用，背景的流动质感是这个 App 的门面。
+                if (t - lastEmitted >= 0.05f) {
                     lastEmitted = t
                     value = t
                 }
@@ -79,66 +69,74 @@ fun GlassBackground(
         }
     }
     Box(modifier.fillMaxSize().layerBackdrop(backdrop)) {
-        Canvas(Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
-
-            // 时钟只在 draw 阶段读：在组合作用域读 timeSec 会让整个背景（也就是所有玻璃层的采样源）
-            // 每 100ms 重组一次；挪进 Canvas lambda 后退化成一次纯重绘。
-            // 手动映射循环插值：周期 T，往返
-            fun orbBounce(phase: Float, period: Float): Float {
-                val mod = (timeSec.value + phase) % (period * 2)
-                return if (mod < period) mod / period else 2f - (mod / period)
-            }
-
-            val p1 = orbBounce(0f, 24f)
-            val p2 = orbBounce(7f, 16f)
-            val p3 = orbBounce(12f, 16f)
-            val p4 = orbBounce(3f, 16f)
-
-            if (imageBitmap != null) {
-                // 自定义背景：图片铺底 + 半透明纱罩保证对比度，玻璃折射更明显
-                drawImageCover(imageBitmap)
-                drawRect(p.VeilImage)
-                // 边缘晕罩（比默认弱，避免压掉照片）
-                drawRect(
-                    brush = Brush.radialGradient(
-                        colorStops = arrayOf(
-                            0.30f to Color.Transparent,
-                            1f to p.VeilEdge
-                        ),
-                        center = Offset(w * 0.5f, h * 0.35f),
-                        radius = maxOf(w, h) * 0.78f
+        // drawWithCache：尺寸/调色板/图片变化时重建一次画刷，之后每个动画帧
+        // 只走 onDrawBehind 的重绘。径向渐变每建一个都是一枚原生 SkShader，
+        // 背景以 20fps 推进时钟时，若在 draw 里现建，每帧要多分配 6 枚
+        // （4 层色雾 + 2 种边缘晕罩），动画期间 GC 抽帧会直接吃掉流动的顺滑感。
+        Spacer(
+            Modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    val w = size.width
+                    val h = size.height
+                    val veilCenter = Offset(w * 0.5f, h * 0.35f)
+                    val veilRadius = maxOf(w, h) * 0.78f
+                    // 自定义背景的边缘晕罩（弱一档，避免压掉照片）
+                    val imageVeil = Brush.radialGradient(
+                        colorStops = arrayOf(0.30f to Color.Transparent, 1f to p.VeilEdge),
+                        center = veilCenter,
+                        radius = veilRadius
                     )
-                )
-            } else {
-                drawRect(p.Page)
-
-                // 四层径向色雾
-                softRadial(p.WashPink, Offset(w * 0.80f, h * -0.12f), maxOf(w, h) * 0.90f, 0.44f)
-                softRadial(p.WashViolet, Offset(w * 0.10f, h * 0.06f), maxOf(w, h) * 0.85f, 0.42f)
-                softRadial(p.WashMint, Offset(w * 0.55f, h * 1.15f), maxOf(w, h) * 0.90f, 0.44f)
-                softRadial(p.WashCream, Offset(w * 0.18f, h * 0.92f), maxOf(w, h) * 0.68f, 0.40f)
-
-                // 漂浮光斑（亮色 multiply 混合 / 暗色 plus 自发光，模拟 CSS mix-blend-mode + blur）
-                orb(p.OrbPink, Offset(w * 0.15f, h * -0.02f), w * 0.48f, p1, p.OrbBlend)
-                orb(p.OrbBlue, Offset(w * 0.92f, h * 0.22f), w * 0.42f, p2, p.OrbBlend)
-                orb(p.OrbTeal, Offset(w * 0.44f, h * 0.94f), w * 0.40f, p3, p.OrbBlend)
-                orb(p.OrbAmber, Offset(w * 0.72f, h * 0.86f), w * 0.34f, p4, p.OrbBlend)
-
-                // .stage::after —— 中心透明、四周渐变的晕罩（亮色提亮 / 暗色压暗）
-                drawRect(
-                    brush = Brush.radialGradient(
-                        colorStops = arrayOf(
-                            0.26f to Color.Transparent,
-                            1f to p.VeilEdge
-                        ),
-                        center = Offset(w * 0.5f, h * 0.35f),
-                        radius = maxOf(w, h) * 0.78f
+                    // .stage::after —— 中心透明、四周渐变的晕罩（亮色提亮 / 暗色压暗）
+                    val edgeVeil = Brush.radialGradient(
+                        colorStops = arrayOf(0.26f to Color.Transparent, 1f to p.VeilEdge),
+                        center = veilCenter,
+                        radius = veilRadius
                     )
-                )
-            }
-        }
+                    // 四层径向色雾
+                    val washes = listOf(
+                        washBrush(p.WashPink, Offset(w * 0.80f, h * -0.12f), maxOf(w, h) * 0.90f, 0.44f),
+                        washBrush(p.WashViolet, Offset(w * 0.10f, h * 0.06f), maxOf(w, h) * 0.85f, 0.42f),
+                        washBrush(p.WashMint, Offset(w * 0.55f, h * 1.15f), maxOf(w, h) * 0.90f, 0.44f),
+                        washBrush(p.WashCream, Offset(w * 0.18f, h * 0.92f), maxOf(w, h) * 0.68f, 0.40f)
+                    )
+
+                    onDrawBehind {
+                        // 时钟只在 draw 阶段读：在组合作用域读 timeSec 会让整个背景
+                        // （也就是所有玻璃层的采样源）每 50ms 重组一次；
+                        // 挪进 draw 后退化成一次纯重绘。
+                        // 手动映射循环插值：周期 T，往返
+                        fun orbBounce(phase: Float, period: Float): Float {
+                            val mod = (timeSec.value + phase) % (period * 2)
+                            return if (mod < period) mod / period else 2f - (mod / period)
+                        }
+
+                        val p1 = orbBounce(0f, 24f)
+                        val p2 = orbBounce(7f, 16f)
+                        val p3 = orbBounce(12f, 16f)
+                        val p4 = orbBounce(3f, 16f)
+
+                        if (imageBitmap != null) {
+                            // 自定义背景：图片铺底 + 半透明纱罩保证对比度，玻璃折射更明显
+                            drawImageCover(imageBitmap)
+                            drawRect(p.VeilImage)
+                            drawRect(brush = imageVeil)
+                        } else {
+                            drawRect(p.Page)
+                            washes.forEach { drawRect(brush = it) }
+
+                            // 漂浮光斑（亮色 multiply 混合 / 暗色 plus 自发光，模拟 CSS mix-blend-mode + blur）
+                            // 光斑的中心/半径随 progress 每帧变化，着色器无法复用，只能逐帧现建。
+                            orb(p.OrbPink, Offset(w * 0.15f, h * -0.02f), w * 0.48f, p1, p.OrbBlend)
+                            orb(p.OrbBlue, Offset(w * 0.92f, h * 0.22f), w * 0.42f, p2, p.OrbBlend)
+                            orb(p.OrbTeal, Offset(w * 0.44f, h * 0.94f), w * 0.40f, p3, p.OrbBlend)
+                            orb(p.OrbAmber, Offset(w * 0.72f, h * 0.86f), w * 0.34f, p4, p.OrbBlend)
+
+                            drawRect(brush = edgeVeil)
+                        }
+                    }
+                }
+        )
     }
 }
 
@@ -188,26 +186,21 @@ private fun DrawScope.drawImageCover(bitmap: ImageBitmap) {
     )
 }
 
-/** 大范围柔和色雾：中心实色，[fadeStop] 之后渐隐。 */
-private fun DrawScope.softRadial(
+/** 大范围柔和色雾画刷：中心实色，[fadeStop] 之后渐隐。 */
+private fun washBrush(
     color: Color,
     center: Offset,
     radius: Float,
     fadeStop: Float
-) {
-    if (radius <= 0f) return
-    drawRect(
-        brush = Brush.radialGradient(
-            colorStops = arrayOf(
-                0f to color,
-                fadeStop to color.copy(alpha = 0.55f),
-                1f to Color.Transparent
-            ),
-            center = center,
-            radius = radius
-        )
-    )
-}
+): Brush = Brush.radialGradient(
+    colorStops = arrayOf(
+        0f to color,
+        fadeStop to color.copy(alpha = 0.55f),
+        1f to Color.Transparent
+    ),
+    center = center,
+    radius = radius
+)
 
 /**
  * 单个漂浮光斑。[progress] 0→1 对应 CSS `drift` 关键帧：
@@ -245,18 +238,4 @@ private fun DrawScope.orb(
         center = c,
         blendMode = blend
     )
-}
-
-/** 便捷：把整块背景铺满并作为内容容器。 */
-@Composable
-fun GlassScaffold(
-    backdrop: LayerBackdrop,
-    modifier: Modifier = Modifier,
-    imagePath: String? = null,
-    content: @Composable () -> Unit
-) {
-    Box(modifier.fillMaxSize()) {
-        GlassBackground(backdrop, imagePath = imagePath)
-        content()
-    }
 }

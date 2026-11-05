@@ -60,7 +60,6 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
-import ai.vibecafe.usage.ui.theme.isDark
 import androidx.compose.material3.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -399,15 +398,18 @@ fun LiquidGlassSegmentedControl(
                     shape = { Pill },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
-                        // 静止时 progress=0，lens(0,0) 为恒等变换 —— 跳过整条 RenderEffect
-                        if (progress > 0f) lens(
-                            10f.dp.toPx() * progress,
-                            14f.dp.toPx() * progress,
+                        // 静止态也保留基础折射：早先 progress>0 才 lens，静止的选中段
+                        // 就是一块平的半透明胶囊，看不出「液态玻璃」的边缘弯折。
+                        // 视觉优先，与 LiquidSlider / 底部导航滑块同一口径。
+                        val lensScale = 0.35f + 0.65f * progress
+                        lens(
+                            10f.dp.toPx() * lensScale,
+                            14f.dp.toPx() * lensScale,
                             chromaticAberration = true
                         )
                     },
                     highlight = {
-                        Highlight.Default.copy(alpha = dampedDragAnimation.pressProgress)
+                        Highlight.Default.copy(alpha = 0.28f + 0.72f * dampedDragAnimation.pressProgress)
                     },
                     shadow = {
                         Shadow(alpha = dampedDragAnimation.pressProgress)

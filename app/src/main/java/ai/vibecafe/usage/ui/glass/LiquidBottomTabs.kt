@@ -1,7 +1,6 @@
 package ai.vibecafe.usage.ui.glass
 
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
-import ai.vibecafe.usage.ui.theme.isDark
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
@@ -121,7 +120,11 @@ fun LiquidBottomTabs(
 
         val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
-        var currentIndex by remember(selectedTabIndex) {
+        // 初始值只在首次组合取一次。这里**不能**拿 selectedTabIndex 当 remember 的 key：
+        // 它是个 lambda，调用方每次重组都可能传进来一个新实例，key 一变就会把
+        // currentIndex 重置回外部值——正好把拖拽到一半的滑块弹回去。
+        // 后续同步交给下面的 snapshotFlow（它只在**值**真正变化时才发射）。
+        var currentIndex by remember {
             mutableIntStateOf(selectedTabIndex())
         }
         // 外部选中态同步时用来抑制重复回调（见下方 LaunchedEffect 注释）
@@ -159,8 +162,12 @@ fun LiquidBottomTabs(
                 }
             )
         }
-        LaunchedEffect(selectedTabIndex) {
-            snapshotFlow { selectedTabIndex() }
+        // 同理，收集协程也不能拿 lambda 当 key：每次重组都换实例的话，
+        // LaunchedEffect 会不停重启、snapshotFlow 反复重新订阅。
+        // 改用 rememberUpdatedState 持有最新 lambda，effect 只启动一次。
+        val currentSelectedTabIndex by rememberUpdatedState(selectedTabIndex)
+        LaunchedEffect(Unit) {
+            snapshotFlow { currentSelectedTabIndex() }
                 .collectLatest { index ->
                     if (index != currentIndex) {
                         // 外部（ViewModel）驱动的选中态变化：只挪滑块，不再回调 onTabSelected。
@@ -262,7 +269,11 @@ fun LiquidBottomTabs(
                     .height(56f.dp)
                     .fillMaxWidth()
                     .padding(horizontal = 4f.dp)
-                    .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
+                    // 浅色主题下不能用品牌色：强调色是亮青，压在浅色玻璃底上
+                    // 就是青字压浅底（对比度约 1.5，几乎读不出来）。
+                    // 与 LiquidGlassSegmentedControl 的隐藏内容层保持同一套判断：
+                    // 浅色改近黑（深字压浅底），深色才用品牌色。
+                    .graphicsLayer(colorFilter = ColorFilter.tint(if (isLightTheme) Color.Black else accentColor)),
                 verticalAlignment = Alignment.CenterVertically,
                 content = content
             )
@@ -283,16 +294,18 @@ fun LiquidBottomTabs(
                     shape = { LiquidTabCapsule },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
-                        // 静止时 progress=0，lens(0,0) 为恒等变换 —— 跳过整条 RenderEffect
-                        if (progress > 0f) lens(
-                            10f.dp.toPx() * progress,
-                            14f.dp.toPx() * progress,
+                        // 静止态也保留基础折射（早先是 progress>0 才 lens，静止时滑块是一块
+                        // 平的半透明胶囊，没有液态玻璃的边缘弯折）。视觉优先，与 LiquidSlider 同一口径。
+                        val lensScale = 0.35f + 0.65f * progress
+                        lens(
+                            10f.dp.toPx() * lensScale,
+                            14f.dp.toPx() * lensScale,
                             chromaticAberration = true
                         )
                     },
                     highlight = {
                         val progress = dampedDragAnimation.pressProgress
-                        Highlight.Default.copy(alpha = progress)
+                        Highlight.Default.copy(alpha = 0.28f + 0.72f * progress)
                     },
                     shadow = {
                         val progress = dampedDragAnimation.pressProgress

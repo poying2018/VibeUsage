@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -33,6 +34,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
@@ -112,6 +114,28 @@ fun LiquidSlider(
     val currentOnValueChange by rememberUpdatedState(onValueChange)
 
     val trackBackdrop = rememberLayerBackdrop()
+
+    // 拇指玻璃的 backdrop 取样 lambda 必须在**重组之间保持同一个实例**：
+    // rememberBackdrop 的 key 是 (backdrop, onDraw)，lambda 每次重组都是新对象，
+    // 就会重建 combined backdrop → draw cache 失效 → 拖动滑杆时每帧重跑
+    // blur + lens（设置页 5 个滑杆 × 每帧）。
+    // 这里把按压进度做成 State，lambda 只捕获它、在 **draw 阶段**读取，
+    // lambda 本身用 remember 固定住，拖动时只重绘不重建。
+    val thumbProgress = remember(dampedDragAnimation) {
+        derivedStateOf { dampedDragAnimation.pressProgress }
+    }
+    val thumbBackdropOnDraw: DrawScope.(drawBackdrop: DrawScope.() -> Unit) -> Unit =
+        remember(trackBackdrop) {
+            { drawBackdrop ->
+                val progress = thumbProgress.value
+                val scaleX = lerp(2f / 3f, 1f, progress)
+                val scaleY = lerp(0f, 1f, progress)
+                scale(scaleX, scaleY) {
+                    drawBackdrop()
+                }
+            }
+        }
+    val thumbBackdrop = rememberBackdrop(trackBackdrop, thumbBackdropOnDraw)
 
     BoxWithConstraints(
         modifier
@@ -226,44 +250,31 @@ fun LiquidSlider(
                     IntOffset((if (isLtr) tx else -tx).fastRoundToInt(), 0)
                 }
                 .drawBackdrop(
-                    backdrop = rememberCombinedBackdrop(
-                        backdrop,
-                        rememberBackdrop(trackBackdrop) { drawBackdrop ->
-                            val progress = dampedDragAnimation.pressProgress
-                            val scaleX = lerp(2f / 3f, 1f, progress)
-                            val scaleY = lerp(0f, 1f, progress)
-                            scale(scaleX, scaleY) {
-                                drawBackdrop()
-                            }
-                        }
-                    ),
+                    backdrop = rememberCombinedBackdrop(backdrop, thumbBackdrop),
                     shape = { RoundedCornerShape(percent = 50) },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
                         blur(8f.dp.toPx() * (1f - progress))
-                        // 静止时 lens(0,0) 是恒等变换，但带色散的折射着色器仍会每像素做
-                        // 7 次纹理采样。设置页有 5 个滑杆，不守卫就是每帧白跑 5 遍。
-                        // （底部 Tab 和分段控件早就这么守卫了，滑杆这里漏了。）
-                        if (progress > 0f) {
-                            lens(
-                                10f.dp.toPx() * progress,
-                                14f.dp.toPx() * progress,
-                                chromaticAberration = true
-                            )
-                        }
+                        // 按压越深折射越强；**静止时也保留一个基础折射量**：
+                        // 早先静止直接跳过 lens（省着色器开销），结果拇指在常态下
+                        // 是一块平的半透明胶囊，没有液态玻璃该有的边缘弯折。
+                        // 视觉优先：给静止态 35% 的折射带宽/强度，按下时叠加到满。
+                        val lensScale = 0.35f + 0.65f * progress
+                        lens(
+                            10f.dp.toPx() * lensScale,
+                            14f.dp.toPx() * lensScale,
+                            chromaticAberration = true
+                        )
                     },
                     highlight = {
                         val progress = dampedDragAnimation.pressProgress
-                        // 静止时高光 alpha 为 0、整层不可见；不生成就省掉一次图层录制
-                        if (progress <= 0f) {
-                            null
-                        } else {
-                            Highlight.Ambient.copy(
-                                width = Highlight.Ambient.width / 1.5f,
-                                blurRadius = Highlight.Ambient.blurRadius / 1.5f,
-                                alpha = progress
-                            )
-                        }
+                        // 静止态也留一点边缘高光：纯 0 时拇指没有玻璃轮廓，
+                        // 和周围卡片不在同一个材质语言里。按下时再压到满强度。
+                        Highlight.Ambient.copy(
+                            width = Highlight.Ambient.width / 1.5f,
+                            blurRadius = Highlight.Ambient.blurRadius / 1.5f,
+                            alpha = 0.28f + 0.72f * progress
+                        )
                     },
                     shadow = {
                         Shadow(

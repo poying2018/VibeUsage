@@ -313,6 +313,9 @@ object GlassText {
     )
 }
 
-/** 应用内主题是否为暗色（以主文字亮度判定；应用可覆盖系统主题，玻璃组件选配方须以此为准）。 */
-val GlassPalette.isDark: Boolean
-    get() = InkHi.luminance() > 0.5f
+// 注意：这里**不再**定义扩展版 `GlassPalette.isDark`。
+// 早先成员属性（GlassPalette.isDark，看 Page 亮度）和顶层扩展（看 InkHi 亮度）
+// 同时存在，靠 import 谁遮蔽谁来决定用哪个 —— 两者今天对三套调色板结果一致，
+// 但只要未来调色板的「页面底色」与「主文字」亮度方向不一致（比如浅底配深字），
+// 玻璃配方就会静默翻转，观感直接错掉。
+// 现在只保留成员版（看 Page 亮度）：页面底色才是玻璃真正叠在上面的那层。
