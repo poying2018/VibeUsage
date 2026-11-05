@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Paid
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.SmartToy
@@ -37,6 +38,7 @@ import ai.vibecafe.usage.data.quota.Infini
 import ai.vibecafe.usage.data.quota.Kimi
 import ai.vibecafe.usage.data.quota.Mimo
 import ai.vibecafe.usage.data.quota.MiniMax
+import ai.vibecafe.usage.data.quota.OpenCode
 import ai.vibecafe.usage.data.quota.OpenRouter
 
 /** 支持一键授权的登录方式（凭据粘贴始终作为后备）。 */
@@ -142,6 +144,14 @@ enum class ExtraProvider(
             "apiKey 字段，或在 commandcode.ai/studio 复制。查 5 小时 / 每周窗口额度、套餐 Credits 与本周期用量",
         oauth = OAuthKind.COMMANDCODE,
         minCredLen = 20
+    ),
+    OPENCODE(
+        "opencode", "OpenCode Go", Color(0xFFF97316), Icons.Filled.Memory,
+        listOf("API Key"),
+        "opencode.ai/console → Account → Personal API keys 创建（权限勾选 Usage: Read），" +
+            "粘贴 oc_sk_ 开头的 Key；需已订阅 Go / Go Plus / Go Teams。查 5 小时 / 每周 / 每月三档窗口额度" +
+            "（旧称 opencode zen，已改名）；海外站，中转优先",
+        minCredLen = 12
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */
@@ -163,6 +173,7 @@ enum class ExtraProvider(
         AGNES -> Agnes.fetchUsage(creds[0], creds[1])
         MIMO -> Mimo.fetchUsage(creds[0], creds[1])
         COMMANDCODE -> CommandCode.fetchUsage(creds[0])
+        OPENCODE -> OpenCode.fetchUsage(creds[0])
     }
 
     companion object {

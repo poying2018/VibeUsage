@@ -1,10 +1,10 @@
 # VibeUsage — 液态玻璃风格 Token 用量客户端
 
 一个 Android 原生 App：既统计 [vibecafe.ai](https://vibecafe.ai/usage) 的 Token 用量，
-也能在一个面板里聚合 **13 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
+也能在一个面板里聚合 **14 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
 基于 **Jetpack Compose** 与 **液态玻璃（Liquid Glass）** 设计语言。
 
-当前版本 **2.21.2**（versionCode 69）· MIT
+当前版本 **2.22.2**（versionCode 76）· MIT
 
 ## ✨ 核心功能
 
@@ -18,11 +18,11 @@
 - 桌面小组件（Glance 2x2，每 30 分钟 + App 刷新时同步）
 - 玻璃风格总结分享卡（1080x1350）
 
-### 额度聚合（13 家供应商 + Antigravity）
+### 额度聚合（14 家供应商 + Antigravity）
 
 | 类别 | 供应商 |
 |---|---|
-| 凭据型 | 小米 MiMo、阿里百炼、火山方舟、豆包、智谱 GLM、Kimi、MiniMax、无问芯穹、DeepSeek、Agnes、CommandCode |
+| 凭据型 | 小米 MiMo、阿里百炼、火山方舟、豆包、智谱 GLM、Kimi、MiniMax、无问芯穹、DeepSeek、Agnes、CommandCode、OpenCode Go |
 | 一键授权 | GitHub Copilot（设备码）、OpenRouter（OAuth） |
 | 独立面板 | Antigravity（Google 反重力，OAuth refresh_token） |
 
@@ -92,7 +92,7 @@ app/src/main/java/ai/vibecafe/usage/
 │   │   ├── QuotaHttp.kt            #   HTTP 底座（直连 ⇄ 中转，含中转熔断）—— 同文件内
 │   │   ├── MiniMax.kt / Glm.kt / Kimi.kt / DeepSeek.kt / Infini.kt /
 │   │   │ Bailian.kt / Ark.kt / GitHubCopilot.kt / OpenRouter.kt /
-│   │   │ Doubao.kt / Agnes.kt / Mimo.kt / CommandCode.kt   #   每家供应商一个文件
+│   │   │ Doubao.kt / Agnes.kt / Mimo.kt / CommandCode.kt / OpenCode.kt   #   每家供应商一个文件
 │   │   ├── OAuthFlow.kt            #   GitHub 设备码 / OpenRouter OAuth
 │   │   └── DnsResolver.kt          #   系统 DNS + DoH 兜底
 │   ├── ag/AgQuotaApi.kt            # Antigravity（Google 反重力）配额

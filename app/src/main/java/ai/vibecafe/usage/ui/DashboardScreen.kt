@@ -416,7 +416,7 @@ fun DashboardScreen(
             } else if (showAgPanel) {
                 Column {
                     // 已接入平台总览：一眼看到各平台额度摘要 / 近 7 天趋势 / 失败状态，
-                    // 并支持「刷新全部」一次把 13 家都拉一遍（原先要逐个点下拉才知道谁失效了）
+                    // 并支持「刷新全部」一次把全部凭据型供应商都拉一遍（原先要逐个点下拉才知道谁失效了）
                     QuotaOverviewSection(
                         backdrop = backdrop,
                         modifier = Modifier.fillMaxWidth()

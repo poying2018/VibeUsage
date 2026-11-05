@@ -38,6 +38,8 @@ const ALLOWED_HOSTS = new Set([
   "api.z.ai",
   // ── CommandCode（额度窗口 / 套餐 credits / 周期用量；国内直连不稳时的兜底线路）──
   "api.commandcode.ai",
+  // ── OpenCode Go（opencode.ai 订阅额度 + 模型列表；中转优先线路）──
+  "opencode.ai",
 ]);
 
 const ALLOWED = (u) => {
