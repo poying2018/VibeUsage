@@ -791,6 +791,34 @@ fun DashboardScreen(
             }
         }
         } // LazyColumn 结束
+        // 滚动边缘渐隐（技能 Scroll Edge Effect）：内容滑到顶/底时在玻璃边缘自然淡出，
+        // 不再是硬裁。Page 是背景底色（极光底在边缘本就经 VeilEdge 晕罩，与 Page 接近，
+        // 不会露出色块分界）；两条带都非 clickable，触摸透传给滚动与下拉刷新。
+        run {
+            val edgeTop = LocalGlassPalette.current.Page
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(26.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(edgeTop.copy(alpha = 0.85f), edgeTop.copy(alpha = 0f))
+                        )
+                    )
+            )
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(34.dp)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(edgeTop.copy(alpha = 0f), edgeTop.copy(alpha = 0.85f))
+                        )
+                    )
+            )
+        }
         } // PullToRefreshBox 结束
         } // 内容导出 Box 结束
 

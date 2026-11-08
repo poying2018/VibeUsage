@@ -140,10 +140,14 @@ val LightGlassPalette = GlassPalette(
 
     // --- 页面与玻璃 ---
     Page = Color(0xFFEEF2F7),
-    Surface = Color(0x8CFFFFFF),        // rgba(255,255,255,.55)
-    SurfaceSoft = Color(0x80FFFFFF),    // rgba(255,255,255,.50)
+    // 对齐 Apple-UI liquid-glass-bg：大面板填色 0.24-0.32（此处 0.42 是 bg-strong 偏 readable 的保守值，
+    // 靠模糊/对比度保可读，不把卡片做成白板；之前 0.55 偏塑料感）
+    Surface = Color(0x6BFFFFFF),        // rgba(255,255,255,.42)
+    SurfaceSoft = Color(0x52FFFFFF),    // rgba(255,255,255,.32)
     PillTint = Color(0x52FFFFFF),       // rgba(255,255,255,.32)
-    Rim = Color(0x52FFFFFF),            // rgba(255,255,255,.32) 描边克制，避免生硬轮廓
+    // 对齐 Apple-UI liquid-glass-border（亮色）：rgba(0,0,0,.08) 暗线发丝；
+    // 之前 0x52FFFFFF 是白描边，在浅底上完全看不见（规范明确拒绝等量白边）
+    Rim = Color(0x14000000),            // rgba(0,0,0,.08)
     SelectorSurface = Color(0x52FFFFFF), // rgba(255,255,255,.32) 时间选择条：更透，内容色不被白化
 
     // --- 阴影（rgb(70,90,130) = 0x465A82）---

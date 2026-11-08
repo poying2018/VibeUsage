@@ -140,6 +140,13 @@ for ($try = 1; $try -le 3; $try++) {
     Start-Sleep -Seconds 5
 }
 if (-not $pushed) {
+    # SSH 传输失效时的兜底：本机 github.com:443 可直连且 GCM 存有凭据，
+    # 用带端口的显式 HTTPS URL 绕过 url.insteadOf 的 SSH 重写规则再试一次。
+    Write-Host "      SSH push failed - trying HTTPS :443 fallback..." -ForegroundColor DarkYellow
+    git -C $root push https://github.com:443/$Repo.git main
+    if ($LASTEXITCODE -eq 0) { $pushed = $true }
+}
+if (-not $pushed) {
     Write-Host ""
     Write-Host "[5/7] PUSH FAILED - the release was NOT published." -ForegroundColor Red
     Write-Host "      Local commit 'release: v$Version' exists; the remote does not have it." -ForegroundColor Red

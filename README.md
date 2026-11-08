@@ -4,7 +4,7 @@
 也能在一个面板里聚合 **14 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
 基于 **Jetpack Compose** 与 **液态玻璃（Liquid Glass）** 设计语言。
 
-当前版本 **2.24.0**（versionCode 79）· MIT
+当前版本 **2.25.0**（versionCode 80）· MIT
 
 ## ✨ 核心功能
 

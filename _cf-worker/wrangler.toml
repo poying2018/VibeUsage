@@ -2,6 +2,11 @@ name = "github-accelerator-worker"
 main = "index.js"
 compatibility_date = "2025-11-11"
 
+# 自定义域名（更新检查 / 下载加速入口，App 内置该域名）
+routes = [
+  { pattern = "github.20050912.xyz", custom_domain = true }
+]
+
 # KV 全局限流
 [[kv_namespaces]]
 binding = "RATE_LIMIT"

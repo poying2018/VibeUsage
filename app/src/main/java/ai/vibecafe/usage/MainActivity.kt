@@ -14,6 +14,12 @@ import ai.vibecafe.usage.ui.glass.rememberPageBackdrop
 import ai.vibecafe.usage.ui.theme.GlassText
 import ai.vibecafe.usage.ui.theme.GlassTheme
 import ai.vibecafe.usage.ui.theme.LocalGlassPalette
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -53,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -255,6 +262,17 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                 // 一键登录：设备码授权，浏览器批准后自动回填凭据（官方收紧 Key 自助创建后的主通道）
                 when (val phase = devicePhase) {
                     is DeviceLoginViewModel.Phase.Waiting -> {
+                        // 验证码呼吸微动效：等待期间把视线引到需要跨设备抄写的字符上
+                        val codePulse = rememberInfiniteTransition(label = "codePulse")
+                        val codeAlpha by codePulse.animateFloat(
+                            initialValue = 1f,
+                            targetValue = 0.6f,
+                            animationSpec = infiniteRepeatable(
+                                tween(1100, easing = FastOutSlowInEasing),
+                                RepeatMode.Reverse
+                            ),
+                            label = "codeAlpha"
+                        )
                         Text(
                             "浏览器打开 vibecafe.ai/usage/device（需已登录）",
                             style = GlassText.Label,
@@ -267,7 +285,9 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                             fontFamily = FontFamily.Monospace,
                             letterSpacing = 3.sp,
                             color = palette.InkHi,
-                            modifier = Modifier.clickable(
+                            modifier = Modifier
+                                .graphicsLayer { alpha = codeAlpha }
+                                .clickable(
                                 interactionSource = interaction,
                                 indication = null
                             ) {

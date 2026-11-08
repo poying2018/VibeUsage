@@ -8,6 +8,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -121,6 +125,16 @@ private fun Modifier.liquidGlass(
         },
         onDrawSurface = {
             drawRect(sheen)
+            // 发丝线描边（liquid-glass skill：1px hairline 让玻璃边缘在 1x DPR 保持锐利）。
+            // 画在边界内半个线宽处，随主题墨色取色，深浅色主题都成立。
+            val hairline = 1.dp.toPx()
+            drawRoundRect(
+                color = p.InkHi.copy(alpha = 0.10f),
+                topLeft = Offset(hairline / 2f, hairline / 2f),
+                size = Size(size.width - hairline, size.height - hairline),
+                cornerRadius = CornerRadius(cornerRadius.toPx() - hairline / 2f),
+                style = Stroke(width = hairline)
+            )
         },
         exportedBackdrop = exportedBackdrop
     )

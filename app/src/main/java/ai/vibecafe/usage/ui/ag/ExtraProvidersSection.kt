@@ -1,8 +1,13 @@
 package ai.vibecafe.usage.ui.ag
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -178,7 +183,7 @@ fun QuotaSwitcher(
                         alpha = (p * 4f).coerceAtMost(1f)
                     }
             ) {
-                Column(
+                Box(
                     Modifier
                         // 贴内容宽度的窄面板（不再横向撑满），整体左对齐在按钮下方；
                         // 供应商已增至 11 个，超屏高时面板内滚动
@@ -188,6 +193,9 @@ fun QuotaSwitcher(
                         // 行内容才只会在壳内位移；反过来（滚动在外）整块玻璃会随内容平移，
                         // 被滚动视口的直角边界裁切 → 滚动时上/下角变直角
                         .glassCard(menuBackdrop, cornerRadius = 20.dp)
+                ) {
+                Column(
+                    Modifier
                         .verticalScroll(rememberScrollState())
                         .padding(vertical = 8.dp)
                 ) {
@@ -239,6 +247,33 @@ fun QuotaSwitcher(
                         }
                     }
                 }
+                // 菜单滚动边缘渐隐（技能 Scroll Edge Effect）：供应商多到会滚才出现，
+                // 行滑到顶/底时淡入玻璃底，不再硬裁。menuBackdrop 玻璃外壳外侧，
+                // 这里的带子只是内容层渐隐，不参与玻璃取样；非 clickable，行点击透传。
+                if (options.size > 7) {
+                    Box(
+                        Modifier
+                            .align(androidx.compose.ui.Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .height(16.dp)
+                            .background(
+                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    listOf(cardBg, cardBg.copy(alpha = 0f))
+                                )
+                            )
+                    )
+                    Box(
+                        Modifier
+                            .align(androidx.compose.ui.Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(20.dp)
+                            .background(
+                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    listOf(cardBg.copy(alpha = 0f), cardBg)
+                                )
+                            )
+                    )
+                }
                 // 液滴高光：展开瞬间白色闪光，随进度消退（弹簧过冲时钳 0）
                 Box(
                     Modifier
@@ -246,6 +281,7 @@ fun QuotaSwitcher(
                         .graphicsLayer { alpha = (0.45f * (1f - reveal.value)).coerceAtLeast(0f) }
                         .background(Color.White)
                 )
+                }
             }
         }
     }
@@ -631,7 +667,10 @@ private fun ModelCatalog(models: List<ExtraQuotaApi.ModelInfo>, label: String, b
             compareBy({ it.inputPrice ?: Double.MAX_VALUE }, { it.id })
         )
     }
-    val shown = if (expanded) ordered else ordered.take(COLLAPSED_MODELS)
+    // 折叠态永远只渲染前 5 条，展开多出的是后半段；多出部分走 AnimatedVisibility
+    // 弹簧形变（技能 glassEffectID 的变形过渡对应实现），不再瞬间跳变。
+    val head = ordered.take(COLLAPSED_MODELS)
+    val tail = ordered.drop(COLLAPSED_MODELS)
     // 价格区间给一个「一眼可比」的结论：这个套餐的模型从多便宜到多贵
     val priceSpan = models.mapNotNull { it.inputPrice }.let { ps ->
         if (ps.size < 2) null else ps.min() to ps.max()
@@ -670,7 +709,7 @@ private fun ModelCatalog(models: List<ExtraQuotaApi.ModelInfo>, label: String, b
             .clip(RoundedCornerShape(14.dp))
             .background(palette.InkHi.copy(alpha = 0.04f))
     ) {
-        shown.forEachIndexed { idx, m ->
+        head.forEachIndexed { idx, m ->
             if (idx > 0) {
                 Box(
                     Modifier
@@ -682,7 +721,43 @@ private fun ModelCatalog(models: List<ExtraQuotaApi.ModelInfo>, label: String, b
             }
             ModelRow(m, brand, expanded)
         }
+        // 展开后半段：高度与透明度一起弹簧变形，像玻璃面"长"出来，收起则吸回
+        androidx.compose.animation.AnimatedVisibility(
+            visible = expanded && tail.isNotEmpty(),
+            enter = androidx.compose.animation.expandVertically(
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = 0.85f, stiffness = 420f
+                )
+            ) + androidx.compose.animation.fadeIn(
+                animationSpec = androidx.compose.animation.core.tween(180)
+            ),
+            exit = androidx.compose.animation.shrinkVertically(
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = 0.85f, stiffness = 420f
+                )
+            ) + androidx.compose.animation.fadeOut(
+                animationSpec = androidx.compose.animation.core.tween(140)
+            )
+        ) {
+            tail.forEach { m ->
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .height(1.dp)
+                        .background(palette.InkHi.copy(alpha = 0.06f))
+                )
+                ModelRow(m, brand, true)
+            }
+        }
         if (models.size > COLLAPSED_MODELS) {
+            val chevronRot by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (expanded) 180f else 0f,
+                animationSpec = androidx.compose.animation.core.spring(
+                    dampingRatio = 0.8f, stiffness = 420f
+                ),
+                label = "catalogChevron"
+            )
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -704,7 +779,7 @@ private fun ModelCatalog(models: List<ExtraQuotaApi.ModelInfo>, label: String, b
                         contentDescription = null,
                         modifier = Modifier
                             .size(14.dp)
-                            .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+                            .graphicsLayer { rotationZ = chevronRot },
                         tint = readableBrandColor(brand, cardBg)
                     )
                 }

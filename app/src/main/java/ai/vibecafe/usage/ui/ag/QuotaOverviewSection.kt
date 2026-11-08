@@ -115,20 +115,23 @@ fun QuotaOverviewSection(
                     Text("$failedCount 个异常", fontSize = 11.sp, color = palette.Down)
                     Spacer(Modifier.width(8.dp))
                 }
-                LiquidButton(
-                    onClick = { viewModel.refreshAll() },
-                    backdrop = backdrop,
-                    enabled = connected.isNotEmpty() && !anyLoading,
-                    modifier = Modifier.height(28.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.Refresh,
-                        contentDescription = null,
-                        modifier = Modifier.size(12.dp),
-                        tint = palette.InkHi
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("刷新全部", fontSize = 11.sp, color = palette.InkHi)
+                // 没有已接入平台时不渲染置灰按钮：空状态只剩引导文案更清爽
+                if (connected.isNotEmpty()) {
+                    LiquidButton(
+                        onClick = { viewModel.refreshAll() },
+                        backdrop = backdrop,
+                        enabled = !anyLoading,
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = palette.InkHi
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("刷新全部", fontSize = 11.sp, color = palette.InkHi)
+                    }
                 }
                 Spacer(Modifier.width(6.dp))
                 Icon(
@@ -145,7 +148,7 @@ fun QuotaOverviewSection(
                 Spacer(Modifier.height(4.dp))
                 if (connected.isEmpty()) {
                     Text(
-                        "还没有接入任何平台。用上方的平台下拉切换后即可接入。",
+                        "还没有接入任何平台。切换上方平台下拉即可接入。",
                         fontSize = 11.sp,
                         color = palette.InkMid,
                         modifier = Modifier.padding(vertical = 10.dp)
