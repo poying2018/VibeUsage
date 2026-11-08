@@ -1,7 +1,12 @@
 package ai.vibecafe.usage.data
 
+import okhttp3.RequestBody
+import okhttp3.ResponseBody
+import retrofit2.Response
 import retrofit2.http.GET
+import retrofit2.http.Body
 import retrofit2.http.Header
+import retrofit2.http.POST
 import retrofit2.http.Query
 
 interface VibeCafeApi {
@@ -36,4 +41,21 @@ interface VibeCafeApi {
         @Query("to") to: String,
         @Query("tz") tz: String = "Asia/Shanghai"
     ): UsageResponse
+
+    /**
+     * 设备码登录：发起。无鉴权 POST {}，返回 deviceCode / userCode / verificationUriComplete。
+     */
+    @POST("/api/usage/device/code")
+    suspend fun startDeviceLogin(
+        @Body body: RequestBody
+    ): Response<ResponseBody>
+
+    /**
+     * 设备码登录：轮询。等待用户在浏览器批准时返回 HTTP 200 + {"error":"authorization_pending"}，
+     * 所以必须用 Response<ResponseBody> 拿原始状态码与报文自行解析。
+     */
+    @POST("/api/usage/device/poll")
+    suspend fun pollDeviceLogin(
+        @Body body: RequestBody
+    ): Response<ResponseBody>
 }

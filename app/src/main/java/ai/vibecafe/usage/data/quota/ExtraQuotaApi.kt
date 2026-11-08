@@ -38,15 +38,51 @@ object ExtraQuotaApi {
     )
 
     /**
+     * 模型目录条目：供应商 `/models` 接口里能拿到的元数据。
+     *
+     * 只有 id 是不够的 —— 「这个套餐能用哪些模型」之外，用户真正想知道的是
+     * 「哪个便宜、上下文多长、能不能看图 / 带工具」。字段一律可空：
+     * 各家接口给的东西差别很大，缺字段就当没有，不要猜。
+     *
+     * 价格单位统一为 **美元 / 百万 token**（OpenAI 风格接口的通行口径，
+     * OpenCode 的定价页也用这个单位；其它供应商拿不到价格就留 null）。
+     */
+    data class ModelInfo(
+        val id: String,
+        val name: String? = null,
+        val contextLimit: Long? = null,
+        val outputLimit: Long? = null,
+        val inputPrice: Double? = null,
+        val cacheReadPrice: Double? = null,
+        val outputPrice: Double? = null,
+        val reasoning: Boolean = false,
+        /** 支持的推理强度档数（契约里 effort 数组的长度）；0 = 无/未声明。 */
+        val reasoningEfforts: Int = 0,
+        val tools: Boolean = false,
+        val vision: Boolean = false,
+        val openWeights: Boolean = false,
+        val releaseDate: String? = null,
+        val knowledge: String? = null,
+        /** 高峰时段倍率（如工作日白天 ×2）。null = 该模型没有浮动定价。 */
+        val peakFactor: Double? = null,
+        /** 高峰时段的人类可读摘要（「工作日 09:00–12:00」）；null = 无法概括或没有。 */
+        val peakWindow: String? = null,
+        /** 官方一句话简介。 */
+        val description: String? = null,
+    )
+
+    /**
      * 按时间窗口分组的额度快照（组名有序）。models = 当前账号实际可用的模型列表
      * （来自账号维度的动态接口，随账号实时变化；拿不到则留空，UI 隐藏模型区）。
      * modelsLabel 覆盖模型区标题（默认「可用模型」），供按定价分档的供应商注明口径。
+     * modelInfo = 带元数据的模型目录（能拿到才有；UI 优先用它，拿不到回落到 models 芯片）。
      */
     data class Usage(
         val account: String?,
         val groups: Map<String, List<Bar>>,
         val models: List<String> = emptyList(),
-        val modelsLabel: String? = null
+        val modelsLabel: String? = null,
+        val modelInfo: List<ModelInfo> = emptyList()
     )
 
     class QuotaException(val code: Int, message: String) : Exception(message)

@@ -3,6 +3,7 @@ package ai.vibecafe.usage.budget
 import ai.vibecafe.usage.MainActivity
 import ai.vibecafe.usage.R
 import ai.vibecafe.usage.core.ApiKeyStore
+import ai.vibecafe.usage.data.FxRates
 import ai.vibecafe.usage.data.UsageRepository
 import ai.vibecafe.usage.stats.StatsEngine
 import ai.vibecafe.usage.ui.formatCost
@@ -150,6 +151,9 @@ object BudgetNotify {
 class BudgetCheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val context = applicationContext
+        // 通知里的金额按人民币展示：先读缓存汇率，过期顺带刷新
+        FxRates.init(context)
+        FxRates.refreshIfStale(context)
         val key = ApiKeyStore.get(context)
         if (key.isEmpty()) return Result.success()
         // 网络失败要重试，不能直接 success：直接 success 等于把当天的预算检查整个吞掉，

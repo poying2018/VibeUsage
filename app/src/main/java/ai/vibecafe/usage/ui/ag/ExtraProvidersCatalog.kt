@@ -39,6 +39,7 @@ import ai.vibecafe.usage.data.quota.Kimi
 import ai.vibecafe.usage.data.quota.Mimo
 import ai.vibecafe.usage.data.quota.MiniMax
 import ai.vibecafe.usage.data.quota.OpenCode
+import ai.vibecafe.usage.data.quota.OpenCodeConsole
 import ai.vibecafe.usage.data.quota.OpenRouter
 
 /** 支持一键授权的登录方式（凭据粘贴始终作为后备）。 */
@@ -53,7 +54,14 @@ enum class OAuthKind {
     OPENROUTER,
 
     /** CommandCode 网页授权（浏览器登录 Studio，回调直接带 user_ 开头的 API Key）。 */
-    COMMANDCODE
+    COMMANDCODE,
+
+    /**
+     * OpenCode Console 设备码授权（浏览器输码后拿 OAuth 令牌，存令牌包）。
+     *
+     * 与粘贴 Key 并存：同一槽位由凭据前缀区分，登录通道可随时互换。
+     */
+    OPENCODE_DEVICE
 }
 
 /** 「额度」页下拉可切换的凭据型供应商（反重力为独立面板，不在此列）。 */
@@ -148,9 +156,11 @@ enum class ExtraProvider(
     OPENCODE(
         "opencode", "OpenCode Go", Color(0xFFF97316), Icons.Filled.Memory,
         listOf("API Key"),
-        "opencode.ai/console → Account → Personal API keys 创建（权限勾选 Usage: Read），" +
-            "粘贴 oc_sk_ 开头的 Key；需已订阅 Go / Go Plus / Go Teams。查 5 小时 / 每周 / 每月三档窗口额度" +
-            "（旧称 opencode zen，已改名）；海外站，中转优先",
+        "推荐一键授权（浏览器输码登录 Console，不用粘贴 Key，金额照同样样读到）；" +
+            "手动：opencode.ai/console → Account → Personal API keys 创建（权限勾选 Usage: Read），" +
+            "粘贴 oc_sk_ 开头的 Key —— 同一把 Key 既读 Go 推理额度，也读 Console 的真实用量。" +
+            "需已订阅 Go / Go Plus / Go Teams。查 5 小时 / 每周 / 每月三档窗口（旧称 opencode zen）；海外站，中转优先",
+        oauth = OAuthKind.OPENCODE_DEVICE,
         minCredLen = 12
     );
 
@@ -158,8 +168,14 @@ enum class ExtraProvider(
     val credPrefsKeys: List<String> =
         credLabels.mapIndexed { i, _ -> if (credLabels.size == 1) "${id}_key" else "${id}_cred$i" }
 
-    /** 用已存凭据查询额度（在 IO 线程调用）。 */
-    fun fetch(creds: List<String>): ExtraQuotaApi.Usage = when (this) {
+    /**
+     * 用已存凭据查询额度（在 IO 线程调用）。
+     *
+     * [onRenew] 用于「查询过程中凭据被服务端轮换」：OpenCode 的 OAuth 令牌
+     * 刷新时服务端可能同时换掉 refresh_token，不写回的话下次启动就用不了。
+     * 其余供应商没有这种机制，默认什么都不做。
+     */
+    fun fetch(creds: List<String>, onRenew: (List<String>) -> Unit = {}): ExtraQuotaApi.Usage = when (this) {
         MINIMAX -> MiniMax.fetchUsage(creds[0])
         GLM -> Glm.fetchUsage(creds[0])
         KIMI -> Kimi.fetchUsage(creds[0])
@@ -173,7 +189,19 @@ enum class ExtraProvider(
         AGNES -> Agnes.fetchUsage(creds[0], creds[1])
         MIMO -> Mimo.fetchUsage(creds[0], creds[1])
         COMMANDCODE -> CommandCode.fetchUsage(creds[0])
-        OPENCODE -> OpenCode.fetchUsage(creds[0])
+        OPENCODE -> {
+            // 同一条 prefs 槽位承载两种接入方式：带前缀的是 Console 登录态（OAuth 令牌），
+            // 其余是 oc_sk_ Key。登录态可能轮换凭据 → 通过 onRenew 回写。
+            if (OpenCodeConsole.isConsoleCred(creds[0])) {
+                // 刷新成功的即时回写走 fetchUsage 内部的 onRenew（查询失败也不丢）；
+                // 返回值里的 renewed 是同一份值的兜底，两边写同一个字符串是幂等的。
+                val (usage, renewed) = OpenCodeConsole.fetchUsage(creds[0]) { onRenew(listOf(it)) }
+                renewed?.let { onRenew(listOf(it)) }
+                usage
+            } else {
+                OpenCode.fetchUsage(creds[0])
+            }
+        }
     }
 
     companion object {

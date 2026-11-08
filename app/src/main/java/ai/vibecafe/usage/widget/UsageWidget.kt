@@ -1,6 +1,7 @@
 package ai.vibecafe.usage.widget
 
 import ai.vibecafe.usage.core.ApiKeyStore
+import ai.vibecafe.usage.data.FxRates
 import ai.vibecafe.usage.data.UsageRepository
 import ai.vibecafe.usage.stats.StatsEngine
 import ai.vibecafe.usage.stats.TimeRange
@@ -128,6 +129,8 @@ class UsageWidgetSyncWorker(
 
     override suspend fun doWork(): Result {
         val context = applicationContext
+        FxRates.init(context)
+        FxRates.refreshIfStale(context)
         val key = ApiKeyStore.get(context)
         if (key.isEmpty()) return Result.success()
         // 只要今天的数据：原来这里调 fetchDailyData（days=3650 全量历史），
@@ -224,6 +227,7 @@ class UsageWidget : GlanceAppWidget() {
     override val sizeMode: SizeMode = SizeMode.Single
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        FxRates.init(context)
         val snapshot = UsageWidgetCache.read(context)
         provideContent { Content(context, snapshot) }
     }

@@ -3,6 +3,7 @@ import ai.vibecafe.usage.budget.BudgetNotify
 import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.core.ThemeMode
 import ai.vibecafe.usage.data.CredentialBackup
+import ai.vibecafe.usage.data.FxRates
 import ai.vibecafe.usage.share.ShareCard
 import ai.vibecafe.usage.ui.ag.ExtraQuotaViewModel
 import ai.vibecafe.usage.ui.anim.fadeSlideIn
@@ -35,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
@@ -56,7 +58,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
@@ -73,11 +77,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import android.widget.Toast
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import java.util.Locale
+import kotlin.math.roundToLong
 
 /**
  * 独立设置页（底部导航第 3 个 Tab）。
@@ -108,8 +115,11 @@ fun SettingsScreen(
     // 与 DashboardScreen 同一个 MainViewModel 实例（同一 Activity 作用域 + 同默认 key），
     // 用它的当前统计数据来生成「保存到相册」用的分享卡
     val vm: MainViewModel = viewModel()
+    // 美元汇率（自动检测）：本设置页与全站金额展示共用同一个值
+    val fxRate by FxRates.rateFlow.collectAsStateWithLifecycle()
+    val fxScope = rememberCoroutineScope()
     // 预算提醒阈值：与 BudgetNotify 共用同一份 prefs，改完立即生效
-    var threshold by remember { mutableStateOf(BudgetNotify.threshold(appContext)) }
+    var threshold by remember { mutableDoubleStateOf(BudgetNotify.threshold(appContext)) }
     var thresholdCustom by remember { mutableStateOf(BudgetNotify.hasCustomThreshold(appContext)) }
     var showThresholdDialog by remember { mutableStateOf(false) }
     // —— 凭据备份：状态挂在页面级，口令弹窗在 Column 之外也要用 ——
@@ -454,6 +464,14 @@ fun SettingsScreen(
                 },
                 onClick = { showThresholdDialog = true }
             )
+            CardDivider()
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.CurrencyExchange,
+                title = "美元汇率",
+                subtitle = "1 美元 = ¥" + String.format(Locale.US, "%.2f", fxRate) + " · 每日自动更新，点击刷新",
+                onClick = { fxScope.launch { FxRates.refresh(appContext) } }
+            )
         }
         // —— 凭据备份 ——
         SectionLabel("凭据备份")
@@ -521,8 +539,10 @@ fun SettingsScreen(
             initial = threshold,
             onDismiss = { showThresholdDialog = false },
             onSave = { value ->
-                BudgetNotify.setThreshold(appContext, value)
-                threshold = value
+                // 弹窗里输入的是人民币，这里换算回美元存（存储口径不变）
+                val usd = value / FxRates.usdToCny
+                BudgetNotify.setThreshold(appContext, usd)
+                threshold = usd
                 thresholdCustom = true
                 showThresholdDialog = false
             },
@@ -597,7 +617,8 @@ private fun ThresholdDialog(
     onResetDefault: () -> Unit
 ) {
     val p = LocalGlassPalette.current
-    var text by remember { mutableStateOf(String.format(Locale.US, "%.2f", initial)) }
+    // initial 是美元，弹窗里展示人民币：输入时再换算回来存
+    var text by remember { mutableStateOf(String.format(Locale.US, "%.2f", initial * FxRates.usdToCny)) }
     var error by remember { mutableStateOf<String?>(null) }
     val errText = error
     Dialog(
@@ -627,8 +648,8 @@ private fun ThresholdDialog(
                     text = filterAmountInput(it)
                     error = null
                 },
-                label = { Text("金额（USD）") },
-                prefix = { Text("$", color = p.InkMid) },
+                label = { Text("金额（人民币）") },
+                prefix = { Text("¥", color = p.InkMid) },
                 singleLine = true,
                 isError = errText != null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -667,7 +688,9 @@ private fun ThresholdDialog(
                     when {
                         value == null -> error = "请输入有效金额"
                         value <= 0.0 -> error = "阈值必须大于 0"
-                        value > BudgetNotify.MAX_BUDGET_USD -> error = "阈值不能超过 1,000,000"
+                        value > BudgetNotify.MAX_BUDGET_USD * FxRates.usdToCny ->
+                            error = "阈值不能超过 " +
+                                String.format(Locale.US, "%,.0f", BudgetNotify.MAX_BUDGET_USD * FxRates.usdToCny)
                         else -> onSave(value)
                     }
                 }) {
@@ -794,14 +817,17 @@ private fun PassphraseDialog(
     }
 }
 
-/** 金额展示：整数不带小数（$500），非整数保留两位（$12.50）。 */
+/** 金额展示（人民币）：整数不带小数（¥500），非整数保留两位（¥12.50）。入参是美元。 */
 
-private fun formatThreshold(value: Double): String =
-    if (value.isFinite() && value == Math.floor(value)) {
-        "$" + value.toLong()
+private fun formatThreshold(value: Double): String {
+    val cny = value * FxRates.usdToCny
+    return if (value.isFinite() && value == Math.floor(value)) {
+        // 美元整数（默认 500）换算后多半不是整数，取整展示：¥3350 而不是 ¥3350.00
+        "¥" + cny.roundToLong()
     } else {
-        "$" + String.format(Locale.US, "%.2f", value)
+        "¥" + String.format(Locale.US, "%.2f", value * FxRates.usdToCny)
     }
+}
 
 /** 输入过滤：只留数字与一个小数点，小数点后最多两位。 */
 

@@ -25,6 +25,7 @@ import ai.vibecafe.usage.data.quota.ExtraQuotaApi.fetchModelIds
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.formatCountdown
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.formatReset
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.gson
+import ai.vibecafe.usage.data.FxRates
 
 //     plan_total_token / compensation_total_token 做多键名容错取值；拿到真样本后应据实对齐。
 
@@ -106,20 +107,19 @@ object Mimo {
         val data = envelope(resp).optObject("data") ?: return emptyList()
         val total = jnum(data, "balance") ?: return emptyList()
         val currency = jstr(data, "currency")
-        val symbol = when (currency) {
-            "USD" -> "$"
-            "CNY" -> "¥"
-            else -> ""
-        }
-        val parts = mutableListOf("现金 $symbol${money(jnum(data, "cashBalance") ?: total)}")
+        // 余额统一按人民币展示：美元余额按自动汇率换算，已是人民币的不动
+        val rate = if (currency == "USD") FxRates.usdToCny else 1.0
+        val symbol = if (currency == "USD" || currency == "CNY") "¥" else ""
+        val labelCurrency = if (currency == "USD" || currency == "CNY") "CNY" else currency
+        val parts = mutableListOf("现金 $symbol${money((jnum(data, "cashBalance") ?: total) * rate)}")
         for ((key, label) in listOf(
             "giftBalance" to "赠费", "frozenBalance" to "冻结", "overdraftLimit" to "可透支"
         )) {
-            (jnum(data, key) ?: 0.0).takeIf { it > 0 }?.let { parts += "$label $symbol${money(it)}" }
+            (jnum(data, key) ?: 0.0).takeIf { it > 0 }?.let { parts += "$label $symbol${money(it * rate)}" }
         }
         return listOf(
             Bar(
-                label = listOfNotNull(currency, "余额").joinToString(" ") + " $symbol${money(total)}",
+                label = listOfNotNull(labelCurrency, "余额").joinToString(" ") + " $symbol${money(total * rate)}",
                 percentRemaining = 100,
                 counts = parts.joinToString(" · ")
             )

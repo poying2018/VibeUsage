@@ -4,6 +4,8 @@ import ai.vibecafe.usage.core.ApiKeyStore
 import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.core.ThemeMode
 import ai.vibecafe.usage.core.ThemeStore
+import ai.vibecafe.usage.data.FxRates
+import ai.vibecafe.usage.ui.DeviceLoginViewModel
 import ai.vibecafe.usage.ui.DashboardScreen
 import ai.vibecafe.usage.ui.MainViewModel
 import ai.vibecafe.usage.ui.glass.GlassBackground
@@ -22,12 +24,14 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -36,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +55,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -64,6 +71,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 汇率先从缓存读，之后在组合里自动刷新（24h 有效期，失败保留旧值）
+        FxRates.init(this)
         enableEdgeToEdge()
         // 桌面小组件的后台用量同步（已安装小组件时每 30 分钟刷新）
         ai.vibecafe.usage.widget.UsageWidgetSync.ensureScheduled(this)
@@ -87,6 +96,11 @@ private fun AppRoot() {
     val vm: MainViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     var apiKey by remember { mutableStateOf(ApiKeyStore.get(context)) }
+
+    // 启动时自动检测美元汇率（过期才拉，失败不挡界面）
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        FxRates.refreshIfStale(context)
+    }
 
     // 液态玻璃全局样式（LockScreen 配方，设置页可调）
     // init() 返回 Unit，remember 不该返回 Unit —— 用 SideEffect 触发一次初始化
@@ -150,11 +164,22 @@ private fun AppRoot() {
 private fun LoginScreen(onLogin: (String) -> Unit) {
     val palette = LocalGlassPalette.current
     val backdrop = rememberPageBackdrop()
+    val context = LocalContext.current
     var key by remember { mutableStateOf("") }
     var verifying by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val interaction = remember { MutableInteractionSource() }
+    val deviceVm: DeviceLoginViewModel = viewModel()
+    val devicePhase by deviceVm.state.collectAsStateWithLifecycle()
+
+    // 设备码批准 → 先复位状态机再落盘，避免登出回到登录页时残留 Approved 又自动登录
+    LaunchedEffect(devicePhase) {
+        (devicePhase as? DeviceLoginViewModel.Phase.Approved)?.let {
+            deviceVm.reset()
+            onLogin(it.apiKey)
+        }
+    }
 
     // 验证 API Key：调 vibecafe.ai 用量接口，成功(HTTP 200)才放行
     val verifyAndLogin: (String) -> Unit = { rawKey ->
@@ -223,10 +248,97 @@ private fun LoginScreen(onLogin: (String) -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Text("VibeUsage", style = GlassText.Title, color = palette.InkHi)
                 Text(
-                    "输入 VibeCafe API Key 以加载用量数据",
+                    "一键授权登录，无需手动粘贴 API Key",
                     style = GlassText.Label,
                     color = palette.InkMid
                 )
+                // 一键登录：设备码授权，浏览器批准后自动回填凭据（官方收紧 Key 自助创建后的主通道）
+                when (val phase = devicePhase) {
+                    is DeviceLoginViewModel.Phase.Waiting -> {
+                        Text(
+                            "浏览器打开 vibecafe.ai/usage/device（需已登录）",
+                            style = GlassText.Label,
+                            color = palette.InkMid
+                        )
+                        Text(
+                            phase.userCode,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Black,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 3.sp,
+                            color = palette.InkHi,
+                            modifier = Modifier.clickable(
+                                interactionSource = interaction,
+                                indication = null
+                            ) {
+                                val cm = context.getSystemService(android.app.Application.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("VibeCafe 验证码", phase.userCode))
+                            }
+                        )
+                        Text("已自动复制，点验证码可再次复制", style = GlassText.ChartAxis, color = palette.InkLo)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(16.dp), color = palette.InkMid, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("等待浏览器批准授权…", style = GlassText.Label, color = palette.InkMid)
+                        }
+                        Text(
+                            "没有自动打开浏览器？点此重试",
+                            fontSize = 11.sp,
+                            color = palette.InkLo,
+                            modifier = Modifier.clickable(
+                                interactionSource = interaction,
+                                indication = null
+                            ) {
+                                ai.vibecafe.usage.data.quota.OAuthFlow.openBrowser(context, phase.verifyUrl)
+                            }
+                        )
+                        LiquidButton(
+                            onClick = { deviceVm.cancel() },
+                            backdrop = backdrop,
+                            surfaceColor = Color.Gray,
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
+                        ) {
+                            Text("取消", style = GlassText.Chip, color = Color.White, fontSize = 14.sp)
+                        }
+                    }
+                    is DeviceLoginViewModel.Phase.Terminal -> {
+                        Text(
+                            phase.message,
+                            color = Color(0xFFE94560),
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        LiquidButton(
+                            onClick = { deviceVm.start() },
+                            backdrop = backdrop,
+                            surfaceBrush = Brush.horizontalGradient(
+                                listOf(palette.Accent, Color(0xFF4E7BFF)),
+                                startX = 0f,
+                                endX = 480f
+                            ),
+                            modifier = Modifier.fillMaxWidth().height(42.dp)
+                        ) {
+                            Text("重新一键登录", style = GlassText.Chip, color = Color.White, fontSize = 15.sp)
+                        }
+                    }
+                    else -> {
+                        LiquidButton(
+                            onClick = { deviceVm.start() },
+                            backdrop = backdrop,
+                            surfaceBrush = Brush.horizontalGradient(
+                                listOf(palette.Accent, Color(0xFF4E7BFF)),
+                                startX = 0f,
+                                endX = 480f
+                            ),
+                            modifier = Modifier.fillMaxWidth().height(42.dp)
+                        ) {
+                            Text("一键登录（浏览器授权）", style = GlassText.Chip, color = Color.White, fontSize = 15.sp)
+                        }
+                    }
+                }
+                Text("—— 或粘贴 API Key ——", style = GlassText.ChartAxis, color = palette.InkLo)
                 TextField(
                     value = key,
                     onValueChange = { key = it },

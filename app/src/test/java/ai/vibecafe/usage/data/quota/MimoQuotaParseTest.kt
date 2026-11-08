@@ -54,11 +54,18 @@ class MimoQuotaParseTest {
     }
 
     @Test
-    fun `usd balance uses dollar sign and missing balance yields nothing`() {
-        assertEquals(
-            "USD 余额 \$1.20",
-            Mimo.parseBalance("""{"code":0,"data":{"balance":"1.20","cashBalance":"1.20","currency":"USD"}}""").first().label
-        )
+    fun `usd balance converts to cny and missing balance yields nothing`() {
+        // 美元余额按实时汇率换算成人民币：显式钉死 7.2，与全局默认值解耦
+        val prev = ai.vibecafe.usage.data.FxRates.usdToCny
+        ai.vibecafe.usage.data.FxRates.usdToCny = 7.2
+        try {
+            assertEquals(
+                "CNY 余额 ¥8.64",
+                Mimo.parseBalance("""{"code":0,"data":{"balance":"1.20","cashBalance":"1.20","currency":"USD"}}""").first().label
+            )
+        } finally {
+            ai.vibecafe.usage.data.FxRates.usdToCny = prev
+        }
         assertTrue(Mimo.parseBalance("""{"code":0,"data":{}}""").isEmpty())
         assertTrue(Mimo.parseBalance("""{"code":0,"message":""}""").isEmpty())
     }

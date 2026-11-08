@@ -4,6 +4,7 @@ import ai.vibecafe.usage.BuildConfig
 import ai.vibecafe.usage.R
 import ai.vibecafe.usage.core.BackgroundStore
 import ai.vibecafe.usage.core.ThemeMode
+import ai.vibecafe.usage.data.FxRates
 import ai.vibecafe.usage.stats.ModelCost
 import ai.vibecafe.usage.stats.ModelDetail
 import ai.vibecafe.usage.stats.StatsEngine
@@ -105,6 +106,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -241,7 +243,7 @@ fun DashboardScreen(
     var bgPath by rememberSaveable { mutableStateOf(BackgroundStore.get(context)) }
     var showSettings by rememberSaveable { mutableStateOf(false) }  // 设置独立页（底部导航 Tab 3）
     var showAgPanel by rememberSaveable { mutableStateOf(false) }  // 反重力额度面板切换
-    var quotaTab by rememberSaveable { mutableStateOf(0) }  // 额度页平台切换：0 反重力 / 1+ ExtraProvider（旧存档可能越界，使用处钳制）
+    var quotaTab by rememberSaveable { mutableIntStateOf(0) }  // 额度页平台切换：0 反重力 / 1+ ExtraProvider（旧存档可能越界，使用处钳制）
     var switcherExpanded by remember { mutableStateOf(false) }  // 平台下拉展开态（提升到页面级：空白处点击收起用）
     var trendMetric by rememberSaveable { mutableStateOf(TrendMetric.COST) }  // 趋势图纵轴指标
     var showCustomPicker by rememberSaveable { mutableStateOf(false) }  // 自定义日期范围对话框
@@ -257,6 +259,8 @@ fun DashboardScreen(
     // 额度页的下拉刷新/头部刷新按钮要能刷到**当前选中的供应商**，而不是永远刷反重力。
     val extraQuotaViewModel: ExtraQuotaViewModel = viewModel()
     val extraQuotaState by extraQuotaViewModel.state.collectAsStateWithLifecycle()
+    // 美元→人民币汇率（自动检测）：本页所有金额都按这个展示，汇率一变整页重组
+    val usdCny by FxRates.rateFlow.collectAsStateWithLifecycle()
     val wide = isWideScreen()
     val pullState = rememberPullToRefreshState()
 
@@ -400,6 +404,9 @@ fun DashboardScreen(
                 ErrorNote("刷新失败：${state.error}（当前显示的是上次的数据）", backdrop)
             }
 
+            // 加载失败且没有任何数据时的错误文案（null 表示不走错误卡分支）
+            val noDataError = if (!state.isLoading && state.stats == null) state.error else null
+
             // ---- 设置页 / DS+ Milky 面板 / 主内容切换 ----
             if (showSettings) {
                 SettingsScreen(
@@ -452,6 +459,16 @@ fun DashboardScreen(
                         }
                     }
                 }
+            } else if (noDataError != null) {
+                // 加载失败且没有任何数据：只留一张错误卡。
+                // 此前 Summary 仍按 stats ?: 0.0 渲染 $0.00 / 0 Tokens 等假数字，错误信息却
+                // 藏在趋势图下方，用户会把「Key 失效」误读成「统计不准确」。
+                AuthErrorCard(
+                    error = noDataError,
+                    authFailed = state.authFailed,
+                    onRelogin = onLogout,
+                    backdrop = backdrop
+                )
             } else {
                 // ---- 总消耗卡片 ----
             if (wide) {
@@ -465,7 +482,7 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1.15f)) {
-                        Summary(state, wide = true, onPickCustomRange = { showCustomPicker = true })
+                        Summary(state, wide = true, onPickCustomRange = { showCustomPicker = true }, rate = usdCny)
                     }
                     Column(Modifier.weight(1f)) {
                         StatsGrid(state)
@@ -479,7 +496,7 @@ fun DashboardScreen(
                         .glassCard(backdrop)
                         .padding(20.dp)
                 ) {
-                    Summary(state, wide = false, onPickCustomRange = { showCustomPicker = true })
+                    Summary(state, wide = false, onPickCustomRange = { showCustomPicker = true }, rate = usdCny)
                     // 发丝线把「总览」和「分项统计」分成两块：四格统计直接贴在预测行下面，
                     // 数字大、字重高，扫读时容易把上一行的百分比读成这一行的
                     HorizontalDivider(
@@ -1059,7 +1076,12 @@ private fun IconGlassButton(
 }
 
 @Composable
-private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: () -> Unit = {}) {
+private fun Summary(
+    state: UiState,
+    wide: Boolean = false,
+    onPickCustomRange: () -> Unit = {},
+    rate: Double = FxRates.usdToCny
+) {
     val palette = LocalGlassPalette.current
     val haptic = LocalHapticFeedback.current
     val cost = state.stats?.totalCost ?: 0.0
@@ -1133,15 +1155,15 @@ private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: ()
             Row(verticalAlignment = Alignment.Bottom) {
                 AnimatedCounter(
                     value = cost.toFloat(),
-                    format = { formatCost(it.toDouble()) },
+                    format = { formatCost(it.toDouble(), rate) },
                     style = GlassText.Hero.copy(fontSize = if (wide) 54.sp else 42.sp),
                     color = palette.InkHi
                 )
                 Spacer(Modifier.width(5.dp))
-                // 「USD」原来 15sp ExtraBold 挂在数字右边，视觉重量接近数字本身，
+                // 「CNY」原来 15sp ExtraBold 挂在数字右边，视觉重量接近数字本身，
                 // 看着像数字的一部分。降到 11sp 并用弱色，只做单位标注。
                 Text(
-                    "USD",
+                    "CNY",
                     fontFamily = HanSansFamily,
                     fontWeight = FontWeight.Medium,
                     fontSize = if (wide) 12.sp else 11.sp,
@@ -1156,7 +1178,7 @@ private fun Summary(state: UiState, wide: Boolean = false, onPickCustomRange: ()
         val mp = state.monthProjection
         if (mp != null) {
             Text(
-                "本月已用 " + formatCost(mp.monthCost) + " · 按日均预测整月 " + formatCost(mp.projected),
+                "本月已用 " + formatCost(mp.monthCost, rate) + " · 按日均预测整月 " + formatCost(mp.projected, rate),
                 style = GlassText.Meta,
                 color = palette.InkLo
             )
@@ -1201,7 +1223,7 @@ private fun TrendChip(trend: Float) {
             Text(
                 String.format(Locale.US, "%+.0f%%", trend * 100),
                 // 趋势是次要信息：原来 13sp Black + 大内边距，视觉重量逼近主数字，
-                // 抢掉了「$66.18」的注意力。降到 12sp 并收窄内边距。
+                // 抢掉了「¥443」的注意力。降到 12sp 并收窄内边距。
                 style = GlassText.Chip.copy(fontSize = 12.sp),
                 color = ink,
                 maxLines = 1,
@@ -2056,6 +2078,82 @@ private fun MetricToggle(
     }
 }
 
+/**
+ * 主数据加载失败且无任何缓存时的顶部错误卡：只给原因和下一步，不渲染统计区。
+ * 鉴权失败时按钮直达登录页（清 Key 后由 LoginScreen 重新校验新 Key）；
+ * 网络类错误只提示刷新，避免误导用户清掉正确的 Key。
+ */
+@Composable
+private fun AuthErrorCard(
+    error: String,
+    authFailed: Boolean,
+    onRelogin: () -> Unit,
+    backdrop: com.kyant.backdrop.Backdrop
+) {
+    val palette = LocalGlassPalette.current
+    val haptic = LocalHapticFeedback.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .fadeSlideIn(0)
+            .glassCard(backdrop)
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Filled.Cloud,
+                contentDescription = null,
+                tint = palette.Down,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "用量数据加载失败",
+                style = GlassText.Label,
+                color = palette.InkHi
+            )
+        }
+        Text(error, style = GlassText.Label, color = palette.InkMid)
+        if (authFailed) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(palette.AccentWash)
+                    .border(1.dp, palette.AccentRim, RoundedCornerShape(999.dp))
+                    .clickable {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onRelogin()
+                    }
+                    .padding(horizontal = 14.dp, vertical = 11.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Logout,
+                    contentDescription = null,
+                    tint = palette.Accent,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "清除 Key，重新登录",
+                    style = GlassText.Label.copy(color = palette.AccentInk),
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        } else {
+            Text(
+                "请检查网络后点击右上角刷新重试",
+                style = GlassText.Meta,
+                color = palette.InkLo
+            )
+        }
+    }
+}
+
 @Composable
 private fun StatusCard(text: String, backdrop: com.kyant.backdrop.Backdrop) {
     val palette = LocalGlassPalette.current
@@ -2245,7 +2343,7 @@ private fun ModelDetailOverlay(
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            "USD",
+                            "CNY",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = palette.InkMid,
@@ -2462,7 +2560,7 @@ private fun ToolDetailOverlay(
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            "USD",
+                            "CNY",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = palette.InkMid,
@@ -2537,10 +2635,14 @@ private fun DetailMetric(label: String, value: String, palette: GlassPalette) {
 
 // ---------- 工具函数 ----------
 
-internal fun formatCost(value: Double): String = when {
-    value >= 1000 -> "$" + String.format(Locale.US, "%.0f", value)
-    value >= 100 -> "$" + String.format(Locale.US, "%.1f", value)
-    else -> "$" + String.format(Locale.US, "%.2f", value)
+/** 美元金额 → 人民币文案（汇率自动检测，离线用缓存，见 [FxRates]）。 */
+internal fun formatCost(value: Double, rate: Double = FxRates.usdToCny): String {
+    val cny = value * rate
+    return when {
+        cny >= 1000 -> "¥" + String.format(Locale.US, "%.0f", cny)
+        cny >= 100 -> "¥" + String.format(Locale.US, "%.1f", cny)
+        else -> "¥" + String.format(Locale.US, "%.2f", cny)
+    }
 }
 
 internal fun formatTokens(value: Long): String = when {

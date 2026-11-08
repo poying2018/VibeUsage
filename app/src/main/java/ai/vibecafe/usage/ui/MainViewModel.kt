@@ -74,8 +74,16 @@ data class UiState(
     /** HOURS_24 时若 hourlyData 不可用，显示降级提示。 */
     val granularityNote: String? = null,
     /** 更新检查 / 下载进度。 */
-    val update: UpdateState = UpdateState()
+    val update: UpdateState = UpdateState(),
+    /** 主接口返回 401/403（Key 失效）：概览页据此把错误卡换成「重新登录」入口，
+     * 避免继续用 $0.00 假数字冒充统计。 */
+    val authFailed: Boolean = false
 )
+
+/** 只有鉴权失败（401/403）才提示重新登录；网络类错误提示刷新即可，
+ * 否则弱网用户会被误导去清掉正确的 Key。 */
+internal fun isAuthError(t: Throwable?): Boolean =
+    t is HttpException && (t.code() == 401 || t.code() == 403)
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = UsageRepository()
@@ -233,6 +241,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isLoading = false,
                     isRefreshing = false,
                     error = null,
+                    authFailed = false,
                     granularityNote = note,
                     dailyData = daily,
                     hourlyData = effectiveHourly,
@@ -254,7 +263,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    error = mapError(dailyResult.exceptionOrNull())
+                    error = mapError(dailyResult.exceptionOrNull()),
+                    authFailed = isAuthError(dailyResult.exceptionOrNull())
                 )
             }
         }

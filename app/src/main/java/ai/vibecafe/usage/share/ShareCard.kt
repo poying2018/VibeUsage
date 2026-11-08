@@ -117,8 +117,8 @@ object ShareCard {
         val costText = formatCost(payload.totalCost)
         val hero = paint(InkHi, 148f * scale, black)
         c.drawText(costText, 66f * scale, 440f * scale, hero)
-        val usd = paint(InkMid, 46f * scale, body)
-        c.drawText("USD", 72f * scale + hero.measureText(costText) + 20f * scale, 440f * scale, usd)
+        val cny = paint(InkMid, 46f * scale, body)
+        c.drawText("CNY", 72f * scale + hero.measureText(costText) + 20f * scale, 440f * scale, cny)
 
         // ---- Tokens + 输入/输出细分 ----
         val tokens = paint(Accent, 56f * scale, body)

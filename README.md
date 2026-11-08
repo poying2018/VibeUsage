@@ -4,13 +4,13 @@
 也能在一个面板里聚合 **14 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
 基于 **Jetpack Compose** 与 **液态玻璃（Liquid Glass）** 设计语言。
 
-当前版本 **2.22.2**（versionCode 76）· MIT
+当前版本 **2.24.0**（versionCode 79）· MIT
 
 ## ✨ 核心功能
 
 ### 用量概览（vibecafe.ai）
 
-- 总消耗（USD，数字滚动动效）、趋势百分比（当前范围 vs 等长上周期）、月度消耗预测
+- 总消耗（人民币，美元按自动检测的实时汇率换算；数字滚动动效）、趋势百分比（当前范围 vs 等长上周期）、月度消耗预测
 - Tokens / 模型 / 应用 / 会话四维统计
 - 6 档时间范围（今日 / 24 小时 / 7 天 / 30 天 / 90 天 / 全部）+ **自定义日期范围**
 - 趋势平滑面积图、金额/Tokens 双指标切换、点按拖动查看任意点数值气泡
@@ -70,7 +70,7 @@ Maven 依赖已配置阿里云镜像（`settings.gradle.kts`），Gradle 发行�
 ## 📲 安装使用
 
 1. 安装 APK（可前往 [Releases](https://github.com/poying2018/VibeUsage/releases) 下载）
-2. 首次打开，在玻璃登录页输入你的 VibeCafe API Key
+2. 首次打开，在玻璃登录页点「一键登录」：浏览器打开 vibecafe.ai/usage/device 批准授权即可（也可手动粘贴 VibeCafe API Key）
 3. 进入 Dashboard；切到「额度」页可接入各家供应商
 
 ## 🔒 隐私说明

@@ -38,8 +38,12 @@ const ALLOWED_HOSTS = new Set([
   "api.z.ai",
   // ── CommandCode（额度窗口 / 套餐 credits / 周期用量；国内直连不稳时的兜底线路）──
   "api.commandcode.ai",
-  // ── OpenCode Go（opencode.ai 订阅额度 + 模型列表；中转优先线路）──
+  // ── OpenCode Go（opencode.ai 推理额度 + 模型列表；console.opencode.ai 读美元数额与设备码授权）──
   "opencode.ai",
+  "console.opencode.ai",
+  // ── 美元汇率（界面金额统一按人民币展示，自动检测当前汇率）──
+  "open.er-api.com",
+  "api.exchangerate-api.com",
 ]);
 
 const ALLOWED = (u) => {

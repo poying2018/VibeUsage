@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主题图标（Android 13+ 果冻图标）用的单色版：系统会统一着色，这里只给形状。
+     形状与彩色前景 ic_launcher_fg.png 同源（方框 + V），108dp 视口与自适应图标对齐。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#000000"
+        android:pathData="M18,12 h10 v78 h-10 Z M18,12 h66 v10 h-66 Z M84,22 h10 v10 h-10 Z M84,32 h10 v58 h-10 Z M28,80 h56 v10 h-56 Z M38,30 h9 v18 l7,10 7,-10 v-18 h9 v22 l-16,20 -16,-20 Z" />
+</vector>

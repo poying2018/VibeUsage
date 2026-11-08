@@ -28,12 +28,16 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ai.vibecafe.usage.data.quota.ExtraQuotaApi
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.Bar
+import ai.vibecafe.usage.data.FxRates
+import ai.vibecafe.usage.ui.formatTokens
 import ai.vibecafe.usage.ui.glass.LiquidButton
 import ai.vibecafe.usage.ui.glass.glassCard
 import ai.vibecafe.usage.ui.theme.GlassText
@@ -543,7 +547,12 @@ private fun LoggedArea(
             }
         }
 
-        if (ps.models.isNotEmpty()) {
+        if (ps.modelInfo.isNotEmpty()) {
+            // 有完整目录就展示目录：模型名、上下文、输入/输出单价、能力标签。
+            // 只列 id 的芯片串（早先的做法）对「选哪个模型」这个问题没有任何帮助。
+            ModelCatalog(ps.modelInfo, ps.modelsLabel ?: "可用模型", provider.color)
+        } else if (ps.models.isNotEmpty()) {
+            // 拿不到元数据的供应商：保留原来的芯片流，至少能看清有哪些模型
             Spacer(Modifier.height(14.dp))
             Text(
                 // 带上数量，这一区就有了一个可读的结论，而不是一堆裸芯片
@@ -596,6 +605,257 @@ private fun LoggedArea(
         }
     }
 }
+
+// ─── 模型目录 ───
+
+/**
+ * 模型目录：把 `/models` 返回的元数据真正用起来。
+ *
+ * 每个模型一张行：名称 + id（名称够用就省略重复 id）、上下文长度、
+ * 输入/输出单价、能力标签（推理 / 工具 / 视觉 / 开源权重 / 峰谷定价）。
+ *
+ * 为什么默认折叠只显示 5 条：一个 Go 套餐就有 29 个模型，全铺开会把
+ * 上面的额度条挤出屏幕 —— 额度才是这张卡的主信息，模型是次要参考。
+ * 想比较全部再点「展开」。
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ModelCatalog(models: List<ExtraQuotaApi.ModelInfo>, label: String, brand: Color) {
+    val palette = LocalGlassPalette.current
+    val cardBg = palette.cardBackground()
+    var expanded by remember(models) { mutableStateOf(false) }
+    // 折叠态按输入价升序：先看到免费和便宜的模型，比按字母序先看到 deepseek-* 有用。
+    // 没有价格的排最后（未知不比"贵"更值得先看）。
+    val ordered = remember(models) {
+        models.sortedWith(
+            compareBy({ it.inputPrice ?: Double.MAX_VALUE }, { it.id })
+        )
+    }
+    val shown = if (expanded) ordered else ordered.take(COLLAPSED_MODELS)
+    // 价格区间给一个「一眼可比」的结论：这个套餐的模型从多便宜到多贵
+    val priceSpan = models.mapNotNull { it.inputPrice }.let { ps ->
+        if (ps.size < 2) null else ps.min() to ps.max()
+    }
+
+    Spacer(Modifier.height(14.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "$label · ${models.size}",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = palette.InkMid,
+            // 与窗口组标题同一套规格：同一张卡里不该出现两套标题样式
+            letterSpacing = 0.4.sp
+        )
+        // 输入单价区间：一眼看出「这套餐里最便宜的模型 vs 最贵的」
+        priceSpan?.let { (lo, hi) ->
+            Text(
+                if (lo == hi) "输入 ¥${priceText(lo)}/M"
+                else "输入 ¥${priceText(lo)}–¥${priceText(hi)}/M",
+                fontSize = 10.sp,
+                color = palette.InkMid,
+                maxLines = 1
+            )
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(palette.InkHi.copy(alpha = 0.04f))
+    ) {
+        shown.forEachIndexed { idx, m ->
+            if (idx > 0) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .height(1.dp)
+                        .background(palette.InkHi.copy(alpha = 0.06f))
+                )
+            }
+            ModelRow(m, brand, expanded)
+        }
+        if (models.size > COLLAPSED_MODELS) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { expanded = !expanded }
+                    .padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (expanded) "收起" else "展开全部 ${models.size} 个",
+                        fontSize = 11.sp,
+                        color = readableBrandColor(brand, cardBg)
+                    )
+                    Icon(
+                        Icons.Filled.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+                        tint = readableBrandColor(brand, cardBg)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 目录里的一行：左名称/能力，右上下文与定价。 */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ModelRow(m: ExtraQuotaApi.ModelInfo, brand: Color, expandedHint: Boolean) {
+    val palette = LocalGlassPalette.current
+    val displayName = m.name?.takeIf { it.isNotBlank() } ?: m.id
+    // 名称与 id 不是同一个东西时才补 id（"DeepSeek V4.1 Flash" vs "deepseek-v4.1-flash"）
+    val showId = displayName != m.id
+
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f).padding(end = 10.dp)) {
+                Text(displayName, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = palette.InkHi, maxLines = 1)
+                if (showId) {
+                    Text(
+                        m.id, fontSize = 9.5.sp, color = palette.InkLo,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                }
+                // 发布日期 / 知识截止：判断「是不是新模型」「训练数据新不新」的唯一线索，
+                // 合成一行放在 id 下面，比各占一个标签省地方
+                val meta = listOfNotNull(
+                    m.releaseDate?.let { "发布 $it" },
+                    m.knowledge?.let { "知识 $it" }
+                ).joinToString(" · ")
+                if (meta.isNotEmpty()) {
+                    Text(
+                        meta, fontSize = 9.sp, color = palette.InkLo,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            // 右侧定价：输入 / 输出 / 缓存读 各一行，比挤成一行更容易扫读。
+            // 缓存读价对长会话影响很大（命中缓存只要输入价的零头），值得单独占一行。
+            Column(horizontalAlignment = Alignment.End) {
+                m.inputPrice?.let { PriceLine("入", it, brand) }
+                m.outputPrice?.let { PriceLine("出", it, brand) }
+                // 缓存读价 0 不代表"免费缓存"，而是"这个模型没有缓存折扣" —— 不显示
+                m.cacheReadPrice?.takeIf { it > 0.0 }?.let { PriceLine("缓存", it, brand) }
+            }
+        }
+        // 官方一句话简介：只在展开时显示 —— 折叠态要保证 5 条模型能一屏放下。
+        // 必须放在价格列之外独占整行：塞在左侧 Column 里会被右侧定价挤成窄条，
+        // 断行后和「缓存 0.01/M」黏在同一行，读起来像串行。
+        if (expandedHint && m.description?.isNotBlank() == true) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                m.description,
+                fontSize = 9.5.sp,
+                color = palette.InkMid,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        // 能力标签行：只画这个模型**有**的，没有的不占位
+        val tags = buildList {
+            // 复用主面板的 formatTokens（1.0M / 131.1k），不在这里另造一套口径
+            m.contextLimit?.let { ctx ->
+                add(
+                    m.outputLimit?.let { out -> "上下文 ${formatTokens(ctx)} / 出 ${formatTokens(out)}" }
+                        ?: "上下文 ${formatTokens(ctx)}"
+                )
+            }
+            // 带档数的推理标签（"推理 3 档"）比裸"推理"多告诉用户一件事：能调强度
+            if (m.reasoning) add(if (m.reasoningEfforts > 0) "推理 ${m.reasoningEfforts} 档" else "推理")
+            if (m.tools) add("工具")
+            if (m.vision) add("视觉")
+            if (m.openWeights) add("开源")
+            // 高峰倍率带上时段（"高峰 ×2 · 工作日 09:00–12:00、14:00–18:00"）：
+            // 只说 ×2 而不说什么时候，用户无法据此安排调用时间
+            m.peakFactor?.let { f ->
+                add(
+                    m.peakWindow?.let { w -> "高峰 ×${formatFactor(f)} · $w" }
+                        ?: "高峰 ×${formatFactor(f)}"
+                )
+            }
+            if (m.inputPrice == 0.0 && m.outputPrice == 0.0) add("免费")
+        }
+        if (tags.isNotEmpty()) {
+            Spacer(Modifier.height(5.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                tags.forEach { tag ->
+                    Text(
+                        tag,
+                        fontSize = 9.sp,
+                        color = palette.InkMid,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(palette.InkHi.copy(alpha = 0.07f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private const val COLLAPSED_MODELS = 5
+
+/**
+ * 一条价格行。免费模型用品牌色标出来，普通模型用次级墨色。
+ *
+ * 免费时只写「免费」，不拼「免费/M」—— 单位对 0 没有意义，读起来还像语法错误。
+ */
+@Composable
+private fun PriceLine(prefix: String, price: Double, brand: Color) {
+    val palette = LocalGlassPalette.current
+    val free = price == 0.0
+    Text(
+        if (free) "$prefix 免费" else "$prefix ¥${priceText(price)}/M",
+        fontSize = 10.sp,
+        color = if (free) readableBrandColor(brand, palette.cardBackground()) else palette.InkMid,
+        maxLines = 1
+    )
+}
+
+/**
+ * 单价文案（人民币 / 百万 token；入参是供应商的美元价，按 [FxRates] 换算）。
+ *
+ * 小数位按量级给：缓存读价常见 0.003 这种量级，固定两位会被四舍五入成 0.00、
+ * 裁掉尾零后变成 "0"，看起来像免费 —— 那是**最需要看清**的一个数。
+ */
+private fun priceText(v: Double): String {
+    val cny = v * FxRates.usdToCny
+    return when {
+        cny == 0.0 -> "免费"
+        cny >= 10.0 || cny == cny.toLong().toDouble() -> String.format(Locale.US, "%.0f", cny)
+        cny >= 0.01 -> String.format(Locale.US, "%.2f", cny).trimEnd('0').trimEnd('.')
+        else -> String.format(Locale.US, "%.3f", cny).trimEnd('0').trimEnd('.')
+    }
+}
+
+/** 倍率文案：2 → "2"，1.5 → "1.5"。 */
+private fun formatFactor(v: Double): String =
+    if (v == v.toLong().toDouble()) v.toLong().toString() else String.format(Locale.US, "%.1f", v)
 
 /** 与概览页 SectionTitle 同款：accent 竖条 + 大写小字标签 + 平台色圆点。 */
 @Composable

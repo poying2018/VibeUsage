@@ -9,6 +9,7 @@ import ai.vibecafe.usage.data.quota.CommandCodeOAuth
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi
 import ai.vibecafe.usage.data.quota.GitHubCopilot
 import ai.vibecafe.usage.data.quota.OAuthFlow
+import ai.vibecafe.usage.data.quota.OpenCodeConsole
 import ai.vibecafe.usage.data.quota.OpenRouter
 import ai.vibecafe.usage.data.quota.OpenRouterOAuth
 import ai.vibecafe.usage.data.quota.QuotaHistoryStore
@@ -33,6 +34,8 @@ data class ProviderState(
     val groups: Map<String, List<ExtraQuotaApi.Bar>> = emptyMap(),
     /** 当前账号/套餐实际可用的模型列表（动态接口拿不到则留空，UI 隐藏模型区）。 */
     val models: List<String> = emptyList(),
+    /** 模型目录的完整元数据（名称 / 上下文 / 定价 / 能力）。能拿到才有，UI 优先用它。 */
+    val modelInfo: List<ExtraQuotaApi.ModelInfo> = emptyList(),
     /** 模型区标题覆盖（null 用默认「可用模型」），供按定价分档的供应商注明口径。 */
     val modelsLabel: String? = null,
     val error: String? = null
@@ -142,6 +145,40 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                             }
                         )
                     }
+                    OAuthKind.OPENCODE_DEVICE -> {
+                        // Console 设备码：发起 → 跳浏览器 → 轮询令牌。
+                        // 拿到令牌先回查一次 /api/go/status 再存：授权成功但没订 Go 套餐时
+                        // 存下去只会让用户看到一个每次刷新都报错的空卡片。
+                        val dc = withContext(Dispatchers.IO) { OpenCodeConsole.startDeviceCode() }
+                        update(id) { it.copy(oauthCode = dc.userCode) }
+                        withContext(Dispatchers.Main) {
+                            val cm = getApplication<Application>().getSystemService(Application.CLIPBOARD_SERVICE)
+                                as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("OpenCode 授权码", dc.userCode))
+                            android.widget.Toast.makeText(
+                                getApplication(), "授权码 ${dc.userCode} 已复制，去浏览器粘贴", Toast.LENGTH_LONG
+                            ).show()
+                            OAuthFlow.openBrowser(getApplication(), dc.verifyUrl)
+                        }
+                        val deadline = System.currentTimeMillis() + dc.expiresInSec.coerceAtMost(900) * 1000L
+                        var tokens: OpenCodeConsole.Tokens? = null
+                        while (tokens == null && System.currentTimeMillis() < deadline) {
+                            delay(dc.intervalSec.coerceAtLeast(5) * 1000L)
+                            try {
+                                tokens = withContext(Dispatchers.IO) { OpenCodeConsole.pollToken(dc) }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: ExtraQuotaApi.QuotaException) {
+                                // 拒绝 / 过期 / client 无效都是终止性错误，不能当网络抖动继续空转
+                                throw e
+                            } catch (_: Exception) {
+                                // 网络/代理抖动：本轮跳过，继续等用户在浏览器确认
+                            }
+                        }
+                        val t = tokens ?: throw ExtraQuotaApi.QuotaException(0, "授权码已过期，请重新发起授权")
+                        withContext(Dispatchers.IO) { OpenCodeConsole.verify(t) }
+                        listOf(OpenCodeConsole.encode(t))
+                    }
                     OAuthKind.GITHUB_DEVICE -> {
                         val dc = withContext(Dispatchers.IO) { GitHubCopilot.startDeviceCode() }
                         update(id) { it.copy(oauthCode = dc.userCode) }
@@ -205,7 +242,17 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                 val creds = provider.credPrefsKeys.map { k ->
                     prefs.getString(k, null) ?: throw ExtraQuotaApi.QuotaException(0, "凭据缺失，请重新接入")
                 }
-                val usage = withContext(Dispatchers.IO) { provider.fetch(creds) }
+                val usage = withContext(Dispatchers.IO) {
+                    provider.fetch(creds) { renewed ->
+                        // 服务端轮换凭据后必须立刻写回：否则下次查询还用旧值，
+                        // 而旧 refresh_token 已被作废 → 用户莫名其妙被登出。
+                        prefs.edit().apply {
+                            provider.credPrefsKeys.forEachIndexed { i, k ->
+                                renewed.getOrNull(i)?.let { putString(k, it) }
+                            }
+                        }.apply()
+                    }
+                }
                 // 记录今日快照（近 7 天趋势）。写盘失败绝不能影响额度展示，故整段吞掉异常
                 withContext(Dispatchers.IO) { recordHistory(id, usage) }
                 update(id) {
@@ -214,6 +261,7 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                         account = usage.account,
                         groups = usage.groups,
                         models = usage.models,
+                        modelInfo = usage.modelInfo,
                         modelsLabel = usage.modelsLabel,
                         error = if (usage.groups.isEmpty()) "计划未返回额度数据" else null
                     )

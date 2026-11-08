@@ -25,6 +25,7 @@ import ai.vibecafe.usage.data.quota.ExtraQuotaApi.fetchModelIds
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.formatCountdown
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.formatReset
 import ai.vibecafe.usage.data.quota.ExtraQuotaApi.gson
+import ai.vibecafe.usage.data.FxRates
 
 // ─── DeepSeek（API 余额，官方接口）───
 
@@ -41,20 +42,27 @@ object DeepSeek {
         obj.optArray("balance_infos")?.forEach { el ->
             val o = el as? JsonObject ?: return@forEach
             val currency = jstr(o, "currency") ?: return@forEach
-            val total = jstr(o, "total_balance") ?: return@forEach
-            val granted = jstr(o, "granted_balance")
-            val topped = jstr(o, "topped_up_balance")
-            val symbol = when (currency) {
-                "CNY" -> "¥"
-                "USD" -> "$"
-                else -> ""
+            val totalRaw = jstr(o, "total_balance") ?: return@forEach
+            val grantedRaw = jstr(o, "granted_balance")
+            val toppedRaw = jstr(o, "topped_up_balance")
+            // 余额统一按人民币展示：美元余额按自动汇率换算，已是人民币的不动
+            val rate = if (currency == "USD") FxRates.usdToCny else 1.0
+            fun money(raw: String): String =
+                "¥" + String.format(java.util.Locale.US, "%.2f", (raw.toDoubleOrNull() ?: 0.0) * rate)
+            val total = money(totalRaw)
+            val granted = grantedRaw?.let { money(it) }
+            val topped = toppedRaw?.let { money(it) }
+            val labelCurrency = when (currency) {
+                "CNY" -> "CNY"
+                "USD" -> "CNY"
+                else -> currency
             }
             groups.getOrPut("账户余额") { mutableListOf() } += Bar(
-                label = "$currency 余额 $symbol$total",
+                label = "$labelCurrency 余额 $total",
                 percentRemaining = 100,
                 counts = listOfNotNull(
-                    granted?.takeIf { it != "0.00" && it != "0" }?.let { "赠 $symbol$it" },
-                    topped?.takeIf { it != "0.00" && it != "0" }?.let { "充 $symbol$it" }
+                    granted?.takeIf { it != "¥0.00" }?.let { "赠 $it" },
+                    topped?.takeIf { it != "¥0.00" }?.let { "充 $it" }
                 ).joinToString(" · ").ifEmpty { null }
             )
         }

@@ -126,7 +126,7 @@ Write-Host "[5/7] Git commit & push..." -ForegroundColor Yellow
 git -C $root add -A
 $pending = git -C $root status --porcelain
 if ($pending) {
-    git -C $root -c user.name="poying2018" -c user.email="poying2018@users.noreply.github.com" commit -m "release: v$Version"
+    git -C $root -c user.name="poying2018" -c user.email="poying2018@users.noreply.github.com" commit -m "release: v$Version" -m "Co-Authored-By: BaoCode <noreply@poying2018.com>"
 } else {
     Write-Host "      nothing to commit (already committed) - skipped" -ForegroundColor DarkGray
 }
