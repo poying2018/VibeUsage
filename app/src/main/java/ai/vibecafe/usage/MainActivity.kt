@@ -81,18 +81,26 @@ class MainActivity : ComponentActivity() {
         // 汇率先从缓存读，之后在组合里自动刷新（24h 有效期，失败保留旧值）
         FxRates.init(this)
         enableEdgeToEdge()
-        // 桌面小组件的后台用量同步（已安装小组件时每 30 分钟刷新）
-        ai.vibecafe.usage.widget.UsageWidgetSync.ensureScheduled(this)
-        // 每日预算核对：预测整月消耗超阈值时发本地通知
-        ai.vibecafe.usage.budget.BudgetNotify.ensureScheduled(this)
-        // Android 13+ 通知权限（预算提醒用），静默请求一次
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
+        // 权限 launcher 必须在 STARTED 前注册，但「弹窗」本身可以推迟
+        val notifLauncher = if (android.os.Build.VERSION.SDK_INT >= 33) {
             registerForActivityResult(
                 androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-            ) { }.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            ) { }
+        } else {
+            null
         }
         setContent {
             AppRoot()
+        }
+        // 首帧之后再跑启动期后台任务：WorkManager 初始化（Room/调度器）与
+        // 通知权限弹窗都会占用启动关键路径，推迟到第一帧绘制后对用户无感。
+        window.decorView.post {
+            // 桌面小组件的后台用量同步（已安装小组件时每 30 分钟刷新）
+            ai.vibecafe.usage.widget.UsageWidgetSync.ensureScheduled(this)
+            // 每日预算核对：预测整月消耗超阈值时发本地通知
+            ai.vibecafe.usage.budget.BudgetNotify.ensureScheduled(this)
+            // Android 13+ 通知权限（预算提醒用），静默请求一次
+            notifLauncher?.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

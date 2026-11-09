@@ -53,10 +53,21 @@ fun GlassBackground(
     val timeSec = produceState(0f) {
         var start = -1L
         var lastEmitted = -1f
+        // 滚动冻结：记下冻结起始时刻，恢复时把时间轴整体平移，
+        // 极光从冻结相位继续流动（否则会按冻结时长瞬跳一段）。
+        var pausedAt = -1f
         while (true) {
             withFrameNanos { f ->
                 if (start < 0) start = f
                 val t = (f - start) / 1_000_000_000f
+                if (GlassMotion.scrolling) {
+                    if (pausedAt < 0) pausedAt = t
+                    return@withFrameNanos
+                }
+                if (pausedAt >= 0) {
+                    start += ((t - pausedAt) * 1_000_000_000f).toLong()
+                    pausedAt = -1f
+                }
                 // 时钟推进到 ~20fps（每 50ms 一步）：极光光斑 16~24s 往返，
                 // 10fps 时单步位移约 2~3px，在大屏上仍能看出轻微台阶感；
                 // 20fps 把它压到 1px 级，肉眼完全连续，同时仍是「重绘」而非「重组」。

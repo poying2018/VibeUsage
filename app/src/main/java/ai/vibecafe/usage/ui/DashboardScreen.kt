@@ -26,6 +26,7 @@ import ai.vibecafe.usage.ui.charts.DonutSlice
 import ai.vibecafe.usage.ui.charts.TrendChart
 import ai.vibecafe.usage.ui.charts.TrendMetric
 import ai.vibecafe.usage.ui.glass.GlassBackground
+import ai.vibecafe.usage.ui.glass.GlassMotion
 import ai.vibecafe.usage.ui.glass.LiquidBottomTab
 import ai.vibecafe.usage.ui.glass.LiquidBottomTabs
 import ai.vibecafe.usage.ui.glass.LiquidGlassSegmentedControl
@@ -52,6 +53,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -138,6 +140,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.snapshotFlow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -233,6 +236,16 @@ fun DashboardScreen(
     val palette = LocalGlassPalette.current
     val haptic = LocalHapticFeedback.current
     val backdrop = rememberPageBackdrop()
+    // 列表滚动状态：滚动期间冻结极光（GlassMotion），减少 backdrop 重录与玻璃重采样
+    val listState = rememberLazyListState()
+    LaunchedEffect(listState) {
+        try {
+            snapshotFlow { listState.isScrollInProgress }
+                .collect { GlassMotion.scrolling = it }
+        } finally {
+            GlassMotion.scrolling = false
+        }
+    }
     // 内容层单独导出，让悬浮玻璃（底部时间选择器 / 设置菜单）能实时模糊到其背后的滚动内容，
     // 形成真正的层级关系，而不是独立悬浮的面板
     val contentBackdrop = rememberLayerBackdrop()
@@ -355,6 +368,7 @@ fun DashboardScreen(
                         if (switcherExpanded) switcherExpanded = false
                     }
                 },
+            state = listState,
             // 内边距必须走 contentPadding：Modifier.padding 会缩小 LazyColumn 自己的视口，
             // 内容滚不到那段内边距里，也就没有任何内容能落到悬浮玻璃下方被实时模糊
             contentPadding = PaddingValues(

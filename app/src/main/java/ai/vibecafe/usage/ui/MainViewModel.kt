@@ -211,8 +211,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (elapsed < 400L) delay(400L - elapsed)
             }
 
-            val daily = dailyResult.getOrNull()?.let { StatsEngine.dedupResponse(it) }
-            val hourly = hourlyResult.getOrNull()?.let { StatsEngine.dedupResponse(it) }
+            // 去重要对 3650 天全量 buckets 做 groupBy + 字符串键拼接（数万行），
+            // 放主线程会在刷新/回前台时造成可感知的掉帧
+            val (daily, hourly) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                dailyResult.getOrNull()?.let { StatsEngine.dedupResponse(it) } to
+                    hourlyResult.getOrNull()?.let { StatsEngine.dedupResponse(it) }
+            }
 
             if (daily != null) {
                 val tr = _uiState.value.selectedTimeRange
@@ -236,7 +240,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     "24 小时粒度数据暂不可用，已自动降级为日粒度显示"
                 } else null
 
-                val devices = StatsEngine.availableDevices(daily)
+                val devices = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    StatsEngine.availableDevices(daily)
+                }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isRefreshing = false,
@@ -454,11 +460,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun maybeCheckUpdate(force: Boolean) {
         val st = _uiState.value.update.status
         if (st == UpdateStatus.CHECKING || st == UpdateStatus.DOWNLOADING) return
-        if (!force && st != UpdateStatus.IDLE) return
+        if (!force) {
+            // 已发现新版本/已下载时不覆盖现有状态
+            if (st == UpdateStatus.AVAILABLE || st == UpdateStatus.DOWNLOADED || st == UpdateStatus.NO_APK) return
+            // 静默检查 24h 内不重复：此前每个进程冷启动都会经加速 Worker 打两次请求
+            // （tags API + releases 页 HTML ~147KB）；顺带让 FAILED 状态次日自动重试。
+            val last = prefs.getLong(KEY_UPDATE_CHECK_AT, 0L)
+            if (System.currentTimeMillis() - last < 24 * 60 * 60 * 1000L) return
+        }
         setUpdate { it.copy(status = UpdateStatus.CHECKING, message = null) }
         viewModelScope.launch {
             // 以 tag 列表为准做语义版本比较，避免 releases/latest 漏掉「只打 tag 未建 Release」的新版本
             val result = UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
+            // 无论结果如何都记下时间：静默节流与「失败次日重试」都依赖它
+            prefs.edit().putLong(KEY_UPDATE_CHECK_AT, System.currentTimeMillis()).apply()
             when (result.status) {
                 UpdateChecker.Status.FAILED -> setUpdate {
                     it.copy(status = UpdateStatus.FAILED, message = result.detail ?: "检查更新失败，请稍后重试")
@@ -632,5 +647,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         /** 设备筛选集合；后台 BudgetCheckWorker 也读这个键，保证通知与页面同口径。 */
         const val KEY_DEVICES = "selected_devices"
+
+        /** 上次检查更新的时间（毫秒）；静默检查 24h 节流用。 */
+        const val KEY_UPDATE_CHECK_AT = "update_check_at"
     }
 }
