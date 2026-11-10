@@ -2,13 +2,20 @@ package ai.vibecafe.usage.core
 
 import android.content.Context
 
-/** 外观模式：跟随系统 / 强制浅色 / 强制深色 / AMOLED 纯黑。 */
+/** 外观模式：跟随系统 / 自动（19:00-07:00 深色）/ 强制浅色 / 强制深色 / AMOLED 纯黑。 */
 enum class ThemeMode(val label: String) {
     SYSTEM("跟随系统"),
+    AUTO("自动"),
     LIGHT("浅色"),
     DARK("深色"),
     AMOLED("纯黑")
 }
+
+/**
+ * 「自动」模式的深色判定：本地时间 19:00–07:00 为深色，其余为浅色。
+ * 纯函数便于单测锁定边界（7 点整切浅色、19 点整切深色）。
+ */
+internal fun isAutoDark(hour: Int): Boolean = hour >= 19 || hour < 7
 
 /**
  * 外观模式持久化。

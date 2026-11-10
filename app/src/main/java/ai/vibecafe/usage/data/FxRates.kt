@@ -32,9 +32,14 @@ object FxRates {
     /** 从没拉到过汇率时的兜底（近几个月的中间价）。 */
     const val DEFAULT_USD_CNY = 6.70
 
+    /** 手动汇率 / 自动汇率的合理性带（CNY per USD）。 */
+    const val MIN_USD_CNY = 5.0
+    const val MAX_USD_CNY = 9.0
+
     private const val TAG = "VibeUsage"
     private const val PREFS_NAME = "vibe_fx"
     private const val KEY_RATE = "usd_cny"
+    private const val KEY_MANUAL = "manual_rate"
     private const val KEY_FETCHED_AT = "fetched_at"
 
     /** 拉取结果最多缓存 24 小时（ECB 日价 + 接口日更，24h 内没必要反复打）。 */
@@ -63,16 +68,55 @@ object FxRates {
     /** 首选：从持久化读上次值（进程启动 / 后台任务入口调用，纯内存读，很便宜）。 */
     fun init(context: Context) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // 手动固定汇率优先：设了就不再自动拉取（离线/想按记账汇率结算时用）；
+        // 手动值被写坏时回落到上次自动拉取的缓存值，再不行用内置兜底。
+        val manual = prefs.getFloat(KEY_MANUAL, 0f).toDouble()
         val stored = prefs.getFloat(KEY_RATE, 0f).toDouble()
-        if (isSane(stored)) {
-            usdToCny = stored
-            _rate.value = stored
-        }
+        usdToCny = preferredRate(manual, stored)
+        _rate.value = usdToCny
     }
+
+    /** 手动值优先于自动缓存值，两者都在合理带外才回落到内置默认。纯函数，供单测锁定优先级。 */
+    internal fun preferredRate(manual: Double, stored: Double): Double = when {
+        isSane(manual) -> manual
+        isSane(stored) -> stored
+        else -> DEFAULT_USD_CNY
+    }
+
+    /** 手动固定汇率（CNY per USD）；未设置返回 null。 */
+    fun manualRate(context: Context): Double? =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getFloat(KEY_MANUAL, 0f).toDouble().takeIf { isSane(it) }
+
+    /**
+     * 设置/清除手动汇率。清除后回到自动值（优先用上次自动拉取的缓存值）。
+     * 手动值同样过合理性带（5.0..9.0），避免输入错误把全屏金额算飞。
+     */
+    fun setManualRate(context: Context, rate: Double?) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (rate == null) {
+            prefs.edit().remove(KEY_MANUAL).apply()
+            val stored = prefs.getFloat(KEY_RATE, 0f).toDouble()
+            usdToCny = preferredRate(0.0, stored)
+        } else {
+            val v = clampManualRate(rate)
+            prefs.edit().putFloat(KEY_MANUAL, v.toFloat()).apply()
+            usdToCny = v
+        }
+        _rate.value = usdToCny
+    }
+
+    /**
+     * 手动汇率夹到合理带内；非有限值（NaN / Infinity）回落到默认值。
+     * 纯函数，供单测锁定「输错不会把全屏金额算飞」的口径。
+     */
+    internal fun clampManualRate(rate: Double): Double =
+        if (rate.isFinite()) rate.coerceIn(MIN_USD_CNY, MAX_USD_CNY) else DEFAULT_USD_CNY
 
     /** 超过缓存期才拉；没过期直接返回当前值。 */
     suspend fun refreshIfStale(context: Context): Double =
         withContext(Dispatchers.IO) {
+            manualRate(context)?.let { return@withContext it }
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val fetchedAt = prefs.getLong(KEY_FETCHED_AT, 0L)
             val fresh = fetchedAt > 0L && System.currentTimeMillis() - fetchedAt < REFRESH_INTERVAL_MS
@@ -82,6 +126,7 @@ object FxRates {
     /** 强制刷新（设置页手动点、或上次失败想重试时用）。 */
     suspend fun refresh(context: Context): Double =
         withContext(Dispatchers.IO) {
+            manualRate(context)?.let { return@withContext it }
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             refreshLocked(context, prefs, force = true)
         }
@@ -130,5 +175,5 @@ object FxRates {
     }
 
     /** 美元/人民币历史合理带（6~7.8 居多，放宽到 5~9）；带外一律视为脏数据。 */
-    private fun isSane(v: Double): Boolean = v.isFinite() && v in 5.0..9.0
+    private fun isSane(v: Double): Boolean = v.isFinite() && v in MIN_USD_CNY..MAX_USD_CNY
 }

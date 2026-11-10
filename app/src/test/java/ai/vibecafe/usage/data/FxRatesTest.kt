@@ -57,6 +57,27 @@ class FxRatesTest {
     }
 
     @Test
+    fun `manual rate wins over cached auto rate`() {
+        assertEquals(7.1, FxRates.preferredRate(7.1, 6.9), 0.0001)
+        assertEquals(6.9, FxRates.preferredRate(0.0, 6.9), 0.0001)
+        assertEquals(6.9, FxRates.preferredRate(100.0, 6.9), 0.0001)
+        assertEquals(FxRates.DEFAULT_USD_CNY, FxRates.preferredRate(0.0, 100.0), 0.0001)
+    }
+
+    @Test
+    fun `manual rate is clamped to the sane band`() {
+        assertEquals(FxRates.MIN_USD_CNY, FxRates.clampManualRate(4.9), 0.0001)
+        assertEquals(FxRates.MAX_USD_CNY, FxRates.clampManualRate(9.1), 0.0001)
+        assertEquals(6.6861, FxRates.clampManualRate(6.6861), 0.0001)
+        assertEquals(FxRates.DEFAULT_USD_CNY, FxRates.clampManualRate(Double.NaN), 0.0001)
+        assertEquals(
+            FxRates.DEFAULT_USD_CNY,
+            FxRates.clampManualRate(Double.POSITIVE_INFINITY),
+            0.0001
+        )
+    }
+
+    @Test
     fun `formatCost shows cny with tiered decimals`() {
         FxRates.usdToCny = 7.0
         assertEquals("¥70.00", formatCost(10.0))

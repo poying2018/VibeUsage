@@ -4,7 +4,7 @@
 也能在一个面板里聚合 **14 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
 基于 **Jetpack Compose** 与 **液态玻璃（Liquid Glass）** 设计语言。
 
-当前版本 **2.25.1**（versionCode 81）· MIT
+当前版本 **2.26.0**（versionCode 82）· MIT
 
 ## ✨ 核心功能
 
@@ -33,10 +33,14 @@
 
 ### 其他
 
-- 预算提醒：按日均预测整月消耗，超阈值发本地通知（阈值可配置）
+- 预算提醒：按日均预测整月消耗，50% / 80% / 100% 三级本地通知（阈值可配置）
+- 额度预警：每 6 小时检查已接入平台，剩余额度低于 20% 时提醒（同一平台每天最多一次）
+- 每日用量摘要：每天推送今日消耗与 Top 模型（通知可在设置页单独关闭）
+- 手动汇率：可固定 1 美元兑人民币汇率，设置后暂停自动更新
+- 用量明细 CSV 导出：全量日粒度（日期 / 模型 / 应用 / 设备 / Token / 费用），UTF-8 BOM 兼容 Excel
 - 设备筛选、按 tokens / 费用 / 名称排序、最近会话列表
 - 用量卡分享 / 保存到系统相册（MediaStore，免权限）
-- 多设备筛选、暗色 / AMOLED 纯黑主题（跟随系统 / 浅色 / 深色 / 纯黑四种）
+- 多设备筛选、暗色 / AMOLED 纯黑主题（跟随系统 / 自动 19:00–07:00 / 浅色 / 深色 / 纯黑五种）
 - 自定义背景（相册选图，重启保留）
 - 液态玻璃参数可调：亮度 / 对比度 / 饱和度 / 模糊 / 白色叠加，实时全局生效
 - 应用内检查更新 + 下载 SHA-256 校验
@@ -87,6 +91,8 @@ app/src/main/java/ai/vibecafe/usage/
 ├── core/                           # ApiKeyStore / ThemeStore / BackgroundStore / GlassStyleStore
 ├── data/
 │   ├── VibeCafeApi.kt              # vibecafe.ai 用量接口（Retrofit）
+│   ├── FxRates.kt                  # 美元汇率（自动检测 + 手动固定）
+│   ├── UsageCsv.kt                 # 用量明细 CSV 导出（RFC 4180 转义）
 │   ├── quota/                      # 「额度」页：各家供应商查询客户端
 │   │   ├── ExtraQuotaApi.kt        #   共用类型（Bar/Usage/QuotaException）+ 格式化 + 兜底策略
 │   │   ├── QuotaHttp.kt            #   HTTP 底座（直连 ⇄ 中转，含中转熔断）—— 同文件内
@@ -100,7 +106,8 @@ app/src/main/java/ai/vibecafe/usage/
 │   └── CredentialBackup.kt         # 凭据加密备份/恢复
 ├── stats/StatsEngine.kt            # 统计计算引擎
 ├── share/ShareCard.kt              # 玻璃风格分享卡
-├── budget/BudgetNotify.kt          # 预算超支通知
+├── budget/BudgetNotify.kt          # 预算多级提醒（50/80/100%）
+├── alerts/InsightsNotify.kt        # 额度预警（6h）+ 每日用量摘要
 ├── widget/UsageWidget.kt           # Glance 小组件
 └── ui/
     ├── DashboardScreen.kt          # 主面板
@@ -113,7 +120,7 @@ app/src/main/java/ai/vibecafe/usage/
     └── theme/                      # 亮/暗/纯黑设计令牌 + 排版
 ```
 
-测试见 `app/src/test/`，覆盖统计引擎（时间窗口 / 趋势 / 设备筛选）、GLM / MiMo / MiniMax / CommandCode / OpenCode 解析、重试与 host 兜底策略、图标匹配、主题对比度、分享卡与凭据加密。
+测试见 `app/src/test/`，覆盖统计引擎（时间窗口 / 趋势 / 设备筛选）、GLM / MiMo / MiniMax / CommandCode / OpenCode 解析、重试与 host 兜底策略、图标匹配、主题对比度、分享卡与凭据加密，以及预算分级、自动主题边界、汇率手动值优先级、CSV 转义与额度通知 ID。
 
 ## 📄 许可证
 

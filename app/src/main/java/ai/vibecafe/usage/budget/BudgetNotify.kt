@@ -23,6 +23,9 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -43,6 +46,8 @@ object BudgetNotify {
     /** 阈值与主题/液态玻璃参数共用同一份 prefs。 */
     internal const val PREFS_NAME = "vibe_usage"
     private const val KEY_THRESHOLD = "budget_threshold_usd"
+    private const val KEY_LEVEL_MONTH = "budget_level_month"
+    private const val KEY_LEVEL = "budget_level"
 
     /** 与 MainViewModel.KEY_DEVICES 同一键：后台预算核对要按用户选的设备算，才能和页面同口径。 */
     internal const val KEY_DEVICES = "selected_devices"
@@ -120,10 +125,41 @@ object BudgetNotify {
             .createNotificationChannel(channel)
     }
 
+    /**
+     * 多级提醒档位：50% / 80% / 100%，低于 50% 返回 0。
+     *
+     * 提前预警比只在超支那一刻才提醒更有用。纯函数，供单测锁定边界
+     * （预算为 0 / NaN 时不产生任何档位，避免除零得到 Infinity 误报 100%）。
+     */
+    internal fun levelFor(projected: Double, threshold: Double): Int {
+        if (!threshold.isFinite() || threshold <= 0.0 || !projected.isFinite()) return 0
+        val ratio = projected / threshold
+        return when {
+            ratio >= 1.0 -> 100
+            ratio >= 0.8 -> 80
+            ratio >= 0.5 -> 50
+            else -> 0
+        }
+    }
+
+    /** 同一个月只升级不重复：上个月记录过 80% 不影响本月再提醒；同月已提醒 80% 后到 100% 仍要提醒。 */
+    internal fun shouldNotify(
+        storedMonth: String?,
+        storedLevel: Int,
+        currentMonth: String,
+        level: Int
+    ): Boolean = level > 0 && !(storedMonth == currentMonth && level <= storedLevel)
+
     fun notifyIfNeeded(context: Context, projected: Double) {
         // 阈值每次现读：设置页改完立即生效，下一次 Worker 执行就用新值
         val threshold = threshold(context)
-        if (projected < threshold) return
+        val level = levelFor(projected, threshold)
+        if (level == 0) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val month = SimpleDateFormat("yyyy-MM", Locale.US).format(Date())
+        val storedMonth = prefs.getString(KEY_LEVEL_MONTH, null)
+        val storedLevel = prefs.getInt(KEY_LEVEL, 0)
+        if (!shouldNotify(storedMonth, storedLevel, month, level)) return
         // Android 13+ 通知运行时权限
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -136,14 +172,24 @@ object BudgetNotify {
             Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        // projected 是整月预测，不是已花掉的钱；措辞不能写成「已用到」
+        val title = if (level >= 100) "本月消耗预测将超预算" else "本月消耗预测已达预算的 $level%"
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_logo_v)
-            .setContentTitle("本月消耗预测将超预算")
+            .setContentTitle(title)
             .setContentText("按当前日均，整月预计 " + formatCost(projected) + "（预算 " + formatCost(threshold) + "）")
             .setContentIntent(intent)
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification) }
+        val posted = runCatching {
+            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+            true
+        }.getOrDefault(false)
+        // 真正发出去才记等级：没有通知权限 / notify 抛异常时下次仍会尝试，
+        // 拿到权限后还能补发；否则一次失败就把本档位永久吞掉。
+        if (posted) {
+            prefs.edit().putString(KEY_LEVEL_MONTH, month).putInt(KEY_LEVEL, level).apply()
+        }
     }
 }
 

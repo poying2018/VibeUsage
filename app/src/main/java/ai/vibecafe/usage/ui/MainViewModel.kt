@@ -376,6 +376,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 导出当前账号的全量日粒度用量为 CSV。
+     *
+     * 全量 buckets 可能有数万行，排序/拼接/写文件都放 IO 线程；用 viewModelScope
+     * 而不是页面组合作用域 —— 用户点完导出立刻切 Tab，导出也应继续完成，
+     * 不能留下半截文件。UTF-8 BOM 让 Excel 直接双击时正确识别中文。
+     */
+    fun exportUsageCsv(uri: Uri) {
+        val app = getApplication<Application>()
+        val data = _uiState.value.dailyData
+        if (data == null) {
+            Toast.makeText(app, "还没有可导出的数据，先刷新一下", Toast.LENGTH_SHORT).show()
+            return
+        }
+        viewModelScope.launch {
+            val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val csv = ai.vibecafe.usage.data.UsageCsv.build(data)
+                    app.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+                        out.write(csv.toByteArray(Charsets.UTF_8))
+                    } ?: throw IllegalStateException("写不进所选位置")
+                }
+            }
+            result.onSuccess {
+                Toast.makeText(app, "已导出用量 CSV", Toast.LENGTH_LONG).show()
+            }.onFailure {
+                Toast.makeText(app, "导出失败：${it.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     /** 长按应用行：计算并展示该应用在当前时间范围的细分详情。 */
     fun showToolDetail(tool: String) {
         val tr = _uiState.value.selectedTimeRange

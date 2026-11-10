@@ -41,11 +41,13 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.HorizontalDivider
@@ -53,6 +55,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -117,11 +121,20 @@ fun SettingsScreen(
     val vm: MainViewModel = viewModel()
     // 美元汇率（自动检测）：本设置页与全站金额展示共用同一个值
     val fxRate by FxRates.rateFlow.collectAsStateWithLifecycle()
+    // 手动固定值：非空时自动更新暂停，两行都据此改文案/点击行为
+    val manualFx = FxRates.manualRate(appContext)
     val fxScope = rememberCoroutineScope()
     // 预算提醒阈值：与 BudgetNotify 共用同一份 prefs，改完立即生效
     var threshold by remember { mutableDoubleStateOf(BudgetNotify.threshold(appContext)) }
     var thresholdCustom by remember { mutableStateOf(BudgetNotify.hasCustomThreshold(appContext)) }
     var showThresholdDialog by remember { mutableStateOf(false) }
+    var quotaAlertEnabled by remember {
+        mutableStateOf(ai.vibecafe.usage.alerts.InsightsNotify.quotaEnabled(appContext))
+    }
+    var summaryEnabled by remember {
+        mutableStateOf(ai.vibecafe.usage.alerts.InsightsNotify.summaryEnabled(appContext))
+    }
+    var showFxDialog by remember { mutableStateOf(false) }
     // —— 凭据备份：状态挂在页面级，口令弹窗在 Column 之外也要用 ——
     val extraVm: ExtraQuotaViewModel = viewModel()
     // 口令只在流程进行中暂存：导出时用户输入一次，导入时输入一次。
@@ -172,6 +185,14 @@ fun SettingsScreen(
         }.onFailure {
             Toast.makeText(appContext, "导入失败：${it.message}", Toast.LENGTH_SHORT).show()
         }
+    }
+    // 用量明细 CSV 导出：当前账号全量日粒度 buckets。
+    // 交给 ViewModel 的协程：全量 buckets 可能有数万行，排序 + 拼接 + 写文件
+    // 都不能占主线程；用户点完立刻切 Tab 也不会把导出取消成半截文件。
+    val csvLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        uri?.let(vm::exportUsageCsv)
     }
     Column(
         Modifier
@@ -342,6 +363,36 @@ fun SettingsScreen(
                 onClick = { GlassStyleStore.set(context, GlassStyleStore.Default) }
             )
         }
+        // —— 通知 ——
+        SectionLabel("通知")
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fadeSlideIn(140)
+                .glassCard(backdrop, cornerRadius = 26.dp)
+        ) {
+            SwitchRow(
+                icon = Icons.Filled.Notifications,
+                title = "额度预警",
+                subtitle = "已接入平台剩余额度低于 20% 时提醒",
+                checked = quotaAlertEnabled,
+                onCheckedChange = {
+                    quotaAlertEnabled = it
+                    ai.vibecafe.usage.alerts.InsightsNotify.setQuotaEnabled(appContext, it)
+                }
+            )
+            CardDivider()
+            SwitchRow(
+                icon = Icons.Filled.Summarize,
+                title = "每日用量摘要",
+                subtitle = "每天推送今日消耗与 Top 模型",
+                checked = summaryEnabled,
+                onCheckedChange = {
+                    summaryEnabled = it
+                    ai.vibecafe.usage.alerts.InsightsNotify.setSummaryEnabled(appContext, it)
+                }
+            )
+        }
         // —— 通用 ——
         SectionLabel("通用")
         Column(
@@ -469,8 +520,35 @@ fun SettingsScreen(
                 backdrop = backdrop,
                 icon = Icons.Filled.CurrencyExchange,
                 title = "美元汇率",
-                subtitle = "1 美元 = ¥" + String.format(Locale.US, "%.2f", fxRate) + " · 每日自动更新，点击刷新",
-                onClick = { fxScope.launch { FxRates.refresh(appContext) } }
+                subtitle = if (manualFx != null) {
+                    "已手动固定为 ¥" + String.format(Locale.US, "%.2f", manualFx) + " · 自动更新已暂停"
+                } else {
+                    "1 美元 = ¥" + String.format(Locale.US, "%.2f", fxRate) + " · 每日自动更新，点击刷新"
+                },
+                onClick = {
+                    // 手动固定时「刷新」没有意义（refresh 会直接返回手动值），改成打开修改弹窗
+                    if (manualFx != null) showFxDialog = true
+                    else fxScope.launch { FxRates.refresh(appContext) }
+                }
+            )
+            CardDivider()
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.CurrencyExchange,
+                title = "手动汇率",
+                subtitle = manualFx?.let {
+                    "固定 1 美元 = ¥" + String.format(Locale.US, "%.2f", it) + "（点击修改）"
+                } ?: "自动检测中（点击可固定汇率）",
+                onClick = { showFxDialog = true }
+            )
+            CardDivider()
+            SettingRow(
+                backdrop = backdrop,
+                icon = Icons.Filled.FileDownload,
+                title = "导出用量 CSV",
+                subtitle = "导出全量明细（日期/模型/应用/设备/Token/费用）",
+                showChevron = false,
+                onClick = { csvLauncher.launch("vibeusage-usage.csv") }
             )
         }
         // —— 凭据备份 ——
@@ -551,6 +629,21 @@ fun SettingsScreen(
                 threshold = BudgetNotify.DEFAULT_BUDGET_USD
                 thresholdCustom = false
                 showThresholdDialog = false
+            }
+        )
+    }
+    // 手动汇率弹窗
+    if (showFxDialog) {
+        FxRateDialog(
+            initial = FxRates.manualRate(appContext) ?: fxRate,
+            onDismiss = { showFxDialog = false },
+            onSave = { rate ->
+                FxRates.setManualRate(appContext, rate)
+                showFxDialog = false
+            },
+            onResetAuto = {
+                FxRates.setManualRate(appContext, null)
+                showFxDialog = false
             }
         )
     }
@@ -702,6 +795,92 @@ private fun ThresholdDialog(
 }
 
 /**
+ * 手动汇率弹窗。
+ *
+ * 设置后不再走自动更新（离线或想按记账汇率结算时用）；「恢复自动」清掉手动值，
+ * 回到上次自动拉取的缓存汇率。与自动汇率共用 5.00–9.00 的合理性带，
+ * 避免手滑把全屏金额算飞。
+ */
+@Composable
+private fun FxRateDialog(
+    initial: Double,
+    onDismiss: () -> Unit,
+    onSave: (Double) -> Unit,
+    onResetAuto: () -> Unit
+) {
+    val p = LocalGlassPalette.current
+    var text by remember { mutableStateOf(formatRateText(initial)) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val errText = error
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .imePadding()
+                .widthIn(max = 420.dp)
+                .fillMaxWidth(0.9f)
+                .clip(RoundedCornerShape(26.dp))
+                .background(p.Page.copy(alpha = 0.98f))
+                .border(1.dp, p.Rim, RoundedCornerShape(26.dp))
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("手动汇率", style = GlassText.Title, color = p.InkHi)
+            Text(
+                "固定 1 美元兑人民币的汇率。设置后暂停自动更新，随时可以恢复。",
+                style = GlassText.Meta,
+                color = p.InkMid
+            )
+            OutlinedTextField(
+                value = text,
+                onValueChange = {
+                    text = filterRateInput(it)
+                    error = null
+                },
+                label = { Text("1 美元 =") },
+                prefix = { Text("¥", color = p.InkMid) },
+                singleLine = true,
+                isError = errText != null,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = p.Accent,
+                    unfocusedBorderColor = p.Rim,
+                    cursorColor = p.Accent,
+                    focusedLabelColor = p.Accent,
+                    unfocusedLabelColor = p.InkMid,
+                    focusedTextColor = p.InkHi,
+                    unfocusedTextColor = p.InkHi
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("可输入 5.00 – 9.00", style = GlassText.Meta, color = p.InkLo)
+            if (errText != null) {
+                Text(errText, style = GlassText.Meta, color = p.Down)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onResetAuto) {
+                    Text("恢复自动", style = GlassText.Label, color = p.InkMid)
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDismiss) {
+                    Text("取消", style = GlassText.Label, color = p.InkMid)
+                }
+                TextButton(onClick = {
+                    val rate = text.trim().toDoubleOrNull()
+                    when {
+                        rate == null -> error = "请输入有效汇率"
+                        rate < 5.0 || rate > 9.0 -> error = "汇率需在 5.00 – 9.00 之间"
+                        else -> onSave(rate)
+                    }
+                }) {
+                    Text("确定", style = GlassText.Label, color = p.AccentInk)
+                }
+            }
+        }
+    }
+}
+
+/**
  * 备份口令弹窗。
  *
  * 导出时要设口令（并再输一遍确认 —— 口令打错一个字符，这份备份就永远解不开了），
@@ -829,16 +1008,16 @@ private fun formatThreshold(value: Double): String {
     }
 }
 
-/** 输入过滤：只留数字与一个小数点，小数点后最多两位。 */
+/** 输入过滤：只留数字与一个小数点，小数点后最多 [maxDecimals] 位。 */
 
-private fun filterAmountInput(raw: String): String {
+private fun filterDecimalInput(raw: String, maxDecimals: Int): String {
     val sb = StringBuilder()
     var dotSeen = false
     var decimals = 0
     for (ch in raw) {
         if (ch.isDigit()) {
             if (dotSeen) {
-                if (decimals >= 2) continue
+                if (decimals >= maxDecimals) continue
                 decimals++
             }
             sb.append(ch)
@@ -849,6 +1028,16 @@ private fun filterAmountInput(raw: String): String {
     }
     return sb.toString()
 }
+
+/** 金额输入：两位小数。 */
+private fun filterAmountInput(raw: String): String = filterDecimalInput(raw, 2)
+
+/** 汇率输入：四位小数（6.6861 这类报价不能只留两位）。 */
+private fun filterRateInput(raw: String): String = filterDecimalInput(raw, 4)
+
+/** 汇率编辑框初始值：去掉无意义的尾随 0（6.7000 → 6.7）。 */
+private fun formatRateText(value: Double): String =
+    String.format(Locale.US, "%.4f", value).trimEnd('0').trimEnd('.')
 
 /**
  * 分组标题：与概览页 SectionTitle 同一规格（accent 竖条 + 字距标签）。
@@ -1075,6 +1264,63 @@ private fun GlassStyleSliderRow(
             visibilityThreshold = 0.01f,
             backdrop = backdrop,
             modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/** 设置页开关行：图标 + 标题/说明 + Material3 开关（配色跟主题走）。 */
+@Composable
+private fun SwitchRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val p = LocalGlassPalette.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(p.AccentWash),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = p.AccentInk,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = GlassText.Body, color = p.InkHi)
+            Spacer(Modifier.height(1.dp))
+            Text(
+                subtitle,
+                style = GlassText.Meta,
+                color = p.InkMid,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = p.Accent,
+                uncheckedThumbColor = p.InkLo,
+                uncheckedTrackColor = p.InkLo.copy(alpha = 0.25f),
+                uncheckedBorderColor = Color.Transparent
+            )
         )
     }
 }

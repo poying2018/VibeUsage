@@ -4,6 +4,7 @@ import ai.vibecafe.usage.core.ApiKeyStore
 import ai.vibecafe.usage.core.GlassStyleStore
 import ai.vibecafe.usage.core.ThemeMode
 import ai.vibecafe.usage.core.ThemeStore
+import ai.vibecafe.usage.core.isAutoDark
 import ai.vibecafe.usage.data.FxRates
 import ai.vibecafe.usage.ui.DeviceLoginViewModel
 import ai.vibecafe.usage.ui.DashboardScreen
@@ -99,6 +100,8 @@ class MainActivity : ComponentActivity() {
             ai.vibecafe.usage.widget.UsageWidgetSync.ensureScheduled(this)
             // 每日预算核对：预测整月消耗超阈值时发本地通知
             ai.vibecafe.usage.budget.BudgetNotify.ensureScheduled(this)
+            // 额度预警（6h）与每日用量摘要
+            ai.vibecafe.usage.alerts.InsightsNotify.ensureScheduled(this)
             // Android 13+ 通知权限（预算提醒用），静默请求一次
             notifLauncher?.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -121,12 +124,24 @@ private fun AppRoot() {
     // init() 返回 Unit，remember 不该返回 Unit —— 用 SideEffect 触发一次初始化
     SideEffect { GlassStyleStore.init(context) }
 
-    // 外观模式：跟随系统 / 浅色 / 深色 / 纯黑（持久化）
+    // 外观模式：跟随系统 / 自动 / 浅色 / 深色 / 纯黑（持久化）
     var themeMode by remember { mutableStateOf(ThemeStore.get(context)) }
+    // 自动模式的小时值：整点唤醒一次，跨过 19:00 / 07:00 时无需等下一次重组才切换
+    var autoHour by remember { mutableStateOf(java.time.LocalTime.now().hour) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = java.time.LocalTime.now()
+            val nextHour = now.truncatedTo(java.time.temporal.ChronoUnit.HOURS).plusHours(1)
+            val waitMs = java.time.Duration.between(now, nextHour).toMillis()
+            kotlinx.coroutines.delay(waitMs.coerceAtLeast(1_000L))
+            autoHour = java.time.LocalTime.now().hour
+        }
+    }
     val darkTheme = when (themeMode) {
         ThemeMode.DARK, ThemeMode.AMOLED -> true
         ThemeMode.LIGHT -> false
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.AUTO -> isAutoDark(autoHour)
     }
 
     GlassTheme(darkTheme = darkTheme, amoled = themeMode == ThemeMode.AMOLED) {
