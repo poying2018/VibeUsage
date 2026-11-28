@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AllInclusive
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.BubbleChart
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
@@ -40,6 +41,7 @@ import ai.vibecafe.usage.data.quota.Mimo
 import ai.vibecafe.usage.data.quota.MiniMax
 import ai.vibecafe.usage.data.quota.OpenCode
 import ai.vibecafe.usage.data.quota.OpenCodeConsole
+import ai.vibecafe.usage.data.quota.OpenDesign
 import ai.vibecafe.usage.data.quota.OpenRouter
 
 /** 支持一键授权的登录方式（凭据粘贴始终作为后备）。 */
@@ -61,7 +63,10 @@ enum class OAuthKind {
      *
      * 与粘贴 Key 并存：同一槽位由凭据前缀区分，登录通道可随时互换。
      */
-    OPENCODE_DEVICE
+    OPENCODE_DEVICE,
+
+    /** OpenDesign Go 设备码授权（Vela CLI 同款：浏览器打开激活页，轮询换 controlKey）。 */
+    OPENDESIGN_DEVICE
 }
 
 /** 「额度」页下拉可切换的凭据型供应商（反重力为独立面板，不在此列）。 */
@@ -162,6 +167,14 @@ enum class ExtraProvider(
             "需已订阅 Go / Go Plus / Go Teams。查 5 小时 / 每周 / 每月三档窗口（旧称 opencode zen）；海外站，中转优先",
         oauth = OAuthKind.OPENCODE_DEVICE,
         minCredLen = 12
+    ),
+    OPENDESIGN(
+        "opendesign", "OpenDesign Go", Color(0xFF00B96B), Icons.Filled.Brush,
+        listOf("API Key"),
+        "推荐一键授权（浏览器打开激活页，无需手动建 Key）；手动：go.open-design.ai → 控制台 → API keys 创建 Key。" +
+            "可查 Coding Plan 5/7 天窗口、月度总额度与套餐可用模型，需已订阅 Go / Plus / Pro / Max",
+        oauth = OAuthKind.OPENDESIGN_DEVICE,
+        minCredLen = 12
     );
 
     /** 凭据在 quota_extra prefs 里的存储键（与 credLabels 一一对应）。 */
@@ -189,6 +202,7 @@ enum class ExtraProvider(
         AGNES -> Agnes.fetchUsage(creds[0], creds[1])
         MIMO -> Mimo.fetchUsage(creds[0], creds[1])
         COMMANDCODE -> CommandCode.fetchUsage(creds[0])
+        OPENDESIGN -> OpenDesign.fetchUsage(creds[0])
         OPENCODE -> {
             // 同一条 prefs 槽位承载两种接入方式：带前缀的是 Console 登录态（OAuth 令牌），
             // 其余是 oc_sk_ Key。登录态可能轮换凭据 → 通过 onRenew 回写。

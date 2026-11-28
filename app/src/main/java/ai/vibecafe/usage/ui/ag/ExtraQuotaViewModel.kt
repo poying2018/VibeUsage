@@ -10,6 +10,7 @@ import ai.vibecafe.usage.data.quota.ExtraQuotaApi
 import ai.vibecafe.usage.data.quota.GitHubCopilot
 import ai.vibecafe.usage.data.quota.OAuthFlow
 import ai.vibecafe.usage.data.quota.OpenCodeConsole
+import ai.vibecafe.usage.data.quota.OpenDesignDevice
 import ai.vibecafe.usage.data.quota.OpenRouter
 import ai.vibecafe.usage.data.quota.OpenRouterOAuth
 import ai.vibecafe.usage.data.quota.QuotaHistoryStore
@@ -178,6 +179,44 @@ class ExtraQuotaViewModel(application: Application) : AndroidViewModel(applicati
                         val t = tokens ?: throw ExtraQuotaApi.QuotaException(0, "授权码已过期，请重新发起授权")
                         withContext(Dispatchers.IO) { OpenCodeConsole.verify(t) }
                         listOf(OpenCodeConsole.encode(t))
+                    }
+                    OAuthKind.OPENDESIGN_DEVICE -> {
+                        // Vela CLI 同款设备码：发起 → 浏览器打开激活页 → 轮询换 controlKey。
+                        // 服务端 activationUrl 已带 deviceId/userCode，浏览器里无需再粘贴。
+                        val dc = withContext(Dispatchers.IO) { OpenDesignDevice.startDeviceCode() }
+                        update(id) { it.copy(oauthCode = dc.userCode) }
+                        withContext(Dispatchers.Main) {
+                            val cm = getApplication<Application>().getSystemService(Application.CLIPBOARD_SERVICE)
+                                as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("OpenDesign 授权码", dc.userCode))
+                            android.widget.Toast.makeText(
+                                getApplication(), "授权码 ${dc.userCode} 已复制，浏览器打开后确认即可", Toast.LENGTH_LONG
+                            ).show()
+                            OAuthFlow.openBrowser(getApplication(), dc.activationUrl)
+                        }
+                        val deadline = dc.expiresAtMs.coerceAtMost(
+                            System.currentTimeMillis() + 15 * 60_000L
+                        )
+                        var token: OpenDesignDevice.Token? = null
+                        while (token == null && System.currentTimeMillis() < deadline) {
+                            delay(dc.intervalSec * 1000L)
+                            try {
+                                token = withContext(Dispatchers.IO) { OpenDesignDevice.pollToken(dc) }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: ExtraQuotaApi.QuotaException) {
+                                // 取消 / 过期 / 已消费都是终止状态，不能当网络抖动继续空转
+                                throw e
+                            } catch (_: Exception) {
+                                // 代理 / 网络抖动：本轮跳过，继续等用户在浏览器确认
+                            }
+                        }
+                        val t = token ?: throw ExtraQuotaApi.QuotaException(0, "授权码已过期，请重新发起授权")
+                        withContext(Dispatchers.IO) {
+                            OpenDesignDevice.complete(dc)
+                            OpenDesignDevice.verify(t)
+                        }
+                        listOf(OpenDesignDevice.encode(t))
                     }
                     OAuthKind.GITHUB_DEVICE -> {
                         val dc = withContext(Dispatchers.IO) { GitHubCopilot.startDeviceCode() }

@@ -1,10 +1,10 @@
 # VibeUsage — 液态玻璃风格 Token 用量客户端
 
 一个 Android 原生 App：既统计 [vibecafe.ai](https://vibecafe.ai/usage) 的 Token 用量，
-也能在一个面板里聚合 **14 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
+也能在一个面板里聚合 **15 家 AI 供应商的订阅额度**（含 Antigravity 独立面板）。
 基于 **Jetpack Compose** 与 **液态玻璃（Liquid Glass）** 设计语言。
 
-当前版本 **2.26.1**（versionCode 83）· MIT
+当前版本 **2.27.0**（versionCode 84）· MIT
 
 ## ✨ 核心功能
 
@@ -18,12 +18,12 @@
 - 桌面小组件（Glance 2x2，每 30 分钟 + App 刷新时同步）
 - 玻璃风格总结分享卡（1080x1350）
 
-### 额度聚合（14 家供应商 + Antigravity）
+### 额度聚合（15 家供应商 + Antigravity）
 
 | 类别 | 供应商 |
 |---|---|
-| 凭据型 | 小米 MiMo、阿里百炼、火山方舟、豆包、智谱 GLM、Kimi、MiniMax、无问芯穹、DeepSeek、Agnes、CommandCode、OpenCode Go |
-| 一键授权 | GitHub Copilot（设备码）、OpenRouter（OAuth） |
+| 凭据型 | 小米 MiMo、阿里百炼、火山方舟、豆包、智谱 GLM、Kimi、MiniMax、无问芯穹、DeepSeek、Agnes、CommandCode、OpenCode Go、OpenDesign Go |
+| 一键授权 | GitHub Copilot（设备码）、OpenRouter（OAuth）、OpenDesign Go（浏览器设备码） |
 | 独立面板 | Antigravity（Google 反重力，OAuth refresh_token） |
 
 - 按时间窗口分组展示（5 小时滚动窗口 / 每周窗口），显示剩余百分比、已用比例、重置倒计时
@@ -95,6 +95,8 @@ app/src/main/java/ai/vibecafe/usage/
 │   ├── UsageCsv.kt                 # 用量明细 CSV 导出（RFC 4180 转义）
 │   ├── quota/                      # 「额度」页：各家供应商查询客户端
 │   │   ├── ExtraQuotaApi.kt        #   共用类型（Bar/Usage/QuotaException）+ 格式化 + 兜底策略
+│   │   ├── OpenDesign.kt           #   OpenDesign Go（5h/7d 窗口 + 月度余额 + 模型）
+│   │   └── OpenDesignDevice.kt     #   OpenDesign Go 浏览器设备码授权
 │   │   ├── QuotaHttp.kt            #   HTTP 底座（直连 ⇄ 中转，含中转熔断）—— 同文件内
 │   │   ├── MiniMax.kt / Glm.kt / Kimi.kt / DeepSeek.kt / Infini.kt /
 │   │   │ Bailian.kt / Ark.kt / GitHubCopilot.kt / OpenRouter.kt /

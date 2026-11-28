@@ -476,6 +476,7 @@ private val ExtraProvider.credPlaceholders: List<String>
         ExtraProvider.MIMO -> listOf("userId（纯数字）", "api-platform_serviceToken 的值")
         ExtraProvider.COMMANDCODE -> listOf("user_…（CLI 的 API Key）")
         ExtraProvider.OPENCODE -> listOf("oc_sk_…（Console API Key）")
+        ExtraProvider.OPENDESIGN -> listOf("OpenDesign Cloud API Key")
     }
 
 // ─── 已接入：状态行 + 分组明细 ───

@@ -41,6 +41,8 @@ const ALLOWED_HOSTS = new Set([
   // ── OpenCode Go（opencode.ai 推理额度 + 模型列表；console.opencode.ai 读美元数额与设备码授权）──
   "opencode.ai",
   "console.opencode.ai",
+  // ── OpenDesign Go（AMR 网关：额度窗口 / 月度余额 / 模型列表）──
+  "amr-api.open-design.ai",
   // ── 美元汇率（界面金额统一按人民币展示，自动检测当前汇率）──
   "open.er-api.com",
   "api.exchangerate-api.com",
